@@ -1,0 +1,81 @@
+name: das-promos-prod
+
+# Single-box production stack for the "cheapest possible" deployment path
+# (e.g. an Oracle Cloud Always Free Ampere A1 VM -- see docs/deployment.md).
+# Unlike docker-compose.yml (dev-only: Postgres/Redis only, apps run on the
+# host), this runs Postgres + Redis + apps/api together via one `docker
+# compose up`, since a single small VM is the target, not a multi-service
+# platform. apps/web and apps/admin are NOT included here -- deploy those
+# to Vercel (see docs/deployment.md) rather than adding Next.js server
+# processes to this same small VM.
+#
+# Usage (run ON the target VM, not built elsewhere and pushed -- this
+# avoids needing a container registry or cross-architecture builds):
+#   git clone <this repo> && cd dev-das-promos
+#   cp .env.example .env && edit .env with real production secrets
+#   docker compose -f infra/docker/docker-compose.prod.yml up -d --build
+#
+# apps/api reads its env vars from the repo-root .env via `env_file` below
+# -- rotate every secret in it before running this against real traffic,
+# see docs/deployment.md's pre-launch checklist.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: das_promos
+    volumes:
+      - das-promos-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d das_promos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Not published to the host on purpose -- only `api` (on the same
+    # compose network) needs to reach Postgres. Use `docker compose exec
+    # postgres psql ...` for ad-hoc access instead of opening the port.
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Unlike the dev compose file, persistence is on here: BullMQ's job
+    # schedulers (the automated routine's timing) live in Redis, and
+    # losing them on every container restart would silently disable the
+    # schedule until the next `registerScheduledJobs()` call on boot
+    # re-creates it anyway -- AOF just avoids the gap in between.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - das-promos-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      # Override the dev-oriented defaults in .env.example so the api
+      # container resolves its dependencies by service name, not localhost.
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/das_promos
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  das-promos-postgres:
+  das-promos-redis:
