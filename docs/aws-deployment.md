@@ -258,33 +258,120 @@ free tier.
    hardcoded default anywhere in this codebase on purpose.
 3. Set in `.env`: `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`.
 
-## Part 2: launch the AWS EC2 instance
+## Part 2: launch the AWS EC2 instance (infrastructure as code, console-driven)
 
-1. **Launch an instance**: Amazon Linux 2023 or Ubuntu 22.04+, size
-   `t3.small` (2GB RAM -- Postgres + Redis + the Node process together
-   want more headroom than `t3.micro`'s 1GB).
-2. **Security group**: allow inbound `22` (SSH, ideally locked to your
-   IP) and `4000` (the API). You don't need to open `5432`/`6379`
-   publicly -- Postgres/Redis only need to be reachable from the `api`
-   container on the same Docker network, not from the internet.
-3. **SSH in**, then install Docker + the Compose plugin:
+Instead of clicking through the EC2 launch wizard by hand, the instance,
+its security group, and the IAM plumbing GitHub Actions needs are all
+defined as CloudFormation templates in `infra/aws/` and applied for you.
+The only two things you personally click through are a key pair (AWS
+requires downloading its private half once, so this can't be automated)
+and one CloudFormation stack -- everything after that, including the
+instance itself, is created automatically by pushing to GitHub. No AWS
+CLI needed for any of this.
+
+1. **Create a key pair** (EC2 console → **Key Pairs** → **Create key
+   pair** → name it `dev-das-promos`, type `ED25519`, format `.pem` →
+   **Create**). Your browser downloads the private key automatically --
+   move it somewhere durable, e.g. `~/.ssh/dev-das-promos.pem`, and
+   `chmod 400` it. You'll use this once in Part 3 for the initial Docker
+   install; after that, GitHub Actions deploys over SSM, not SSH.
+
+2. **Find your public IP** (visit https://whatismyip.com) so SSH access
+   can be locked to just you, e.g. `203.0.113.42/32`.
+
+3. **Deploy the one-time bootstrap stack** -- this creates the GitHub
+   OIDC trust and the IAM roles everything else depends on, and only
+   ever needs to run once:
+   - Open the **CloudFormation console** → **Create stack** → **With new
+     resources (standard)** → **Upload a template file** → select
+     `infra/aws/bootstrap.yaml` from this repo → **Next**.
+   - Stack name: `dev-das-promos-bootstrap`.
+   - Parameter **GitHubRepo**: your `owner/repo`, e.g.
+     `David-Ackerman/dev-das-promos`.
+   - Click through **Next** twice, check the box acknowledging
+     CloudFormation may create IAM resources with custom names, then
+     **Submit**.
+   - Wait for status **CREATE_COMPLETE** (a minute or two), then open the
+     stack's **Outputs** tab and copy `GitHubActionsRoleArn` and
+     `Ec2SsmInstanceProfileName` -- you'll need both in step 4.
+
+4. **Set repository variables on GitHub** (your repo → **Settings** →
+   **Secrets and variables** → **Actions** → **Variables** tab → **New
+   repository variable**, one at a time). None of these are secret --
+   the OIDC trust condition in `bootstrap.yaml` is what actually
+   restricts who can use the role, not secrecy of these values:
+
+   | Variable | Value |
+   |---|---|
+   | `AWS_ROLE_ARN` | the `GitHubActionsRoleArn` output from step 3 |
+   | `AWS_REGION` | the region you deployed the bootstrap stack in, e.g. `us-east-2` |
+   | `EC2_KEY_PAIR_NAME` | `dev-das-promos` (from step 1) |
+   | `SSH_ALLOWED_CIDR` | your IP from step 2, e.g. `203.0.113.42/32` |
+   | `EC2_SSM_INSTANCE_PROFILE_NAME` | the `Ec2SsmInstanceProfileName` output from step 3 |
+
+5. **Push this repo to GitHub** if it isn't there yet:
+
    ```bash
-   # Amazon Linux 2023
-   sudo dnf install -y docker git
-   sudo systemctl enable --now docker
-   sudo usermod -aG docker $USER   # log out/in once for this to take effect
-   DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
-   mkdir -p $DOCKER_CONFIG/cli-plugins
-   curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
-     -o $DOCKER_CONFIG/cli-plugins/docker-compose
-   chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
+   git init
+   git add .
+   git commit -m "Initial commit"
+   gh repo create dev-das-promos --private --source=. --remote=origin --push
    ```
-   (Ubuntu: `sudo apt update && sudo apt install -y docker.io git docker-compose-plugin`, then the same `usermod`/`systemctl` steps.)
+
+   (`--private` is a reasonable default; secrets stay out of the repo via
+   `.gitignore` either way. Swap to `--public` if you want it open.)
+
+   Then either wait for the push to trigger `.github/workflows/infra.yml`
+   automatically (it only runs when `infra/aws/infra.yaml` changes, which
+   a fresh push of the whole repo counts as), or go to the
+   **Actions** tab → **Manage AWS infrastructure** → **Run workflow** to
+   trigger it immediately. This applies `infra/aws/infra.yaml` --
+   creating the actual EC2 instance + security group -- and, once it
+   succeeds, automatically writes the new instance's ID into the
+   `EC2_INSTANCE_ID` repo variable for you (check the workflow's summary
+   for the instance ID and public IP, or the CloudFormation console →
+   stack `dev-das-promos-infra` → **Outputs**).
+
+From here on, **changing instance type, opening a port, or resizing disk
+is just editing `infra/aws/infra.yaml` and pushing** -- GitHub Actions
+reapplies it. You should not need to touch the EC2 or CloudFormation
+console again after this for routine changes.
+
+### One-time manual setup on the instance itself
+
+CloudFormation created the box; it still needs Docker installed once
+before the app can run there (SSM can run commands remotely, but this
+one-time OS setup is easiest over a direct SSH session so you can see
+what's happening). SSH in using the key pair and public IP from step 5
+above:
+
+```bash
+ssh -i ~/.ssh/dev-das-promos.pem ubuntu@<public-ip-from-step-5>
+sudo apt update && sudo apt install -y docker.io git docker-compose-plugin
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER   # log out/in once for this to take effect
+```
 
 ## Part 3: deploy the app
 
+Since the repo is private, `git pull` needs its own credential separate
+from the AWS side -- and since `deploy.yml`'s SSM commands run this
+non-interactively, it needs to be cached once rather than typed every
+time. Generate a **fine-grained personal access token** scoped to just
+this repo (console-only, matching how the key pair worked in Part 2):
+
+1. https://github.com/settings/personal-access-tokens/new → **Repository
+   access**: "Only select repositories" → pick `dev-das-promos` →
+   **Permissions** → **Repository permissions** → **Contents**:
+   **Read-only** → **Generate token** → copy it (shown once).
+
 ```bash
-git clone <this repo's URL> && cd dev-das-promos
+git config --global credential.helper store
+git clone https://github.com/<your-username>/dev-das-promos.git && cd dev-das-promos
+# prompted for username/password -- username: your GitHub username,
+# password: paste the fine-grained token above. credential.helper store
+# caches it in ~/.git-credentials so the next `git pull` (including the
+# ones deploy.yml runs via SSM) doesn't prompt again.
 cp .env.example .env
 nano .env   # fill in every value from Part 1, plus the generated secrets below
 ```
@@ -339,76 +426,39 @@ later** -- it truncates and re-seeds every domain table on each run (see
 `docs/deployment.md`); after this one-time run, real ingestion is what
 populates the database going forward.
 
-## Part 3.5: automate future deploys with GitHub Actions
+## Part 3.5: how the two GitHub Actions workflows fit together
 
-Everything above was a one-time manual setup. From here on, pushing to
-`main` on GitHub can redeploy automatically -- `.github/workflows/deploy.yml`
-(already in the repo) SSHes into the EC2 box on every push and reruns
-the same `git pull` + `docker compose up -d --build` + migrate commands
-from Part 3, so there's nothing new to learn, just less to type by hand.
-It deliberately does **not** build an image in CI or push to a registry
-(ECR, GHCR) -- keeping the "build on the VM itself" approach from Part 3
-avoids paying for or configuring a container registry at all.
+Part 2 already had you push this repo to GitHub and set up everything
+AWS-side. Two workflows do the ongoing work from here on, both
+authenticating via the OIDC role from `bootstrap.yaml` -- no AWS access
+keys, no SSH keys stored anywhere:
 
-1. **Push this repo to GitHub**, if it isn't already there:
+- **`.github/workflows/infra.yml`** ("Manage AWS infrastructure") --
+  runs only when `infra/aws/infra.yaml` changes on `main`. Applies that
+  template via `aws cloudformation deploy` and writes the resulting
+  instance id into the `EC2_INSTANCE_ID` repo variable automatically.
+  This is how you change instance type, disk size, or open a new port
+  going forward: edit `infra/aws/infra.yaml`, push, done -- no console
+  visit needed.
+- **`.github/workflows/deploy.yml`** ("Deploy to AWS EC2") -- runs on
+  every other push to `main`. Uses **AWS Systems Manager (SSM) Run
+  Command** to execute `git pull` + `docker compose up -d --build` +
+  migrate directly on the instance named by `EC2_INSTANCE_ID`, over
+  AWS's own control plane -- no inbound SSH connection involved for this
+  path at all.
 
-   ```bash
-   git init
-   git add .
-   git commit -m "Initial commit"
-   gh repo create dev-das-promos --private --source=. --remote=origin --push
-   ```
+If you ever need to trigger either one without pushing a new commit, use
+**Actions tab → pick the workflow → Run workflow**.
 
-   (`--private` is a reasonable default for a repo carrying real business
-   logic and infra config, even though secrets themselves stay out of it
-   via `.gitignore`. Swap to `--public` if you want it open.)
+**Caveat**: both redeploy unconditionally with no test gate in front of
+them. Add a `pnpm test`/`pnpm typecheck` job before the `deploy` job (or
+as a required PR check) once you're pushing more than solo -- not
+required to ship today, but worth adding before this repo has more than
+one contributor.
 
-2. **On the EC2 instance**, clone via SSH instead of HTTPS so the CI job
-   (which authenticates as the instance's own key, not your GitHub
-   login) can `git pull` non-interactively. If Part 3's `git clone`
-   already used HTTPS, just repoint the remote:
-
-   ```bash
-   cd ~/dev-das-promos
-   git remote set-url origin git@github.com:<your-username>/dev-das-promos.git
-   ```
-
-3. **Generate a dedicated deploy key** (don't reuse your personal SSH
-   key) and add it two places -- as a GitHub **repo deploy key** (read
-   access is enough, since the workflow only pulls) and to the EC2
-   instance's SSH access:
-
-   ```bash
-   ssh-keygen -t ed25519 -f ./ec2-deploy-key -N ""   # run locally, creates a keypair
-   ```
-
-   - Public key (`ec2-deploy-key.pub`) → GitHub repo → **Settings → Deploy
-     keys → Add deploy key** (this lets the EC2 box pull from GitHub).
-   - Public key → also appended to `~/.ssh/authorized_keys` **on the EC2
-     instance itself**, if you want the CI job to SSH in using this same
-     key rather than your instance's original launch keypair (either
-     works -- using a dedicated key here just means you can revoke CI
-     access later without touching your personal EC2 login key).
-   - Private key (`ec2-deploy-key`, no passphrase) → GitHub repo →
-     **Settings → Secrets and variables → Actions → New repository
-     secret**, named `EC2_SSH_KEY`. Also add `EC2_HOST` (the instance's
-     public IP or domain) and `EC2_USER` (`ubuntu` for Ubuntu AMIs,
-     `ec2-user` for Amazon Linux).
-   - Delete the local `ec2-deploy-key`/`ec2-deploy-key.pub` files once
-     both are uploaded -- they don't need to live on your laptop after
-     this.
-
-4. **Push to `main`** and check the **Actions** tab on GitHub -- the
-   `Deploy to AWS EC2` workflow should run and finish green. From now on,
-   every push to `main` redeploys; use `workflow_dispatch` (the "Run
-   workflow" button on the Actions tab) to trigger it manually without a
-   new commit if you ever need to.
-
-**Caveat**: this redeploys unconditionally on every push to `main` with
-no test gate in front of it. Add a `pnpm test`/`pnpm typecheck` job
-before the `deploy` job in the same workflow (or as a required PR check)
-once you're pushing more than solo -- not required to ship today, but
-worth adding before this repo has more than one contributor.
+**If you skipped ahead**: everything both workflows depend on --
+pushing to GitHub, deploying `bootstrap.yaml`, and setting the 5 repo
+variables -- is in Part 2 above. Do that first if you haven't.
 
 ## Part 4: deploy `apps/web` and `apps/admin` to Vercel
 

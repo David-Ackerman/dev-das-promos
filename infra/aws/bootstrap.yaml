@@ -1,0 +1,118 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  One-time bootstrap for das-promos on AWS. Creates the GitHub Actions
+  OIDC trust (so workflows can authenticate to AWS with no stored keys),
+  the role those workflows assume, and the IAM role/instance profile the
+  EC2 instance uses to receive SSM Run Command deploys. Deploy this ONCE
+  via the CloudFormation console (Create stack -> Upload a template file
+  -> pick this file). Everything after this is managed by GitHub Actions
+  via infra.yaml -- see docs/aws-deployment.md Part 2/3.5.
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Description: "GitHub \"owner/repo\", e.g. David-Ackerman/dev-das-promos. Only this repo's main branch will be allowed to assume the deploy role."
+    AllowedPattern: "^[^/]+/[^/]+$"
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  Ec2SsmRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: dev-das-promos-ec2-ssm-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  Ec2SsmInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: dev-das-promos-ec2-ssm-profile
+      Roles:
+        - !Ref Ec2SsmRole
+
+  GitHubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: dev-das-promos-github-actions
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOidcProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubRepo}:ref:refs/heads/main"
+      Policies:
+        - PolicyName: manage-infra-stack
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudFormationManageInfraStack
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:ValidateTemplate
+                Resource:
+                  - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/dev-das-promos-infra/*"
+              - Sid: Ec2ManageInstanceAndSecurityGroup
+                Effect: Allow
+                Action:
+                  - ec2:RunInstances
+                  - ec2:TerminateInstances
+                  - ec2:CreateSecurityGroup
+                  - ec2:DeleteSecurityGroup
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:CreateTags
+                Resource: "*"
+              - Sid: Ec2ReadOnly
+                Effect: Allow
+                Action:
+                  - ec2:Describe*
+                Resource: "*"
+              - Sid: PassOnlyTheSsmInstanceRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt Ec2SsmRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ec2.amazonaws.com
+              - Sid: DeployAppViaSsm
+                Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                  - ssm:ListCommandInvocations
+                Resource: "*"
+
+Outputs:
+  GitHubActionsRoleArn:
+    Description: Set this as the AWS_ROLE_ARN repo variable in GitHub (Settings -> Secrets and variables -> Actions -> Variables)
+    Value: !GetAtt GitHubActionsRole.Arn
+  Ec2SsmInstanceProfileName:
+    Description: Used as the InstanceProfileName parameter when deploying infra.yaml
+    Value: !Ref Ec2SsmInstanceProfile

@@ -1,0 +1,63 @@
+name: Manage AWS infrastructure
+
+# Applies infra/aws/infra.yaml (the EC2 instance + security group) via
+# CloudFormation whenever it changes on main. Authenticates via OIDC using
+# the role infra/aws/bootstrap.yaml created -- no stored AWS credentials.
+# Requires infra/aws/bootstrap.yaml to have been deployed once already,
+# by hand, via the CloudFormation console -- see docs/aws-deployment.md
+# Part 2. After this runs, it writes the instance id into the
+# EC2_INSTANCE_ID repo variable automatically, so deploy.yml always
+# targets the current instance with no manual copy-paste.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/aws/infra.yaml"
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write
+  contents: read
+  actions: write # needed to update the EC2_INSTANCE_ID repo variable
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy infra stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name dev-das-promos-infra \
+            --template-file infra/aws/infra.yaml \
+            --parameter-overrides \
+              KeyPairName=${{ vars.EC2_KEY_PAIR_NAME }} \
+              SshAllowedCidr=${{ vars.SSH_ALLOWED_CIDR }} \
+              InstanceProfileName=${{ vars.EC2_SSM_INSTANCE_PROFILE_NAME }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Record instance id as a repo variable
+        run: |
+          INSTANCE_ID=$(aws cloudformation describe-stacks \
+            --stack-name dev-das-promos-infra \
+            --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
+            --output text)
+          PUBLIC_IP=$(aws cloudformation describe-stacks \
+            --stack-name dev-das-promos-infra \
+            --query "Stacks[0].Outputs[?OutputKey=='PublicIp'].OutputValue" \
+            --output text)
+          echo "Instance: $INSTANCE_ID ($PUBLIC_IP)"
+          echo "### Deployed instance" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Instance ID: \`$INSTANCE_ID\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Public IP: \`$PUBLIC_IP\`" >> "$GITHUB_STEP_SUMMARY"
+          gh variable set EC2_INSTANCE_ID --body "$INSTANCE_ID"
+        env:
+          GH_TOKEN: ${{ github.token }}

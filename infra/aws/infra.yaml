@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  The das-promos EC2 instance + security group. Managed automatically by
+  GitHub Actions (.github/workflows/infra.yml) after infra/aws/bootstrap.yaml
+  has been deployed once via the CloudFormation console -- you should not
+  normally need to touch this stack by hand. Edit this file and push to
+  main to change instance size, open ports, etc.
+
+Parameters:
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Existing EC2 key pair, created via the EC2 console (Key Pairs -> Create key pair), used for the one-time manual SSH setup in docs/aws-deployment.md Part 3.
+  SshAllowedCidr:
+    Type: String
+    Description: "CIDR allowed to SSH in, e.g. your IP as x.x.x.x/32. Find your IP at https://whatismyip.com. Avoid 0.0.0.0/0."
+  InstanceProfileName:
+    Type: String
+    Default: dev-das-promos-ec2-ssm-profile
+    Description: From bootstrap.yaml's Ec2SsmInstanceProfileName output -- lets GitHub Actions deploy app code via SSM with no SSH needed for that path.
+  InstanceType:
+    Type: String
+    Default: t3.small
+    Description: 2GB RAM -- Postgres + Redis + the Node process together want more headroom than t3.micro's 1GB.
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
+    Description: Always resolves to the current Ubuntu 22.04 AMI for the deploying region -- never goes stale.
+
+Resources:
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: das-promos EC2 instance -- SSH (restricted) + API port
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SshAllowedCidr
+        - IpProtocol: tcp
+          FromPort: 4000
+          ToPort: 4000
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: dev-das-promos
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      IamInstanceProfile: !Ref InstanceProfileName
+      SecurityGroupIds:
+        - !GetAtt SecurityGroup.GroupId
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: dev-das-promos
+
+Outputs:
+  InstanceId:
+    Value: !Ref Instance
+  PublicIp:
+    Value: !GetAtt Instance.PublicIp
