@@ -1,10 +1,19 @@
 import { generateCaption } from "./ai.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
-import { previewHtml, sendPreview, statusHeader, updatePreview } from "./preview.ts";
+import { previewHtml, retryKeyboard, sendPreview, statusHeader, updatePreview } from "./preview.ts";
 import { fetchAmazonCandidates } from "./providers/amazon.ts";
 import { fetchShopeeCandidates, shopeeAffiliateLink } from "./providers/shopee.ts";
-import { createPost, expireStalePending, recentlyUsedProductIds, upsertProduct } from "./repo.ts";
+import {
+  createPost,
+  dbNow,
+  expireStalePending,
+  failStuckPublishing,
+  lowestSeenPrice,
+  recentlyUsedProductIds,
+  transition,
+  upsertProduct,
+} from "./repo.ts";
 import { sendText } from "./telegram.ts";
 import type { Candidate, Marketplace } from "./types.ts";
 import { errorMessage, escapeHtml, randomCode } from "./util.ts";
@@ -57,6 +66,9 @@ async function affiliateUrlFor(cfg: Config, c: Candidate, ref: string): Promise<
   return shopeeAffiliateLink(cfg.shopee, c.productUrl, ref);
 }
 
+/** After this long in "publishing" the Worker is certainly gone (it gets ~30s). */
+const STUCK_PUBLISHING_MINUTES = 15;
+
 export interface CollectResult {
   found: number;
   previews: number;
@@ -77,6 +89,9 @@ export async function runCollect(
     for (const post of await expireStalePending(db, cfg.selection.pendingTtlHours)) {
       result.expired++;
       await updatePreview(cfg, post, statusHeader(post, "⏰", "Expirou sem aprovação"), []).catch(() => {});
+    }
+    for (const post of await failStuckPublishing(db, STUCK_PUBLISHING_MINUTES)) {
+      await updatePreview(cfg, post, statusHeader(post, "⚠️", "Travou ao publicar"), retryKeyboard(post)).catch(() => {});
     }
   }
 
@@ -101,7 +116,9 @@ export async function runCollect(
   // Remember every product/price we saw (price history), and skip recent ones.
   const productIds = new Map<string, number>();
   let used = new Set<number>();
+  let startedAt = "";
   if (!opts.dryRun) {
+    startedAt = await dbNow(db);
     for (const c of candidates) productIds.set(`${c.marketplace}:${c.externalId}`, await upsertProduct(db, c));
     used = await recentlyUsedProductIds(db, cfg.selection.cooldownDays);
   }
@@ -121,7 +138,7 @@ export async function runCollect(
         log(
           previewHtml(cfg, {
             id: 0, product_id: 0, ref, status: "pending", price_cents: c.priceCents,
-            original_price_cents: c.originalPriceCents ?? null, discount_pct: c.discountPct,
+            original_price_cents: c.originalPriceCents ?? null, discount_pct: c.discountPct, lowest_seen_cents: null,
             affiliate_url: c.productUrl, caption: caption.caption, caption_short: caption.short,
             ai_model: caption.model, preview_chat_id: null, preview_message_id: null,
             preview_has_photo: false, marketplace: c.marketplace, title: c.title,
@@ -132,16 +149,24 @@ export async function runCollect(
         continue;
       }
       const affiliateUrl = await affiliateUrlFor(cfg, c, ref);
+      const productId = productIds.get(`${c.marketplace}:${c.externalId}`) as number;
       const post = await createPost(db, {
-        productId: productIds.get(`${c.marketplace}:${c.externalId}`) as number,
+        productId,
         ref,
         candidate: c,
         affiliateUrl,
+        lowestSeenCents: await lowestSeenPrice(db, productId, startedAt),
         caption: caption.caption,
         captionShort: caption.short,
         aiModel: caption.model,
       });
-      await sendPreview(cfg, db, post);
+      try {
+        await sendPreview(cfg, db, post);
+      } catch (error) {
+        // Nobody can approve a preview that never arrived; don't leave it pending.
+        await transition(db, post.id, "pending", "failed");
+        throw error;
+      }
       result.previews++;
     } catch (error) {
       result.errors.push(`${c.marketplace} ${c.externalId}: ${errorMessage(error)}`);

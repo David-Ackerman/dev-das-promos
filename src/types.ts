@@ -25,6 +25,8 @@ export interface PostRow {
   price_cents: number;
   original_price_cents: number | null;
   discount_pct: number;
+  /** Lowest price seen in the 30 days before the post; null without history. */
+  lowest_seen_cents: number | null;
   affiliate_url: string;
   caption: string;
   caption_short: string;

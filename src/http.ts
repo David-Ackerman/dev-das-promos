@@ -31,12 +31,14 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
       if (path === "/" || path === "/health") return new Response("ok");
 
       const go = path.match(/^\/go\/([^/]+)$/);
-      if (go && request.method === "GET") {
+      if (go && (request.method === "GET" || request.method === "HEAD")) {
         const code = go[1] as string;
         if (!isValidCode(code)) return new Response("Not found", { status: 404 });
         const { db, cfg } = getDeps(env);
         const link = await resolveLink(db, code);
         if (!link) return new Response("Link não encontrado", { status: 404 });
+        // Link checkers probe with HEAD: answer like GET, but it isn't a click.
+        if (request.method === "HEAD") return Response.redirect(link.affiliate_url, 302);
         const ua = request.headers.get("user-agent") ?? "";
         const ip = request.headers.get("cf-connecting-ip") ?? "";
         ctx.waitUntil(
@@ -73,7 +75,8 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
         if (!cfg.telegram.webhookSecret || secret !== cfg.telegram.webhookSecret) {
           return new Response("forbidden", { status: 403 });
         }
-        const update = (await request.json()) as TgUpdate;
+        const update = (await request.json().catch(() => undefined)) as TgUpdate | undefined;
+        if (!update || typeof update !== "object") return new Response("bad request", { status: 400 });
         // Answer Telegram right away; do the work in the background.
         ctx.waitUntil(handleUpdate(cfg, db, update));
         return new Response("ok");

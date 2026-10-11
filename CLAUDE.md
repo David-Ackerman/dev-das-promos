@@ -25,6 +25,8 @@ Small affiliate-deals bot. Full overview and setup in [README.md](./README.md).
 - Money is integer cents.
 - The AI never writes prices or links; `src/render.ts` adds them.
 - Approve must stay idempotent: `transition(db, id, "pending", "publishing")`.
+  Retry goes through the same gate from `failed`/`partial` and skips every
+  destination already in `publications` as sent, so nothing is posted twice.
 
 ## Commands
 ```bash

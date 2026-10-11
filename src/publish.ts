@@ -1,10 +1,10 @@
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
-import { renderInput, statusHeader, updatePreview } from "./preview.ts";
+import { renderInput, retryKeyboard, statusHeader, updatePreview } from "./preview.ts";
 import { postTweet } from "./publishers/x.ts";
 import { sendWhatsApp } from "./publishers/whatsapp.ts";
 import { renderTelegram, renderWhatsApp, renderX } from "./render.ts";
-import { getOrCreateLink, getPost, recordPublication, transition } from "./repo.ts";
+import { deliveredTargets, getOrCreateLink, getPost, recordPublication, transition } from "./repo.ts";
 import { type Keyboard, sendPost } from "./telegram.ts";
 import type { PostRow } from "./types.ts";
 import { errorMessage, escapeHtml } from "./util.ts";
@@ -25,13 +25,25 @@ export async function whatsappText(cfg: Config, db: Db, post: PostRow, target = 
   return { code, text: renderWhatsApp(renderInput(cfg, post, goUrl(cfg, code))) };
 }
 
-/** Sends an approved post everywhere. Each channel fails independently. */
-export async function publishEverywhere(cfg: Config, db: Db, post: PostRow): Promise<PublishResult> {
+/**
+ * Sends an approved post everywhere. Each channel fails independently.
+ * Destinations in `done` ("channel:target") already got it and are skipped.
+ */
+export async function publishEverywhere(
+  cfg: Config,
+  db: Db,
+  post: PostRow,
+  done: Set<string> = new Set(),
+): Promise<PublishResult> {
   const result: PublishResult = { ok: [], failed: [], manual: [] };
 
   // Telegram groups: one tracked link per group, so we can compare groups.
   for (const chatId of cfg.telegram.groupChatIds) {
     const label = `Telegram ${chatId}`;
+    if (done.has(`telegram:${chatId}`)) {
+      result.ok.push(label);
+      continue;
+    }
     try {
       const code = await getOrCreateLink(db, post.id, "telegram", chatId);
       const html = renderTelegram(renderInput(cfg, post, goUrl(cfg, code)));
@@ -47,11 +59,17 @@ export async function publishEverywhere(cfg: Config, db: Db, post: PostRow): Pro
   // WhatsApp
   if (cfg.whatsapp.mode === "share") {
     const { code } = await whatsappText(cfg, db, post);
-    await recordPublication(db, { postId: post.id, channel: "whatsapp", target: "", status: "manual" });
+    if (!done.has("whatsapp:")) {
+      await recordPublication(db, { postId: post.id, channel: "whatsapp", target: "", status: "manual" });
+    }
     result.manual.push([{ text: "📲 Enviar no WhatsApp", url: `${cfg.publicBaseUrl}/wa/${code}` }]);
   } else if (cfg.whatsapp.mode !== "off") {
     for (const groupId of cfg.whatsapp.groupIds) {
       const label = `WhatsApp ${groupId}`;
+      if (done.has(`whatsapp:${groupId}`)) {
+        result.ok.push(label);
+        continue;
+      }
       try {
         const { text } = await whatsappText(cfg, db, post, groupId);
         const id = await sendWhatsApp(cfg.whatsapp, groupId, text, post.image_url);
@@ -65,7 +83,9 @@ export async function publishEverywhere(cfg: Config, db: Db, post: PostRow): Pro
   }
 
   // X
-  if (cfg.x.mode !== "off" && cfg.x.credentials) {
+  if (cfg.x.mode !== "off" && cfg.x.credentials && done.has("x:")) {
+    result.ok.push("X");
+  } else if (cfg.x.mode !== "off" && cfg.x.credentials) {
     try {
       const code = await getOrCreateLink(db, post.id, "x");
       const tail = cfg.x.mode === "link" ? goUrl(cfg, code) : cfg.x.noLinkText;
@@ -86,14 +106,33 @@ export async function approvePost(cfg: Config, db: Db, postId: number): Promise<
   if (!(await transition(db, postId, "pending", "publishing"))) {
     return "Esse post já foi processado.";
   }
+  return finishPublishing(cfg, db, postId);
+}
+
+/** Retry button on a failed/partial post: sends only to the destinations that didn't get it. */
+export async function retryPost(cfg: Config, db: Db, postId: number): Promise<string> {
+  if (
+    !(await transition(db, postId, "failed", "publishing")) &&
+    !(await transition(db, postId, "partial", "publishing"))
+  ) {
+    return "Nada para reenviar.";
+  }
+  return finishPublishing(cfg, db, postId);
+}
+
+/** The post is already in "publishing" (so nobody else is sending it): send and record the outcome. */
+async function finishPublishing(cfg: Config, db: Db, postId: number): Promise<string> {
   const post = (await getPost(db, postId)) as PostRow;
   await updatePreview(cfg, post, statusHeader(post, "⏳", "Publicando…"), []);
 
   let result: PublishResult;
   try {
-    result = await publishEverywhere(cfg, db, post);
+    result = await publishEverywhere(cfg, db, post, await deliveredTargets(db, postId));
   } catch (error) {
     result = { ok: [], failed: [errorMessage(error)], manual: [] };
+  }
+  if (!result.ok.length && !result.manual.length && !result.failed.length) {
+    result.failed.push("nenhum canal configurado (TELEGRAM_GROUP_IDS, WHATSAPP_MODE, X_MODE)");
   }
 
   const status =
@@ -113,7 +152,7 @@ export async function approvePost(cfg: Config, db: Db, postId: number): Promise<
   const header = `${statusHeader(post, emoji, status === "failed" ? "Falhou" : "Publicado")}${
     lines.length ? `\n<i>${escapeHtml(lines.join("\n"))}</i>` : ""
   }`;
-  await updatePreview(cfg, post, header, result.manual);
+  await updatePreview(cfg, post, header, result.failed.length ? [...result.manual, ...retryKeyboard(post)] : result.manual);
   return status === "failed" ? "Falhou ao publicar 😕" : "Publicado! 🚀";
 }
 

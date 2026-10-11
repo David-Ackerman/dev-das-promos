@@ -23,9 +23,12 @@ Everything runs on free plans: **GitHub Actions**, **Cloudflare Workers** and **
    - **🔄 Outro texto** asks the AI for a new joke.
    - **Reply to the preview with your own text** and it replaces the AI text.
 3. After you approve, the preview shows a **📲 Enviar no WhatsApp** button. It opens WhatsApp with the post already written, so you just pick the groups (see the WhatsApp section below for why).
-4. If you don't answer a preview within 12h, it expires, because prices change.
+4. If a channel fails (the bot was removed from a group, X is out of credits…), the preview says which one and shows **🔁 Tentar de novo**. It sends only where it's still missing, so nobody gets the post twice.
+5. If you don't answer a preview within 12h, it expires, because prices change.
 
-Bot commands: `/stats 7` shows clicks per channel, per store and the top products. `/pendentes` lists posts waiting for you. `/buscar` looks for deals right now. `/id` shows the id of the chat it's sent in, which you need when setting up groups.
+Each preview also tells you, from our own price history, whether the deal is real: **📉** lowest price we've seen in 30 days, **↔️** same price as before, or **⚠️** it was recently cheaper (with the price). Only you see that line.
+
+Bot commands: `/stats 7` shows clicks per channel, per group, per store and the top products. `/pendentes` lists posts waiting for you. `/buscar` looks for deals right now. `/id` shows the id of the chat it's sent in, which you need when setting up groups.
 
 ## Setup (one time, about 30 minutes)
 
@@ -92,7 +95,7 @@ Check current prices in the X developer console.
 - Every channel and every group gets its **own** `/go/<code>` link, so you can compare Telegram group A, group B, WhatsApp and X.
 - Clicks from link-preview robots (Telegram, WhatsApp and X fetch the link to draw the preview) are flagged and **left out** of `/stats`.
 - Shopee links carry the post's `ref` as a **sub-id**, so Shopee's own conversion report shows which post made each sale. Amazon links stay exactly as Amazon returns them, because changing them can break attribution, so for Amazon we only see clicks.
-- `price_snapshots` keeps every price we've seen, which lets us spot fake "discounts" later.
+- `price_snapshots` keeps every price we've seen. The preview uses it to warn you about fake "discounts".
 
 Want to dig deeper? Open the Neon SQL editor and query `clicks`, `links`, `posts` and `products`.
 

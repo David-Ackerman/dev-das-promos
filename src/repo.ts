@@ -4,7 +4,7 @@ import { randomCode } from "./util.ts";
 
 const POST_SELECT = `
   SELECT p.id, p.product_id, p.ref, p.status, p.price_cents, p.original_price_cents,
-         p.discount_pct, p.affiliate_url, p.caption, p.caption_short, p.ai_model,
+         p.discount_pct, p.lowest_seen_cents, p.affiliate_url, p.caption, p.caption_short, p.ai_model,
          p.preview_chat_id, p.preview_message_id::text AS preview_message_id, p.preview_has_photo,
          pr.marketplace, pr.title, pr.image_url, pr.product_url
   FROM posts p JOIN products pr ON pr.id = p.product_id`;
@@ -27,14 +27,34 @@ export async function upsertProduct(db: Db, c: Candidate): Promise<number> {
   return productId;
 }
 
-/** Products that already had any post (approved, pending, declined…) inside the cooldown window. */
+/**
+ * Products that already had a post (approved, pending, declined…) inside the cooldown window.
+ * Posts whose preview never reached the admin don't count, so the product can come back.
+ */
 export async function recentlyUsedProductIds(db: Db, cooldownDays: number): Promise<Set<number>> {
   const rows = await db.query<{ product_id: number }>(
     `SELECT DISTINCT product_id FROM posts
-     WHERE created_at > now() - make_interval(days => $1::int)`,
+     WHERE created_at > now() - make_interval(days => $1::int) AND preview_message_id IS NOT NULL`,
     [cooldownDays],
   );
   return new Set(rows.map((r) => r.product_id));
+}
+
+/** The database clock, used to tell this run's price snapshots from older ones. */
+export async function dbNow(db: Db): Promise<string> {
+  const rows = await db.query<{ now: string }>(`SELECT now()::text AS now`);
+  return (rows[0] as { now: string }).now;
+}
+
+/** Lowest price seen for a product in the `days` before `before`, or null without history. */
+export async function lowestSeenPrice(db: Db, productId: number, before: string, days = 30): Promise<number | null> {
+  const rows = await db.query<{ lowest: number | null }>(
+    `SELECT min(price_cents)::int AS lowest FROM price_snapshots
+     WHERE product_id = $1 AND captured_at < $2::timestamptz
+       AND captured_at > $2::timestamptz - make_interval(days => $3::int)`,
+    [productId, before, days],
+  );
+  return rows[0]?.lowest ?? null;
 }
 
 export async function createPost(
@@ -44,6 +64,7 @@ export async function createPost(
     ref: string;
     candidate: Candidate;
     affiliateUrl: string;
+    lowestSeenCents?: number | null;
     caption: string;
     captionShort: string;
     aiModel: string;
@@ -51,8 +72,8 @@ export async function createPost(
 ): Promise<PostRow> {
   const rows = await db.query<{ id: number }>(
     `INSERT INTO posts (product_id, ref, price_cents, original_price_cents, discount_pct,
-                        commission_rate, affiliate_url, caption, caption_short, ai_model)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+                        commission_rate, affiliate_url, caption, caption_short, ai_model, lowest_seen_cents)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
     [
       input.productId,
       input.ref,
@@ -64,6 +85,7 @@ export async function createPost(
       input.caption,
       input.captionShort,
       input.aiModel,
+      input.lowestSeenCents ?? null,
     ],
   );
   return (await getPost(db, (rows[0] as { id: number }).id)) as PostRow;
@@ -119,7 +141,7 @@ export async function updateCaption(
 export async function transition(db: Db, postId: number, from: string, to: string): Promise<boolean> {
   const rows = await db.query(
     `UPDATE posts SET status = $3,
-       decided_at = CASE WHEN $2 = 'pending' THEN now() ELSE decided_at END,
+       decided_at = CASE WHEN $2 = 'pending' OR $3 = 'publishing' THEN now() ELSE decided_at END,
        published_at = CASE WHEN $3 IN ('published', 'partial') THEN now() ELSE published_at END
      WHERE id = $1 AND status = $2 RETURNING id`,
     [postId, from, to],
@@ -133,6 +155,25 @@ export async function expireStalePending(db: Db, ttlHours: number): Promise<Post
      WHERE status = 'pending' AND created_at < now() - make_interval(hours => $1::int)
      RETURNING id`,
     [ttlHours],
+  );
+  const out: PostRow[] = [];
+  for (const { id } of ids) {
+    const post = await getPost(db, id);
+    if (post) out.push(post);
+  }
+  return out;
+}
+
+/**
+ * Posts left in "publishing" (the Worker was cut off mid-send) become "failed",
+ * so the admin gets the retry button instead of a preview stuck forever.
+ */
+export async function failStuckPublishing(db: Db, minutes: number): Promise<PostRow[]> {
+  const ids = await db.query<{ id: number }>(
+    `UPDATE posts SET status = 'failed'
+     WHERE status = 'publishing' AND decided_at < now() - make_interval(mins => $1::int)
+     RETURNING id`,
+    [minutes],
   );
   const out: PostRow[] = [];
   for (const { id } of ids) {
@@ -217,10 +258,20 @@ export async function recordPublication(
   );
 }
 
+/** "channel:target" of every delivery that already worked, so a retry never sends twice. */
+export async function deliveredTargets(db: Db, postId: number): Promise<Set<string>> {
+  const rows = await db.query<{ channel: string; target: string }>(
+    `SELECT DISTINCT channel, target FROM publications WHERE post_id = $1 AND status IN ('sent', 'manual')`,
+    [postId],
+  );
+  return new Set(rows.map((r) => `${r.channel}:${r.target}`));
+}
+
 export interface Stats {
   days: number;
   posts: { published: number; declined: number; pending: number };
   byChannel: { channel: string; clicks: number; unique: number }[];
+  byTarget: { channel: string; target: string; clicks: number; unique: number }[];
   byMarketplace: { marketplace: string; clicks: number; posts: number }[];
   topPosts: { id: number; title: string; marketplace: string; discount_pct: number; clicks: number }[];
 }
@@ -239,6 +290,13 @@ export async function getStats(db: Db, days: number): Promise<Stats> {
      FROM clicks c JOIN links l ON l.code = c.code
      WHERE NOT c.is_bot AND c.clicked_at > ${since}
      GROUP BY l.channel ORDER BY clicks DESC`,
+    [days],
+  );
+  const byTarget = await db.query<Stats["byTarget"][number]>(
+    `SELECT l.channel, l.target, count(*)::int AS clicks, count(DISTINCT c.ip_hash)::int AS unique
+     FROM clicks c JOIN links l ON l.code = c.code
+     WHERE NOT c.is_bot AND l.target <> '' AND c.clicked_at > ${since}
+     GROUP BY l.channel, l.target ORDER BY clicks DESC LIMIT 10`,
     [days],
   );
   const byMarketplace = await db.query<Stats["byMarketplace"][number]>(
@@ -264,6 +322,7 @@ export async function getStats(db: Db, days: number): Promise<Stats> {
     days,
     posts: posts ?? { published: 0, declined: 0, pending: 0 },
     byChannel,
+    byTarget,
     byMarketplace,
     topPosts,
   };

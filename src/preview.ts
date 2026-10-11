@@ -4,7 +4,7 @@ import { renderTelegram } from "./render.ts";
 import { setPreview } from "./repo.ts";
 import { editPost, type Keyboard, sendPost } from "./telegram.ts";
 import type { PostRow } from "./types.ts";
-import { escapeHtml } from "./util.ts";
+import { brl, escapeHtml } from "./util.ts";
 
 const STORE = { amazon: "Amazon", shopee: "Shopee" } as const;
 
@@ -22,12 +22,21 @@ export function renderInput(cfg: Config, post: PostRow, link: string) {
   };
 }
 
+/** Only the admin sees this: is the "discount" real, judging by the prices we recorded? */
+function priceHistoryNote(post: PostRow): string {
+  const lowest = post.lowest_seen_cents;
+  if (lowest === null) return "";
+  if (lowest < post.price_cents) return `\n⚠️ Já esteve por ${brl(lowest)} nos últimos 30 dias`;
+  if (lowest === post.price_cents) return "\n↔️ Mesmo preço que já vimos nos últimos 30 dias";
+  return "\n📉 Menor preço que vimos em 30 dias";
+}
+
 /** What the admin sees: a status header + the post exactly as the group will see it. */
 export function previewHtml(cfg: Config, post: PostRow, header?: string): string {
   const top =
     header ??
     `📝 <b>Prévia #${post.id}</b> · ${STORE[post.marketplace]}${post.discount_pct ? ` · -${post.discount_pct}%` : ""}` +
-      `${post.ai_model === "template" ? " · texto padrão" : ""}`;
+      `${post.ai_model === "template" ? " · texto padrão" : ""}${priceHistoryNote(post)}`;
   const body = renderTelegram(renderInput(cfg, post, `${cfg.publicBaseUrl}/go/•••••••`));
   return `${top}\n➖➖➖➖➖➖\n${body}`;
 }
@@ -43,6 +52,10 @@ export function pendingKeyboard(post: PostRow): Keyboard {
       { text: "🔗 Ver produto", url: post.affiliate_url },
     ],
   ];
+}
+
+export function retryKeyboard(post: PostRow): Keyboard {
+  return [[{ text: "🔁 Tentar de novo", callback_data: `t:${post.id}` }]];
 }
 
 export const EDIT_HINT =

@@ -33,6 +33,7 @@ const WORKER_KEYS = [
   "POST_FOOTER",
   "GH_DISPATCH_TOKEN",
   "GH_REPO",
+  "GH_COLLECT_WORKFLOW",
   "GH_REF",
 ];
 

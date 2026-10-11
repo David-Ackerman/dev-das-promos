@@ -163,6 +163,198 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  const ai = () => ({ choices: [{ message: { content: '{"texto":"Texto da IA","tweet":"Tweet da IA"}' } }] });
+  const shortLink = () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } });
+  const offer = (id: string, over: Partial<Candidate> = {}): Candidate => ({
+    marketplace: "shopee", externalId: `${id}-${suffix}`, title: `Produto ${id}`, productUrl: "https://shopee.com.br/p/7",
+    priceCents: 5000, originalPriceCents: 10000, discountPct: 50, ...over,
+  });
+  const collect = (cfg: ReturnType<typeof testConfig>, offers: Candidate[]) =>
+    runCollect(cfg, db, { fetchShopee: async () => offers, log: () => {} });
+  const postFor = async (id: string) =>
+    (await db.query<{ id: number; status: string; preview_message_id: string | null }>(
+      `SELECT p.id, p.status, p.preview_message_id::text FROM posts p JOIN products pr ON pr.id = p.product_id
+       WHERE pr.external_id = $1 ORDER BY p.id DESC LIMIT 1`,
+      [`${id}-${suffix}`],
+    ))[0]!;
+  const tap = async (cfg: ReturnType<typeof testConfig>, data: string) => {
+    const res = await createHandler(() => ({ cfg, db })).fetch(
+      new Request("https://w/telegram/webhook", {
+        method: "POST",
+        headers: { "x-telegram-bot-api-secret-token": "secret_secret_secret" },
+        body: JSON.stringify({ update_id: 1, callback_query: { id: "q", from: { id: 111 }, data } }),
+      }),
+      {},
+      ctx,
+    );
+    await flush();
+    return res;
+  };
+  const xOn = { X_MODE: "no-link", X_API_KEY: "a", X_API_SECRET: "b", X_ACCESS_TOKEN: "c", X_ACCESS_TOKEN_SECRET: "d" };
+
+  it("retries only the destinations that failed", async () => {
+    const cfg = testConfig(xOn);
+    let groupDown = true;
+    const f = mockFetch([
+      [/sendPhoto|sendMessage/, (c) =>
+        c.body.chat_id === "-1002" && groupDown
+          ? new Response(JSON.stringify({ ok: false, description: "Forbidden: bot was kicked" }), { status: 403 })
+          : { ok: true, result: { message_id: 4242 } }],
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", ai],
+      ["affiliate.shopee", shortLink],
+      ["api.x.com", () => ({ data: { id: "tweet-2" } })],
+    ]);
+    const groupSends = () => f.calls.filter((c) => /sendPhoto|sendMessage/.test(c.url) && String(c.body.chat_id).startsWith("-100")).map((c) => c.body.chat_id);
+    try {
+      await collect(cfg, [offer("retry")]);
+      const post = await postFor("retry");
+      await tap(cfg, `t:${post.id}`);
+      assert.equal(f.to("answerCallbackQuery").at(-1)!.body.text, "Nada para reenviar.", "nothing to retry while pending");
+
+      await tap(cfg, `a:${post.id}`);
+      assert.equal((await postFor("retry")).status, "partial");
+      const kb = f.to("editMessage").at(-1)!.body.reply_markup.inline_keyboard;
+      assert.match(kb[0][0].url, /\/wa\//);
+      assert.equal(kb[1][0].callback_data, `t:${post.id}`, "partial post offers a retry");
+      await tap(cfg, `a:${post.id}`);
+      assert.equal(f.to("answerCallbackQuery").at(-1)!.body.text, "Esse post já foi processado.");
+
+      groupDown = false;
+      const sentBefore = groupSends().length;
+      await tap(cfg, `t:${post.id}`);
+      assert.deepEqual(groupSends().slice(sentBefore), ["-1002"], "only the group that failed gets it");
+      assert.equal(f.to("api.x.com").length, 1, "X is not posted twice");
+      assert.equal((await postFor("retry")).status, "published");
+      const finalEdit = f.to("editMessage").at(-1)!.body;
+      assert.match(finalEdit.text ?? finalEdit.caption, /Enviado: Telegram -1001, Telegram -1002, X/);
+      assert.equal(finalEdit.reply_markup.inline_keyboard.length, 1, "retry button is gone, WhatsApp stays");
+      const manual = await db.query(`SELECT 1 FROM publications WHERE post_id = $1 AND status = 'manual'`, [post.id]);
+      assert.equal(manual.length, 1);
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("does not call a post published when no channel is configured", async () => {
+    const cfg = testConfig({ TELEGRAM_GROUP_IDS: "", WHATSAPP_MODE: "off" });
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
+    try {
+      await collect(cfg, [offer("nochannel")]);
+      const post = await postFor("nochannel");
+      await tap(cfg, `a:${post.id}`);
+      assert.equal((await postFor("nochannel")).status, "failed");
+      assert.match(f.to("editMessage").at(-1)!.body.text, /nenhum canal configurado/);
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("unsticks posts the Worker left in publishing", async () => {
+    const cfg = testConfig();
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
+    try {
+      await collect(cfg, [offer("stuck")]);
+      const post = await postFor("stuck");
+      await db.query(`UPDATE posts SET status = 'publishing', decided_at = now() - interval '1 hour' WHERE id = $1`, [post.id]);
+      await collect(cfg, []);
+      assert.equal((await postFor("stuck")).status, "failed");
+      const edit = f.to("editMessage").filter((c) => c.body.message_id === Number(post.preview_message_id)).at(-1)!.body;
+      assert.match(edit.text, /Travou ao publicar/);
+      assert.equal(edit.reply_markup.inline_keyboard[0][0].callback_data, `t:${post.id}`);
+      await tap(cfg, `t:${post.id}`);
+      assert.equal((await postFor("stuck")).status, "published");
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("tells the admin when the product was recently cheaper", async () => {
+    const cfg = testConfig({ REPOST_COOLDOWN_DAYS: "0" });
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
+    const lastPreview = () => f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body.text as string;
+    try {
+      await collect(cfg, [offer("hist")]);
+      assert.doesNotMatch(lastPreview(), /30 dias/, "no history yet, no note");
+      const { id } = (await db.query<{ id: number }>(`SELECT id FROM products WHERE external_id = $1`, [`hist-${suffix}`]))[0]!;
+      await db.query(
+        `INSERT INTO price_snapshots (product_id, price_cents, captured_at) VALUES ($1, 3990, now() - interval '5 days'), ($1, 100, now() - interval '45 days')`,
+        [id],
+      );
+      await collect(cfg, [offer("hist")]);
+      assert.match(lastPreview(), /⚠️ Já esteve por R\$\s39,90 nos últimos 30 dias/);
+      await collect(cfg, [offer("hist", { priceCents: 3000, discountPct: 70 })]);
+      assert.match(lastPreview(), /📉 Menor preço que vimos em 30 dias/);
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("lets a product come back when its preview could not be sent", async () => {
+    const cfg = testConfig();
+    let telegramDown = true;
+    const f = mockFetch([
+      ["sendMessage", (c) =>
+        telegramDown && /Prévia/.test(c.body.text)
+          ? new Response(JSON.stringify({ ok: false, description: "Too Many Requests" }), { status: 429 })
+          : { ok: true, result: { message_id: 4343 } }],
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", ai],
+      ["affiliate.shopee", shortLink],
+    ]);
+    try {
+      const res = await collect(cfg, [offer("ghost")]);
+      assert.equal(res.previews, 0);
+      assert.match(res.errors[0]!, /Too Many Requests/);
+      assert.equal((await postFor("ghost")).status, "failed", "not left pending with no buttons");
+      telegramDown = false;
+      assert.equal((await collect(cfg, [offer("ghost")])).previews, 1, "not on cooldown");
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("answers HEAD on /go without counting a click, rejects a broken webhook body, and reports clicks per group", async () => {
+    const cfg = testConfig();
+    const handler = createHandler(() => ({ cfg, db }));
+    const [link] = await db.query<{ code: string; target: string }>(
+      `SELECT code, target FROM links WHERE channel = 'telegram' AND target <> '' ORDER BY created_at DESC LIMIT 1`,
+    );
+    const clicks = async () => (await db.query(`SELECT 1 FROM clicks WHERE code = $1`, [link!.code])).length;
+    const before = await clicks();
+    const head = await handler.fetch(new Request(`https://w/go/${link!.code}`, { method: "HEAD" }), {}, ctx);
+    assert.equal(head.status, 302);
+    await handler.fetch(new Request(`https://w/go/${link!.code}`, { headers: { "user-agent": "Mozilla/5.0", "cf-connecting-ip": "9.9.9.9" } }), {}, ctx);
+    await flush();
+    assert.equal(await clicks(), before + 1, "only the GET is a click");
+
+    const bad = await handler.fetch(
+      new Request("https://w/telegram/webhook", { method: "POST", headers: { "x-telegram-bot-api-secret-token": "secret_secret_secret" }, body: "not json" }),
+      {},
+      ctx,
+    );
+    assert.equal(bad.status, 400);
+
+    const f = mockFetch([["api.telegram.org", telegramRoute()]]);
+    try {
+      await handler.fetch(
+        new Request("https://w/telegram/webhook", {
+          method: "POST",
+          headers: { "x-telegram-bot-api-secret-token": "secret_secret_secret" },
+          body: JSON.stringify({ update_id: 1, message: { message_id: 1, chat: { id: 111, type: "private" }, from: { id: 111 }, text: "/stats" } }),
+        }),
+        {},
+        ctx,
+      );
+      await flush();
+      const stats = f.to("sendMessage").at(-1)!.body.text as string;
+      assert.match(stats, /Por grupo/);
+      assert.ok(stats.includes(`telegram ${link!.target}: `), stats);
+    } finally {
+      f.restore();
+    }
+  });
+
   it("expires previews nobody answered", async () => {
     const cfg = testConfig();
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", () => new Response("x", { status: 500 })], ["affiliate.shopee", () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } })]]);

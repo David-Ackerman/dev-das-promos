@@ -2,7 +2,7 @@ import { generateCaption } from "./ai.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { EDIT_HINT, pendingKeyboard, updatePreview } from "./preview.ts";
-import { approvePost, declinePost } from "./publish.ts";
+import { approvePost, declinePost, retryPost } from "./publish.ts";
 import { findPostByPreview, getPost, getStats, listPending, updateCaption } from "./repo.ts";
 import { sendText, tg } from "./telegram.ts";
 import type { PostRow } from "./types.ts";
@@ -31,6 +31,7 @@ const HELP = `<b>Comandos</b>
 /id — mostra o id deste chat (útil para configurar grupos)
 
 Nas prévias: ✅ publica, ❌ descarta, 🔄 gera outro texto.
+Se algum canal falhar, 🔁 tenta de novo só onde faltou.
 Para escrever o texto você mesmo, responda à prévia com o texto novo.`;
 
 function isAdmin(cfg: Config, userId: number | undefined): boolean {
@@ -62,6 +63,13 @@ export function formatStats(s: Awaited<ReturnType<typeof getStats>>): string {
       ? s.byChannel.map((c) => `• ${c.channel}: ${c.clicks} (${c.unique} pessoas)`)
       : ["• nenhum clique ainda"]),
     "",
+    ...(s.byTarget.length
+      ? [
+          "<b>Por grupo</b>",
+          ...s.byTarget.map((t) => `• ${t.channel} ${escapeHtml(t.target)}: ${t.clicks} (${t.unique} pessoas)`),
+          "",
+        ]
+      : []),
     "<b>Por loja</b>",
     ...(s.byMarketplace.length
       ? s.byMarketplace.map(
@@ -107,8 +115,15 @@ async function handleCallback(cfg: Config, db: Db, cq: NonNullable<TgUpdate["cal
   if (!Number.isInteger(postId)) return answer("?");
 
   if (action === "a") {
+    const post = await getPost(db, postId);
+    if (!post || post.status !== "pending") return answer("Esse post já foi processado.");
     await answer("Publicando…");
     await approvePost(cfg, db, postId);
+  } else if (action === "t") {
+    const post = await getPost(db, postId);
+    if (!post || (post.status !== "failed" && post.status !== "partial")) return answer("Nada para reenviar.");
+    await answer("Tentando de novo…");
+    await retryPost(cfg, db, postId);
   } else if (action === "d") {
     await answer(await declinePost(cfg, db, postId));
   } else if (action === "r") {
