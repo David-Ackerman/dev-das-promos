@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LogoutButton } from "./logout-button";
 
 const LINKS = [
   { href: "/dashboard", label: "Dashboard" },
@@ -20,6 +21,7 @@ export function Nav() {
             </Link>
           ))}
         </div>
+        <LogoutButton />
       </div>
     </nav>
   );

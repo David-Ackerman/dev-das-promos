@@ -1,3 +1,4 @@
+import { Disclosure } from "@/components/disclosure";
 import { Nav } from "@/components/nav";
 import { ScoreBadge } from "@/components/score-badge";
 import { apiGet } from "@/lib/api";
@@ -43,7 +44,7 @@ const MARKETPLACE_LABEL: Record<string, string> = {
 };
 
 async function getProduct(slug: string) {
-  return apiGet<ProductDetail>(`/public/products/${slug}`);
+  return apiGet<ProductDetail>(`/public/products/${encodeURIComponent(slug)}`);
 }
 
 export async function generateMetadata({
@@ -58,6 +59,7 @@ export async function generateMetadata({
     description:
       product.description ??
       `Compare preços e ofertas de ${product.name} na Amazon Brasil e Shopee Brasil com histórico de preço verificado.`,
+    alternates: { canonical: `/product/${encodeURIComponent(product.slug)}` },
   };
 }
 
@@ -66,8 +68,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
   const product = await getProduct(slug);
   if (!product) notFound();
 
-  const publishedListings = product.listings.filter((l) => l.dealStatus === "published");
-  const listings = publishedListings.length > 0 ? publishedListings : product.listings;
+  const listings = product.listings.filter((l) => l.dealStatus === "published");
   const sorted = [...listings].sort((a, b) => a.effectivePriceCents - b.effectivePriceCents);
 
   return (
@@ -76,7 +77,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
       <main className="mx-auto max-w-3xl px-6 py-10">
         {product.categoryName && product.categorySlug && (
           <Link
-            href={`/category/${product.categorySlug}`}
+            href={`/category/${encodeURIComponent(product.categorySlug)}`}
             className="text-sm text-neutral-500 hover:underline"
           >
             {product.categoryName}
@@ -91,6 +92,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
                 alt={product.name}
                 fill
                 className="object-contain p-6"
+                referrerPolicy="no-referrer"
                 unoptimized
               />
             )}
@@ -107,6 +109,9 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
 
         <section className="mt-10">
           <h2 className="mb-3 text-lg font-semibold">Comparar preços</h2>
+          <div className="mb-4">
+            <Disclosure />
+          </div>
 
           {sorted.length === 0 && (
             <p className="text-neutral-500">Nenhuma oferta disponível no momento.</p>
@@ -116,7 +121,7 @@ export default async function ProductPage({ params }: { params: Promise<{ slug: 
             {sorted.map((listing, index) => (
               <Link
                 key={listing.marketplaceProductId}
-                href={`/deal/${listing.dealSlug}`}
+                href={`/deal/${encodeURIComponent(listing.dealSlug)}`}
                 className="card flex items-center justify-between p-4 transition hover:shadow-md"
               >
                 <div>

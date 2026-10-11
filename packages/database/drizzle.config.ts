@@ -1,7 +1,9 @@
 import { defineConfig } from "drizzle-kit";
 
-const databaseUrl =
-  process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/das_promos";
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  throw new Error("DATABASE_URL is required for Drizzle commands");
+}
 
 export default defineConfig({
   schema: "./src/schema/index.ts",

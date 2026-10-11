@@ -22,7 +22,7 @@ export function IngestButtons() {
 
   return (
     <div className="flex items-center gap-2">
-      <span className="text-sm text-neutral-400">Ingest mock offers:</span>
+      <span className="text-sm text-neutral-400">Ingest offers:</span>
       <Button
         variant="outline"
         disabled={mutation.isPending}

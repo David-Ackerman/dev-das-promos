@@ -8,7 +8,7 @@ beforeEach(() => {
 
 afterEach(() => {
   if (ORIGINAL_API_URL === undefined) {
-    delete process.env.API_URL;
+    Reflect.deleteProperty(process.env, "API_URL");
   } else {
     process.env.API_URL = ORIGINAL_API_URL;
   }
@@ -18,7 +18,7 @@ afterEach(() => {
 
 describe("apiGet", () => {
   it("builds the URL from the default API_URL when the env var is unset", async () => {
-    delete process.env.API_URL;
+    Reflect.deleteProperty(process.env, "API_URL");
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -53,7 +53,7 @@ describe("apiGet", () => {
   });
 
   it("passes through a custom revalidate option", async () => {
-    delete process.env.API_URL;
+    Reflect.deleteProperty(process.env, "API_URL");
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -70,7 +70,7 @@ describe("apiGet", () => {
   });
 
   it("returns null on a 404 response", async () => {
-    delete process.env.API_URL;
+    Reflect.deleteProperty(process.env, "API_URL");
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
       status: 404,
@@ -87,7 +87,7 @@ describe("apiGet", () => {
   });
 
   it("throws on a non-ok, non-404 response", async () => {
-    delete process.env.API_URL;
+    Reflect.deleteProperty(process.env, "API_URL");
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
@@ -100,7 +100,7 @@ describe("apiGet", () => {
   });
 
   it("propagates a network failure instead of swallowing it", async () => {
-    delete process.env.API_URL;
+    Reflect.deleteProperty(process.env, "API_URL");
     const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -111,7 +111,7 @@ describe("apiGet", () => {
 
 describe("apiGoUrl", () => {
   it("builds a go redirect URL using the default API_URL", async () => {
-    delete process.env.API_URL;
+    Reflect.deleteProperty(process.env, "API_URL");
     const { apiGoUrl } = await import("../api.js");
     expect(apiGoUrl("abc123")).toBe("http://localhost:4000/go/abc123");
   });

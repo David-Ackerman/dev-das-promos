@@ -1,4 +1,4 @@
-const COMBINING_DIACRITICS = /[\u0300-\u036f]/g;
+const COMBINING_DIACRITICS = /\p{M}/gu;
 
 export function slugify(input: string): string {
   return input

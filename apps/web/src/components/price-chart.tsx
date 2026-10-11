@@ -17,7 +17,9 @@ const PADDING = 24;
 export function PriceChart({ points }: { points: PricePoint[] }) {
   if (points.length < 2) {
     return (
-      <p className="text-sm text-neutral-500">Not enough price history yet to plot a chart.</p>
+      <p className="text-sm text-neutral-500">
+        Ainda não há histórico de preços suficiente para exibir o gráfico.
+      </p>
     );
   }
 
@@ -38,13 +40,13 @@ export function PriceChart({ points }: { points: PricePoint[] }) {
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         className="w-full"
         role="img"
-        aria-label="Price history chart"
+        aria-label="Gráfico do histórico de preços"
       >
         <polyline points={coords.join(" ")} fill="none" stroke="#2563eb" strokeWidth={2} />
       </svg>
       <div className="mt-1 flex justify-between text-xs text-neutral-500">
-        <span>Lowest: {formatCentsBRL(min)}</span>
-        <span>Highest: {formatCentsBRL(max)}</span>
+        <span>Menor preço: {formatCentsBRL(min)}</span>
+        <span>Maior preço: {formatCentsBRL(max)}</span>
       </div>
     </div>
   );

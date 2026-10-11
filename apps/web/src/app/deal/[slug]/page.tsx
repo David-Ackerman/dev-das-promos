@@ -43,7 +43,7 @@ const MARKETPLACE_LABEL: Record<string, string> = {
 };
 
 async function getDeal(slug: string) {
-  return apiGet<DealDetail>(`/public/deals/${slug}`);
+  return apiGet<DealDetail>(`/public/deals/${encodeURIComponent(slug)}`);
 }
 
 export async function generateMetadata({
@@ -56,6 +56,7 @@ export async function generateMetadata({
   return {
     title: `${deal.productName} — ${formatCentsBRL(deal.effectivePriceCents)}`,
     description: `${deal.productName} por ${formatCentsBRL(deal.effectivePriceCents)} na ${MARKETPLACE_LABEL[deal.marketplace] ?? deal.marketplace}. Nota da oferta: ${deal.dealScore.toFixed(0)}/100.`,
+    alternates: { canonical: `/deal/${encodeURIComponent(deal.slug)}` },
   };
 }
 
@@ -65,7 +66,7 @@ export default async function DealPage({ params }: { params: Promise<{ slug: str
   if (!deal) notFound();
 
   const priceHistory = await apiGet<{ points: PricePoint[] }>(
-    `/public/deals/${slug}/price-history?range=90d`,
+    `/public/deals/${encodeURIComponent(slug)}/price-history?range=90d`,
   );
 
   const baseline = deal.history.avg90dCents ?? deal.history.avg30dCents;
@@ -82,6 +83,7 @@ export default async function DealPage({ params }: { params: Promise<{ slug: str
                 alt={deal.productName}
                 fill
                 className="object-contain p-6"
+                referrerPolicy="no-referrer"
                 unoptimized
               />
             )}
@@ -123,6 +125,10 @@ export default async function DealPage({ params }: { params: Promise<{ slug: str
               {deal.sellerRating !== null ? ` · avaliação ${deal.sellerRating}/100` : ""}
             </p>
 
+            <div className="mt-4">
+              <Disclosure />
+            </div>
+
             {deal.redirectCode && (
               <a
                 href={apiGoUrl(deal.redirectCode)}
@@ -133,10 +139,6 @@ export default async function DealPage({ params }: { params: Promise<{ slug: str
                 Ver oferta na {MARKETPLACE_LABEL[deal.marketplace] ?? deal.marketplace}
               </a>
             )}
-
-            <div className="mt-4">
-              <Disclosure />
-            </div>
           </div>
         </div>
 

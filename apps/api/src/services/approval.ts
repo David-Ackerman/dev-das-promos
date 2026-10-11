@@ -1,12 +1,17 @@
 import { type Database, dealCandidates } from "@dev-das-promos/database";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { evaluateOffer } from "./deal-evaluation.js";
 
 export async function approveDeal(db: Database, dealCandidateId: string, reviewerEmail: string) {
   const [updated] = await db
     .update(dealCandidates)
     .set({ status: "approved", reviewedBy: reviewerEmail, reviewedAt: new Date() })
-    .where(eq(dealCandidates.id, dealCandidateId))
+    .where(
+      and(
+        eq(dealCandidates.id, dealCandidateId),
+        inArray(dealCandidates.status, ["pending", "auto_approved", "rejected"]),
+      ),
+    )
     .returning();
   return updated ?? null;
 }
@@ -15,7 +20,12 @@ export async function rejectDeal(db: Database, dealCandidateId: string, reviewer
   const [updated] = await db
     .update(dealCandidates)
     .set({ status: "rejected", reviewedBy: reviewerEmail, reviewedAt: new Date() })
-    .where(eq(dealCandidates.id, dealCandidateId))
+    .where(
+      and(
+        eq(dealCandidates.id, dealCandidateId),
+        inArray(dealCandidates.status, ["pending", "approved", "auto_approved", "published"]),
+      ),
+    )
     .returning();
   return updated ?? null;
 }

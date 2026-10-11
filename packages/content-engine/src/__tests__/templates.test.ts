@@ -1,3 +1,4 @@
+import { DISCLOSURE_TEXT } from "@dev-das-promos/config";
 import { describe, expect, it } from "vitest";
 import { TemplateContentGenerator } from "../template-generator.js";
 import { renderXContent } from "../templates/x.js";
@@ -62,16 +63,27 @@ describe("TemplateContentGenerator", () => {
 });
 
 describe("renderXContent", () => {
-  it("respects a configured character limit", () => {
+  it("fits the product name within the configured limit when fixed fields fit", () => {
     const longName = "A".repeat(400);
-    const content = renderXContent(input({ productName: longName }), { x: 100 });
-    expect(content.length).toBeLessThanOrEqual(100);
+    const content = renderXContent(input({ productName: longName }), { x: 160 });
+    expect(content.length).toBeLessThanOrEqual(160);
+    expect(content).toContain(input().goUrl);
   });
 
   it("never truncates the link or disclosure, only the product name", () => {
     const data = input({ productName: "B".repeat(400) });
     const content = renderXContent(data, { x: 150 });
     expect(content).toContain(data.goUrl);
+    expect(content).toContain(DISCLOSURE_TEXT.x);
+  });
+
+  it("preserves the tracked link and disclosure if fixed fields exceed the limit", () => {
+    const data = input({ productName: "A product name that can be omitted" });
+    const content = renderXContent(data, { x: 20 });
+
+    expect(content.length).toBeGreaterThan(20);
+    expect(content).toContain(data.goUrl);
+    expect(content).toContain(DISCLOSURE_TEXT.x);
   });
 
   it("keeps short product names intact", () => {

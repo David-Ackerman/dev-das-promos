@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { WebPublisher } from "@dev-das-promos/content-engine";
 import {
   type Database,
   categories,
@@ -7,6 +8,7 @@ import {
   marketplaceProducts,
   offers,
   products,
+  publications,
 } from "@dev-das-promos/database";
 import {
   type QueueBundle,
@@ -16,7 +18,8 @@ import {
   createRedisConnection,
 } from "@dev-das-promos/queue";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { publishDealToChannel } from "../services/publication.js";
 import { publishReadyDeals } from "../services/scheduled-publish.js";
 
 const databaseUrl =
@@ -153,5 +156,31 @@ describe("publishReadyDeals", () => {
     await publishReadyDeals(db, queues, { limit: 10 });
     const after = await queues.contentGeneration.count();
     expect(after).toBeGreaterThan(before);
+  });
+
+  it("claims a publication once when duplicate jobs arrive", async () => {
+    const [candidate] = await db
+      .select({ offerId: dealCandidates.offerId })
+      .from(dealCandidates)
+      .where(eq(dealCandidates.id, autoApprovedHighId));
+    if (!candidate) throw new Error("Failed to find deal candidate");
+
+    await db.insert(publications).values({
+      dealCandidateId: autoApprovedHighId,
+      channel: "web",
+      content: "A real offer",
+      status: "queued",
+      metadata: { offerId: candidate.offerId },
+    });
+    const publishSpy = vi.spyOn(WebPublisher.prototype, "publish");
+    try {
+      await Promise.all([
+        publishDealToChannel(db, autoApprovedHighId, "web"),
+        publishDealToChannel(db, autoApprovedHighId, "web"),
+      ]);
+      expect(publishSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      publishSpy.mockRestore();
+    }
   });
 });

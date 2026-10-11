@@ -6,8 +6,8 @@ import { publicationChannelEnum } from "./enums.js";
 /**
  * Internal short-link record backing GET /go/:code. The destination
  * affiliate URL is resolved server-side from `destinationUrl`; the
- * redirect handler NEVER accepts an arbitrary destination from the
- * request, which is what prevents this from becoming an open redirect.
+ * redirect handler NEVER accepts a destination from the request and
+ * checks its marketplace host before redirecting.
  */
 export const redirects = pgTable(
   "redirects",

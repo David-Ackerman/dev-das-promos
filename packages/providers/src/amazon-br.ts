@@ -1,6 +1,7 @@
 import { type Availability, slugify, toCents } from "@dev-das-promos/shared";
 import { seededInt } from "./deterministic-random.js";
 import { MOCK_CATALOG } from "./mock-catalog.js";
+import { providerRequestSignal } from "./request.js";
 import type {
   AffiliateContext,
   FetchOffersOptions,
@@ -119,16 +120,11 @@ export class AmazonBrazilProvider implements MarketplaceProvider {
 // was verified directly against Amazon's own Creators API documentation
 // (affiliate-program.amazon.com/creatorsapi/docs/en-us/*): the OAuth token
 // request, the getItems cURL example, the searchItems request/response
-// shape, and the full offersV2 resource shape (price/availability fields)
-// are all taken verbatim from those pages. Two things are inferred rather
-// than directly confirmed, flagged where used below: (1) the Brazil
-// `marketplace` string (`www.amazon.com.br`, inferred from the documented
-// `www.amazon.com` example plus Brazil's own site URL -- the docs don't
-// enumerate marketplace values per country), and (2) getItems' response
-// envelope key and the images/brand resource paths (inferred from the
-// documented PascalCase-to-lowerCamelCase rule, since only searchItems' full
-// response shape was documented). Verify both against a real account before
-// relying on this in production.
+// shape, the Brazil marketplace value, getItems response envelope, and the
+// full offersV2 resource shape are confirmed in those docs. Keep the returned
+// detailPageURL intact: Amazon warns that altering a vended link can remove
+// Associate attribution. Verify the real account's tag and destination before
+// launch.
 
 /** Credentials for a real Amazon Creators API integration. */
 export interface AmazonCreatorsApiCredentials {
@@ -136,13 +132,13 @@ export interface AmazonCreatorsApiCredentials {
   clientId: string;
   /** OAuth2 client secret paired with `clientId`. */
   clientSecret: string;
-  /** Associate/partner tracking tag -- sent as `partnerTag` and used to build affiliate URLs. */
+  /** Associate/partner tracking tag -- sent as `partnerTag` and validated on API-vended URLs. */
   affiliateTag: string;
 }
 
 const CREATORS_TOKEN_URL = "https://api.amazon.com/auth/o2/token";
 const CREATORS_API_BASE = "https://creatorsapi.amazon/catalog/v1";
-const CREATORS_MARKETPLACE = "www.amazon.com.br"; // inferred -- see research note above
+const CREATORS_MARKETPLACE = "www.amazon.com.br";
 const CREATORS_SCOPE = "creatorsapi::default";
 /** Amazon-documented token lifetime; refresh a little early to avoid racing expiry mid-request. */
 const TOKEN_TTL_SECONDS = 3600;
@@ -186,6 +182,7 @@ interface CreatorsListing {
 
 interface CreatorsItem {
   asin: string;
+  detailPageURL?: string;
   itemInfo?: {
     title?: { displayValue?: string };
     byLineInfo?: { brand?: { displayValue?: string } };
@@ -267,8 +264,6 @@ export class AmazonCreatorsApiProvider implements MarketplaceProvider {
   }
 
   async getProduct(externalId: string): Promise<MarketplaceProductData | null> {
-    // getItems' response envelope key is inferred as "itemsResult" (see
-    // research note above this section) -- not directly confirmed.
     const body = (await this.execute("/getItems", {
       itemIds: [externalId],
       itemIdType: "ASIN",
@@ -286,38 +281,56 @@ export class AmazonCreatorsApiProvider implements MarketplaceProvider {
 
   async buildAffiliateUrl(
     product: MarketplaceProductData,
-    context: AffiliateContext = {},
+    _context: AffiliateContext = {},
   ): Promise<string> {
-    const url = new URL(product.url);
-    url.searchParams.set("tag", this.credentials.affiliateTag);
-    if (context.campaign) url.searchParams.set("ascsubtag", context.campaign);
-    return url.toString();
+    if (!this.isValidVendedDetailPageUrl(product.url)) {
+      throw new Error("Amazon Creators API product is missing its valid vended affiliate URL");
+    }
+    // Channel attribution is recorded by our /go redirect row; don't mutate
+    // Amazon's vended link or any of its query parameters.
+    return product.url;
   }
 
   private toOfferData(item: CreatorsItem): MarketplaceOfferData | null {
+    const url = this.vendedDetailPageUrl(item);
+    if (!url) return null;
+
     const listing = item.offersV2?.listings?.[0];
     const amount = listing?.price?.money?.amount;
-    if (typeof amount !== "number") {
+    const currency = listing?.price?.money?.currency;
+    if (
+      typeof amount !== "number" ||
+      !Number.isFinite(amount) ||
+      amount <= 0 ||
+      (currency !== undefined && currency !== "BRL")
+    ) {
       // No purchasable listing on this item right now -- skip rather than
-      // fabricate a price the ingestion pipeline would treat as real.
+      // fabricate a price or score a non-BRL amount as if it were reais.
       return null;
     }
 
     const savingBasisAmount = listing?.price?.savingBasis?.money?.amount;
+    const savingBasisCurrency = listing?.price?.savingBasis?.money?.currency;
+    const originalPriceCents =
+      typeof savingBasisAmount === "number" &&
+      Number.isFinite(savingBasisAmount) &&
+      savingBasisAmount > amount &&
+      (savingBasisCurrency === undefined || savingBasisCurrency === (currency ?? "BRL"))
+        ? toCents(savingBasisAmount)
+        : undefined;
 
     return {
       externalId: item.asin,
       productName: item.itemInfo?.title?.displayValue ?? item.asin,
       brand: item.itemInfo?.byLineInfo?.brand?.displayValue,
       imageUrl: item.images?.primary?.large?.url,
-      url: `https://www.amazon.com.br/dp/${item.asin}`,
+      url,
       sellerName: listing?.merchantInfo?.name,
       // Creators API doesn't expose a seller rating or a popularity/demand
       // score in directly usable form -- omitted rather than fabricated.
       priceCents: toCents(amount),
-      originalPriceCents:
-        typeof savingBasisAmount === "number" ? toCents(savingBasisAmount) : undefined,
-      currency: listing?.price?.money?.currency ?? "BRL",
+      originalPriceCents,
+      currency: currency ?? "BRL",
       availability: mapAvailability(listing?.availability?.type),
       capturedAt: new Date(),
       metadata: { source: "creatorsapi", asin: item.asin },
@@ -325,15 +338,44 @@ export class AmazonCreatorsApiProvider implements MarketplaceProvider {
   }
 
   private toProductData(item: CreatorsItem): MarketplaceProductData {
+    const url = this.vendedDetailPageUrl(item);
+    if (!url) {
+      throw new Error(`Amazon Creators API item "${item.asin}" has no valid vended affiliate URL`);
+    }
+
     return {
       externalId: item.asin,
       productName: item.itemInfo?.title?.displayValue ?? item.asin,
       brand: item.itemInfo?.byLineInfo?.brand?.displayValue,
       imageUrl: item.images?.primary?.large?.url,
-      url: `https://www.amazon.com.br/dp/${item.asin}`,
+      url,
       sellerName: item.offersV2?.listings?.[0]?.merchantInfo?.name,
       metadata: { source: "creatorsapi", asin: item.asin },
     };
+  }
+
+  private vendedDetailPageUrl(item: CreatorsItem): string | undefined {
+    if (!item.detailPageURL || !this.isValidVendedDetailPageUrl(item.detailPageURL)) {
+      return undefined;
+    }
+    return item.detailPageURL;
+  }
+
+  private isValidVendedDetailPageUrl(rawUrl: string): boolean {
+    try {
+      const url = new URL(rawUrl);
+      const host = url.hostname.toLowerCase();
+      return (
+        url.protocol === "https:" &&
+        !url.username &&
+        !url.password &&
+        !url.port &&
+        (host === "amazon.com.br" || host === "www.amazon.com.br") &&
+        url.searchParams.get("tag") === this.credentials.affiliateTag
+      );
+    } catch {
+      return false;
+    }
   }
 
   /** Returns a cached access token, refreshing it if absent/near expiry. De-dupes concurrent refreshes. */
@@ -353,6 +395,7 @@ export class AmazonCreatorsApiProvider implements MarketplaceProvider {
           client_secret: this.credentials.clientSecret,
           scope: CREATORS_SCOPE,
         }),
+        signal: providerRequestSignal(),
       });
 
       const body = (await response.json().catch(() => undefined)) as
@@ -398,6 +441,7 @@ export class AmazonCreatorsApiProvider implements MarketplaceProvider {
             "x-marketplace": CREATORS_MARKETPLACE,
           },
           body: JSON.stringify(body),
+          signal: providerRequestSignal(),
         });
       } catch (error) {
         throw new Error(
@@ -432,10 +476,11 @@ export class AmazonCreatorsApiProvider implements MarketplaceProvider {
 
 /**
  * Factory mirroring `createTelegramPublisher`'s credential-driven fallback
- * shape: returns a real `AmazonCreatorsApiProvider` only when both
- * `clientId` and `clientSecret` are supplied, otherwise falls back to the
- * deterministic `AmazonBrazilProvider` mock so startup, seeding, and tests
- * never require real Amazon credentials.
+ * shape: returns a real `AmazonCreatorsApiProvider` when `clientId`,
+ * `clientSecret`, and the marketplace Partner Tag are supplied. If the OAuth
+ * pair is present without a tag, it fails fast instead of using an unrelated
+ * default; when the OAuth pair is absent it falls back to the deterministic
+ * mock so startup, seeding, and tests never require real credentials.
  */
 export function createAmazonProvider(options: {
   affiliateTag?: string;
@@ -443,10 +488,13 @@ export function createAmazonProvider(options: {
   creatorsClientSecret?: string;
 }): MarketplaceProvider {
   if (options.creatorsClientId && options.creatorsClientSecret) {
+    if (!options.affiliateTag?.trim()) {
+      throw new Error("AMAZON_AFFILIATE_TAG is required for the Amazon Creators API provider");
+    }
     return new AmazonCreatorsApiProvider({
       clientId: options.creatorsClientId,
       clientSecret: options.creatorsClientSecret,
-      affiliateTag: options.affiliateTag ?? "dasdeals-20",
+      affiliateTag: options.affiliateTag,
     });
   }
   return new AmazonBrazilProvider(options.affiliateTag);

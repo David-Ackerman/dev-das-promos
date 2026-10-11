@@ -138,8 +138,13 @@ Key modeling decisions:
   product+marketplace pairing (see `evaluateOffer()` in
   `apps/api/src/services/deal-evaluation.ts`). Re-ingesting an offer
   re-scores the same DealCandidate rather than creating a new row, and a
-  human decision (`reviewedBy` set) is preserved across re-evaluation
-  unless explicitly re-run.
+  human decision (`reviewedBy` set) is preserved only when re-evaluating
+  that exact offer snapshot. A new price observation gets a fresh score
+  and approval status, so an older review cannot approve a changed offer.
+  A previously published candidate stays public only while the new
+  observation remains auto-approvable and its current offer snapshot has a
+  successful web publication; otherwise it leaves the public catalog until
+  the new snapshot is approved and published to the web channel.
 - **IDs are app-generated UUIDv4 text primary keys** (`crypto.randomUUID()`
   in `packages/database/src/schema/columns.ts`), not `gen_random_uuid()`,
   to avoid a Postgres extension dependency.
@@ -175,7 +180,7 @@ sequenceDiagram
     API->>DB: generate content, create redirect, store publications (queued)
     API->>Q: enqueue publication job per channel
     API->>DB: publisher.publish() -> update publication + deal status
-    Web->>API: GET /public/deals/:slug (ISR, revalidate 60s)
+    Web->>API: GET /public/deals/:slug (requires a successful web publication)
     User->>API: GET /go/:code
     API->>DB: resolve redirect, insert click_event (async, hashed IP)
     API-->>User: 302 to marketplace affiliate URL

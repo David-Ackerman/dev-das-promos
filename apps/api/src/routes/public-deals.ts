@@ -1,4 +1,8 @@
-import { getScoreLabel } from "@dev-das-promos/config";
+import {
+  PUBLIC_DEALS_MAX_PAGE,
+  PUBLIC_DEALS_MAX_PAGE_SIZE,
+  getScoreLabel,
+} from "@dev-das-promos/config";
 import {
   categories,
   dealCandidates,
@@ -7,15 +11,23 @@ import {
   offers,
   products,
 } from "@dev-das-promos/database";
+import { sanitizeMarketplaceImageUrl } from "@dev-das-promos/providers";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { env } from "../env.js";
+import {
+  currentOfferConditions,
+  isOfferCurrent,
+  nonMockMarketplaceProductCondition,
+  publishedWebPublicationCondition,
+} from "../lib/deal-freshness.js";
 import { loadDealContextBySlug } from "../services/deal-context.js";
 
 const listQuerySchema = z.object({
   categorySlug: z.string().optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(50).default(24),
+  page: z.coerce.number().int().min(1).max(PUBLIC_DEALS_MAX_PAGE).default(1),
+  pageSize: z.coerce.number().int().min(1).max(PUBLIC_DEALS_MAX_PAGE_SIZE).default(24),
 });
 
 const priceHistoryQuerySchema = z.object({
@@ -36,6 +48,9 @@ export default async function publicDealsRoutes(fastify: FastifyInstance) {
 
     const conditions = [
       inArray(dealCandidates.status, ["published"]),
+      publishedWebPublicationCondition(),
+      ...currentOfferConditions(),
+      env.NODE_ENV === "production" ? nonMockMarketplaceProductCondition() : undefined,
       parsed.data.categorySlug ? eq(categories.slug, parsed.data.categorySlug) : undefined,
     ].filter((c): c is NonNullable<typeof c> => c !== undefined);
 
@@ -63,19 +78,31 @@ export default async function publicDealsRoutes(fastify: FastifyInstance) {
       .offset((parsed.data.page - 1) * parsed.data.pageSize);
 
     return {
-      deals: rows.map((r) => ({ ...r, scoreLabel: getScoreLabel(r.dealScore) })),
+      deals: rows.map((r) => ({
+        ...r,
+        imageUrl: sanitizeMarketplaceImageUrl(r.imageUrl),
+        scoreLabel: getScoreLabel(r.dealScore),
+      })),
     };
   });
 
   fastify.get("/public/deals/:slug", async (request, reply) => {
     const { slug } = request.params as { slug: string };
-    const context = await loadDealContextBySlug(fastify.db, slug);
+    const context = await loadDealContextBySlug(fastify.db, slug, {
+      requirePublishedWebPublication: true,
+    });
 
-    if (!context || context.status !== "published") {
+    if (
+      !context ||
+      context.status !== "published" ||
+      !isOfferCurrent(context.availability, context.capturedAt) ||
+      (env.NODE_ENV === "production" && context.isDemoListing)
+    ) {
       return reply.code(404).send({ error: "Deal not found" });
     }
 
-    return { ...context, scoreLabel: getScoreLabel(context.dealScore) };
+    const { isDemoListing: _isDemoListing, ...publicContext } = context;
+    return { ...publicContext, scoreLabel: getScoreLabel(context.dealScore) };
   });
 
   fastify.get("/public/deals/:slug/price-history", async (request, reply) => {
@@ -83,8 +110,15 @@ export default async function publicDealsRoutes(fastify: FastifyInstance) {
     const parsed = priceHistoryQuerySchema.safeParse(request.query);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid query" });
 
-    const context = await loadDealContextBySlug(fastify.db, slug);
-    if (!context || context.status !== "published") {
+    const context = await loadDealContextBySlug(fastify.db, slug, {
+      requirePublishedWebPublication: true,
+    });
+    if (
+      !context ||
+      context.status !== "published" ||
+      !isOfferCurrent(context.availability, context.capturedAt) ||
+      (env.NODE_ENV === "production" && context.isDemoListing)
+    ) {
       return reply.code(404).send({ error: "Deal not found" });
     }
 

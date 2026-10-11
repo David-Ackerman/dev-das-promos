@@ -5,3 +5,4 @@ export * from "./amazon-br.js";
 export * from "./shopee-br.js";
 export * from "./mercado-livre.js";
 export * from "./registry.js";
+export * from "./image-url.js";

@@ -13,14 +13,33 @@ recorded. Before anything is written, `buildClickTrackingRecord()`
 into a privacy-safe shape:
 
 - **IP is hashed, never stored.** `hashIp(ip, salt)`
-  (`packages/shared/src/hash.ts`) is a salted SHA-256 hash, truncated --
-  enough to deduplicate/rate-limit without retaining a reversible raw IP.
+  (`packages/shared/src/hash.ts`) is a salted SHA-256 hash, truncated. The
+  hash is retained with the click event for analytics; the raw IP is not
+  stored. The route's request rate limit is enforced separately by Fastify.
 - **User-Agent is reduced to a coarse summary**, e.g. `"mobile:chrome"`,
   not the full UA string (which is close to a unique fingerprint per
   visitor). See `summarizeUserAgent()`.
+- **Referrers are reduced to their HTTP(S) origin**, e.g. `https://t.me`,
+  so paths and query parameters from the referring page are not retained.
+- **Allowlisted UTM values are stored on the click event** (`utm_source`,
+  `utm_medium`, and `utm_campaign`, up to 100 characters each) for internal
+  attribution. They are never appended to the marketplace destination, so
+  the affiliate URL saved by its provider remains unchanged.
 - **The click insert is fire-and-forget** (`trackClickAsync()` in
   `apps/api/src/services/redirect.ts`) -- the redirect response to the
   user is never delayed waiting on an analytics write.
+
+## Raw event retention
+
+The API deletes `click_events` older than `CLICK_EVENT_RETENTION_DAYS` once
+at startup and daily while it is running. The default is 180 days; set a
+whole number from 30 to 3650 in the API environment. This removes the full
+event (including its hashed IP, coarse user-agent summary, referrer origin,
+and UTM values). Analytics are queried from these raw events, so click
+history older than the configured window disappears from dashboard results;
+the project does not currently maintain separate long-term aggregates.
+Confirm the window against the operator's privacy policy before opening
+public traffic. The cleanup logs failures and retries at the next daily run.
 
 ## Aggregation model
 

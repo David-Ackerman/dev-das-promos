@@ -2,6 +2,11 @@ import { DealCard, type DealCardData } from "@/components/deal-card";
 import { Disclosure } from "@/components/disclosure";
 import { Nav } from "@/components/nav";
 import { apiGet } from "@/lib/api";
+import type { Metadata } from "next";
+
+// The API is only needed when a visitor requests the page, not during a build.
+export const dynamic = "force-dynamic";
+export const metadata: Metadata = { alternates: { canonical: "/" } };
 
 export default async function HomePage() {
   const data = await apiGet<{ deals: DealCardData[] }>("/public/deals?pageSize=12");
@@ -19,6 +24,10 @@ export default async function HomePage() {
           </p>
         </div>
 
+        <div className="mb-4">
+          <Disclosure />
+        </div>
+
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
           {deals.map((deal) => (
             <DealCard key={deal.slug} deal={deal} />
@@ -26,10 +35,6 @@ export default async function HomePage() {
         </div>
 
         {deals.length === 0 && <p className="text-neutral-500">Nenhuma oferta publicada ainda.</p>}
-
-        <div className="mt-10">
-          <Disclosure />
-        </div>
       </main>
     </div>
   );

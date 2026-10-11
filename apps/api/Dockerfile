@@ -24,7 +24,7 @@ RUN corepack enable
 FROM base AS pruner
 WORKDIR /app
 COPY . .
-RUN npx turbo prune @dev-das-promos/api --docker
+RUN npx --yes turbo@2.10.11 prune @dev-das-promos/api --docker
 
 # ---- Install deps against the pruned lockfile (cache-friendly layer) ----
 FROM base AS installer

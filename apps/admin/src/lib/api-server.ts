@@ -1,17 +1,20 @@
 import "server-only";
+import { ADMIN_SESSION_COOKIE_NAME } from "@dev-das-promos/shared";
 import { cookies } from "next/headers";
 
-const API_URL = process.env.API_URL ?? "http://localhost:4000";
+const API_URL = (process.env.API_URL ?? "http://localhost:4000").replace(/\/+$/, "");
 
 /**
- * Server Component fetch helper: forwards the incoming browser's cookies
- * to the API so the admin session cookie authenticates the server-to-
- * server call too. Never cache admin data by default -- it's operator
- * data that must always be fresh.
+ * Server Component fetch helper: forwards only the admin session cookie
+ * to the API. Never cache admin data by default -- it's operator data
+ * that must always be fresh.
  */
 export async function apiFetchServer<T>(path: string, init: RequestInit = {}): Promise<T> {
   const cookieStore = await cookies();
-  const cookieHeader = cookieStore.toString();
+  const sessionCookie = cookieStore.get(ADMIN_SESSION_COOKIE_NAME);
+  const cookieHeader = sessionCookie
+    ? `${sessionCookie.name}=${encodeURIComponent(sessionCookie.value)}`
+    : "";
 
   const response = await fetch(`${API_URL}${path}`, {
     ...init,

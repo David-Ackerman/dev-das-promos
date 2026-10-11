@@ -9,7 +9,7 @@ export function Nav() {
         </Link>
         <nav className="flex gap-4 text-sm text-neutral-600">
           <Link href="/deals" className="hover:text-neutral-950">
-            All deals
+            Todas as ofertas
           </Link>
         </nav>
       </div>

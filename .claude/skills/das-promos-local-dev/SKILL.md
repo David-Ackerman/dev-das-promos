@@ -54,12 +54,11 @@ configs before touching the import itself.
 
 **`Invalid environment configuration: DATABASE_URL: Required` /
 `REDIS_URL: Required`** — the process didn't get the root `.env` loaded.
-`apps/api`, `apps/web`, and `apps/admin` each wrap their `dev`/`build`/
-`start`/`test` scripts with `dotenv -e ../../.env -- <command>`
-(`dotenv-cli`) rather than reading a per-app `.env` file — there is no
-`.env` inside any `apps/*` directory, and there shouldn't be one. If you
-add a new script that touches env vars, wrap it the same way instead of
-creating a per-app `.env`.
+`apps/api`, `apps/web`, and `apps/admin` wrap their env-dependent
+scripts with `dotenv -e ../../.env -- <command>` (`dotenv-cli`), as do
+the database package's `db:*` and test scripts. They don't read per-app
+`.env` files. If you add a new script that touches env vars, wrap it
+the same way instead of creating a per-package `.env`.
 
 **`fetch failed` / `ECONNREFUSED` from web or admin hitting the api** — the
 api process isn't actually up, even if its terminal output looks quiet
@@ -102,6 +101,10 @@ well-formed, secrets ≥16 chars), not that values are "real":
   is idempotent (skips creation if that email already exists), so
   changing `.env` after the fact won't update an already-seeded admin —
   either pick a new email or update the row directly.
+- `ALLOW_DEMO_SEED=false` — the demo seed is restricted to local DB
+  hosts by default and always refuses `NODE_ENV=production`. Only set
+  this to `true` for a deliberate demo seed against a disposable remote
+  database.
 - `AMAZON_AFFILIATE_TAG`, `SHOPEE_AFFILIATE_ID`, `MERCADO_LIVRE_AFFILIATE_ID`,
   `AMAZON_CREATORS_CLIENT_ID`/`_CLIENT_SECRET`, `SHOPEE_APP_*`,
   `MERCADO_LIVRE_APP_ID`/`_CLIENT_SECRET`/`_REFRESH_TOKEN`, `TELEGRAM_*`,

@@ -20,7 +20,7 @@ interface CategoryDetail {
 }
 
 async function getCategory(slug: string) {
-  return apiGet<CategoryDetail>(`/public/categories/${slug}`);
+  return apiGet<CategoryDetail>(`/public/categories/${encodeURIComponent(slug)}`);
 }
 
 export async function generateMetadata({
@@ -33,6 +33,7 @@ export async function generateMetadata({
   return {
     title: data.category.name,
     description: `Melhores ofertas de ${data.category.name} com histórico de preço verificado.`,
+    alternates: { canonical: `/category/${encodeURIComponent(data.category.slug)}` },
   };
 }
 
@@ -54,7 +55,7 @@ export default async function CategoryPage({ params }: { params: Promise<{ slug:
             {children.map((child) => (
               <Link
                 key={child.id}
-                href={`/category/${child.slug}`}
+                href={`/category/${encodeURIComponent(child.slug)}`}
                 className="rounded-full border border-neutral-200 px-3 py-1 text-sm text-neutral-600 hover:border-neutral-400"
               >
                 {child.name}
@@ -62,6 +63,10 @@ export default async function CategoryPage({ params }: { params: Promise<{ slug:
             ))}
           </div>
         )}
+
+        <div className="mt-6">
+          <Disclosure />
+        </div>
 
         <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
           {deals.map((deal) => (
@@ -72,10 +77,6 @@ export default async function CategoryPage({ params }: { params: Promise<{ slug:
         {deals.length === 0 && (
           <p className="text-neutral-500">Nenhuma oferta publicada nesta categoria ainda.</p>
         )}
-
-        <div className="mt-10">
-          <Disclosure />
-        </div>
       </main>
     </div>
   );

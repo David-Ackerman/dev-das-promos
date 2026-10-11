@@ -1,4 +1,5 @@
 import { Nav } from "@/components/nav";
+import { PublicationRetryButton } from "@/components/publication-retry-button";
 import { Badge } from "@/components/ui/badge";
 import { apiFetchServer } from "@/lib/api-server";
 import { requireAdmin } from "@/lib/auth";
@@ -7,6 +8,7 @@ interface PublicationRow {
   id: string;
   channel: string;
   status: string;
+  updatedAt: string;
   publishedAt: string | null;
   externalPublicationId: string | null;
   errorMessage: string | null;
@@ -37,6 +39,8 @@ export default async function PublicationsPage() {
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Published at</th>
                 <th className="px-4 py-3">External id</th>
+                <th className="px-4 py-3">Error</th>
+                <th className="px-4 py-3">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -60,11 +64,24 @@ export default async function PublicationsPage() {
                     {pub.publishedAt ? new Date(pub.publishedAt).toLocaleString("pt-BR") : "—"}
                   </td>
                   <td className="px-4 py-3 text-neutral-500">{pub.externalPublicationId ?? "—"}</td>
+                  <td className="max-w-xs px-4 py-3 text-red-300">{pub.errorMessage ?? "—"}</td>
+                  <td className="px-4 py-3">
+                    {(pub.status === "failed" ||
+                      ((pub.status === "queued" || pub.status === "publishing") &&
+                        Date.now() - new Date(pub.updatedAt).getTime() >= 10 * 60 * 1000)) && (
+                      <PublicationRetryButton
+                        id={pub.id}
+                        requiresConfirmation={
+                          pub.status === "failed" || pub.status === "publishing"
+                        }
+                      />
+                    )}
+                  </td>
                 </tr>
               ))}
               {publications.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-neutral-500">
+                  <td colSpan={8} className="px-4 py-8 text-center text-neutral-500">
                     Nothing published yet.
                   </td>
                 </tr>

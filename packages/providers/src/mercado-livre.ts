@@ -2,6 +2,7 @@ import { slugify, toCents } from "@dev-das-promos/shared";
 import type { Availability } from "@dev-das-promos/shared";
 import { seededInt } from "./deterministic-random.js";
 import { MOCK_CATALOG } from "./mock-catalog.js";
+import { providerRequestSignal } from "./request.js";
 import type {
   AffiliateContext,
   FetchOffersOptions,
@@ -11,16 +12,10 @@ import type {
 } from "./types.js";
 
 /**
- * MOCK provider. A real integration must use Mercado Livre's official API
- * (OAuth2 app credentials + the Products/Items search endpoints) under an
- * approved application -- there is no legitimate unofficial API for
- * Mercado Livre product or price data. Swap this class for an
- * API-backed implementation behind the same `MarketplaceProvider`
- * interface; nothing else in the pipeline needs to change.
- *
- * TODO(real-integration): requires a Mercado Livre application (client id
- * + client secret) and a refresh token obtained via a one-time manual
- * OAuth2 authorization-code exchange. See docs/providers.md.
+ * Deterministic mock retained for local development and demo seeding. The
+ * real official API implementation is MercadoLivreApiProvider below;
+ * createMercadoLivreProvider selects it when its OAuth credentials are
+ * present. There is no legitimate unofficial API for Mercado Livre data.
  */
 export class MercadoLivreProvider implements MarketplaceProvider {
   readonly marketplace = "mercado_livre" as const;
@@ -247,10 +242,11 @@ function mapAvailability(
  * every successful refresh-token exchange returns a brand-new refresh token
  * and immediately invalidates the old one -- so the freshly-issued token is
  * cached in memory and reused for the lifetime of this instance/process,
- * and a warning (with the new value) is logged so an operator can update
- * `MERCADO_LIVRE_REFRESH_TOKEN` for the *next* process restart. There is no
- * way to persist that rotation back into the environment automatically
- * from inside this class.
+ * and a warning is logged so an operator knows the configured refresh token
+ * is now stale. The rotated secret is never written to logs. There is no
+ * secure persistence adapter in this provider, so before restarting the
+ * process an operator must complete the authorization-code flow again and
+ * store the newly issued refresh token in the deployment secret source.
  *
  * Research notes (see docs/providers.md for sources/links):
  * - Search: `GET /sites/MLB/search?q=&category=&limit=&offset=`.
@@ -414,6 +410,7 @@ export class MercadoLivreApiProvider implements MarketplaceProvider {
         client_secret: this.clientSecret,
         refresh_token: this.currentRefreshToken,
       }),
+      signal: providerRequestSignal(),
     });
 
     const body = (await response.json().catch(() => ({}))) as MLTokenResponse;
@@ -434,10 +431,10 @@ export class MercadoLivreApiProvider implements MarketplaceProvider {
     if (body.refresh_token && body.refresh_token !== this.currentRefreshToken) {
       this.currentRefreshToken = body.refresh_token;
       // Mercado Livre rotates refresh tokens on every use; the old one is now
-      // invalid. We keep using the new one in-process, but it can't be
-      // written back to the environment from here -- surface it loudly.
+      // invalid. Keep the new one in-process, but never expose credentials
+      // in logs. There is no secure persistence adapter in this provider.
       console.warn(
-        `[mercado-livre] Refresh token rotated by Mercado Livre's OAuth server. Update MERCADO_LIVRE_REFRESH_TOKEN with this value before the next restart, or authentication will fail: ${body.refresh_token}`,
+        "[mercado-livre] Refresh token rotated by Mercado Livre's OAuth server. The new token is held in memory only; before restarting, complete the authorization-code flow again and update the deployment secret.",
       );
     }
   }
@@ -458,6 +455,7 @@ export class MercadoLivreApiProvider implements MarketplaceProvider {
       const accessToken = await this.ensureAccessToken();
       const response = await fetch(url, {
         headers: { authorization: `Bearer ${accessToken}`, accept: "application/json" },
+        signal: providerRequestSignal(),
       });
 
       if ((response.status === 429 || response.status >= 500) && attempt < MAX_ATTEMPTS) {

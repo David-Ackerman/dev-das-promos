@@ -1,5 +1,6 @@
 import {
   type QueueBundle,
+  type Redis,
   closeQueues,
   createQueues,
   createRedisConnection,
@@ -11,6 +12,7 @@ import { env } from "../env.js";
 declare module "fastify" {
   interface FastifyInstance {
     queues: QueueBundle;
+    redis: Redis;
   }
 }
 
@@ -18,6 +20,7 @@ export default fp(async function queuesPlugin(fastify: FastifyInstance) {
   const connection = createRedisConnection(env.REDIS_URL);
   const queues = createQueues(connection);
   fastify.decorate("queues", queues);
+  fastify.decorate("redis", connection);
 
   fastify.addHook("onClose", async () => {
     await closeQueues(queues);

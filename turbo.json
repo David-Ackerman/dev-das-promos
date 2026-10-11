@@ -4,6 +4,14 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
+      "env": [
+        "ALLOW_LOCAL_HTTP_API_URL",
+        "API_URL",
+        "NEXT_PUBLIC_API_URL",
+        "NEXT_PUBLIC_SITE_URL",
+        "PUBLIC_OPERATOR_NAME",
+        "PUBLIC_CONTACT_EMAIL"
+      ],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     "dev": {

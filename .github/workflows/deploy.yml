@@ -1,34 +1,51 @@
 name: Deploy to AWS EC2
 
 # Runs on every push to main: authenticates to AWS via OIDC (no stored
-# AWS keys, no SSH keys anywhere) using the official
+# AWS keys or GitHub SSH private keys) using the official
 # aws-actions/configure-aws-credentials action, then tells AWS Systems
-# Manager to run the same git-pull + docker-compose-rebuild + migrate
-# commands from docs/aws-deployment.md Part 3 directly on the EC2
-# instance. Nothing here builds an image in CI or pushes to a registry --
-# it still builds on the VM itself, matching the rest of the deployment
-# docs. Depends on infra/aws/bootstrap.yaml (one-time, console) and
-# infra/aws/infra.yaml (auto-applied by infra.yml) already having run --
+# Manager to fetch the exact CI-validated commit, then run the same
+# Docker Compose rebuild and migration commands from Part 3 of
+# docs/aws-deployment.md on the EC2 instance. CI does not build or push an
+# image; the VM builds it, matching the deployment docs. This depends on
+# infra/aws/bootstrap.yaml (one-time, console) having run --
 # see docs/aws-deployment.md Part 2/3.5.
 #
-# paths-ignore on infra/aws/infra.yaml: that file's own changes are
-# handled by infra.yml, which then updates EC2_INSTANCE_ID -- letting
-# this workflow also fire on that same push risks reading the
-# not-yet-updated variable in a race with that update.
+# Infrastructure is applied first through the reusable infra.yml workflow.
+# The application rollout stays disabled until the one-time EC2 setup is
+# complete and PRODUCTION_DEPLOY_ENABLED is set to true in repository vars.
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "infra/aws/infra.yaml"
   workflow_dispatch: {}
 
 permissions:
-  id-token: write # required for OIDC -- do not add AWS access keys as secrets instead
   contents: read
 
+concurrency:
+  group: das-promos-production-deploy
+  cancel-in-progress: false
+
 jobs:
+  validate:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  infra:
+    needs: validate
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/infra.yml
+    permissions:
+      id-token: write
+      contents: read
+
   deploy:
+    needs: [validate, infra]
+    if: github.ref == 'refs/heads/main' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required for OIDC -- do not add AWS access keys as secrets instead
+      contents: read
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -39,31 +56,70 @@ jobs:
       - name: Deploy via SSM
         run: |
           set -e
+          INSTANCE_ID=$(aws cloudformation describe-stacks \
+            --stack-name dev-das-promos-infra \
+            --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
+            --output text)
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "Could not read InstanceId from dev-das-promos-infra" >&2
+            exit 1
+          fi
+
           COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "${{ vars.EC2_INSTANCE_ID }}" \
+            --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy dev-das-promos (${{ github.sha }})" \
             --parameters commands='[
               "set -e",
-              "cd ~/dev-das-promos",
-              "git pull --ff-only origin main",
-              "docker compose -f infra/docker/docker-compose.prod.yml up -d --build",
-              "docker compose -f infra/docker/docker-compose.prod.yml exec -T api sh -c \"cd /app/packages/database && pnpm exec tsx src/migrate.ts\""
+              "cd /home/ubuntu/dev-das-promos",
+              "sudo -u ubuntu git fetch origin main",
+              "sudo -u ubuntu git checkout --detach ${{ github.sha }}",
+              "docker compose -f infra/docker/docker-compose.prod.yml config --quiet",
+              "docker compose -f infra/docker/docker-compose.prod.yml up -d --wait --wait-timeout 120 postgres redis",
+              "docker compose -f infra/docker/docker-compose.prod.yml build api",
+              "docker compose -f infra/docker/docker-compose.prod.yml run --rm --no-deps api sh -c \"cd /app/packages/database && pnpm exec tsx src/migrate.ts\"",
+              "docker compose -f infra/docker/docker-compose.prod.yml up -d --no-build",
+              "docker compose -f infra/docker/docker-compose.prod.yml exec -T api node -e \"fetch(\\\"http://127.0.0.1:4000/ready\\\").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""
             ]' \
             --query "Command.CommandId" --output text)
 
-          aws ssm wait command-executed \
-            --command-id "$COMMAND_ID" \
-            --instance-id "${{ vars.EC2_INSTANCE_ID }}" || true
+          # EC2 builds can outlast the AWS CLI waiter's short fixed timeout.
+          # Poll the invocation for up to 30 minutes and only decide after a
+          # terminal status is available.
+          sleep 5
+          STATUS=""
+          for attempt in $(seq 1 180); do
+            if ! STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query "Status" --output text 2>&1); then
+              if [[ "$STATUS" == *InvocationDoesNotExist* ]]; then
+                sleep 10
+                continue
+              fi
+              echo "$STATUS" >&2
+              exit 1
+            fi
+            case "$STATUS" in
+              Success|Cancelled|TimedOut|Failed|DeliveryTimedOut|ExecutionTimedOut|Undeliverable|Terminated|InvalidPlatform|AccessDenied|NoInstancesInTag|Incomplete)
+                break
+                ;;
+              *)
+                if (( attempt % 6 == 0 )); then
+                  echo "SSM deployment still running (status: ${STATUS:-pending})."
+                fi
+                sleep 10
+                ;;
+            esac
+          done
 
           aws ssm get-command-invocation \
             --command-id "$COMMAND_ID" \
-            --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+            --instance-id "$INSTANCE_ID" \
             --query "{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}" \
             --output json
 
-          STATUS=$(aws ssm get-command-invocation \
-            --command-id "$COMMAND_ID" \
-            --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
-            --query "Status" --output text)
-          [ "$STATUS" = "Success" ]
+          if [ "$STATUS" != "Success" ]; then
+            echo "SSM deployment did not succeed (status: ${STATUS:-unknown})." >&2
+            exit 1
+          fi

@@ -8,6 +8,7 @@ import {
   marketplaceProducts,
   offers,
   products,
+  publications,
 } from "@dev-das-promos/database";
 import {
   applyApprovalThresholds,
@@ -15,11 +16,11 @@ import {
   scoreDeal,
 } from "@dev-das-promos/deal-engine";
 import { slugify } from "@dev-das-promos/shared";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { estimateHistoricalConversionRate } from "./conversion-signal.js";
 
 export interface EvaluateOfferOptions {
-  /** When true (default), an offer belonging to a deal a human already approved/rejected keeps that status. */
+  /** When true (default), a human decision is kept only while re-evaluating the same offer snapshot. */
   preserveHumanDecision?: boolean;
 }
 
@@ -49,6 +50,7 @@ export async function evaluateOffer(
       originalPriceCents: offers.originalPriceCents,
       effectivePriceCents: offers.effectivePriceCents,
       capturedAt: offers.capturedAt,
+      availability: offers.availability,
       marketplaceProductId: marketplaceProducts.id,
       marketplace: marketplaceProducts.marketplace,
       sellerRating: marketplaceProducts.sellerRating,
@@ -111,10 +113,25 @@ export async function evaluateOffer(
     historicalConversionRate,
   });
 
-  const computedStatus = applyApprovalThresholds(scoreResult.score, DEFAULT_APPROVAL_THRESHOLDS);
+  const computedStatus =
+    row.availability === "out_of_stock"
+      ? "expired"
+      : applyApprovalThresholds(scoreResult.score, DEFAULT_APPROVAL_THRESHOLDS);
   const slug = slugify(`${row.productName}-${row.marketplace}`);
 
-  const [existing] = await db.select().from(dealCandidates).where(eq(dealCandidates.slug, slug));
+  const [existing] = await db
+    .select({
+      id: dealCandidates.id,
+      offerId: dealCandidates.offerId,
+      dealScore: dealCandidates.dealScore,
+      status: dealCandidates.status,
+      reviewedBy: dealCandidates.reviewedBy,
+      reviewedAt: dealCandidates.reviewedAt,
+      currentOfferCapturedAt: offers.capturedAt,
+    })
+    .from(dealCandidates)
+    .innerJoin(offers, eq(dealCandidates.offerId, offers.id))
+    .where(eq(dealCandidates.slug, slug));
 
   const scoreFields = {
     offerId,
@@ -137,15 +154,49 @@ export async function evaluateOffer(
   };
 
   if (existing) {
-    const keepHumanStatus = preserveHumanDecision && Boolean(existing.reviewedBy);
+    const sameOfferSnapshot = existing.offerId === offerId;
+    if (!sameOfferSnapshot && existing.currentOfferCapturedAt >= row.capturedAt) {
+      // Queue workers can finish out of order. Never replace a newer offer
+      // (or an equally recent snapshot) with an older evaluation result.
+      return {
+        dealCandidateId: existing.id,
+        score: existing.dealScore,
+        status: existing.status,
+      };
+    }
+    const keepHumanStatus =
+      preserveHumanDecision &&
+      sameOfferSnapshot &&
+      Boolean(existing.reviewedBy) &&
+      existing.status !== "expired" &&
+      computedStatus !== "expired";
+    const priorPublications = await db
+      .select({ metadata: publications.metadata })
+      .from(publications)
+      .where(
+        and(eq(publications.dealCandidateId, existing.id), eq(publications.status, "published")),
+      );
+    const keepPublishedStatus =
+      priorPublications.some((publication) => publication.metadata.offerId === offerId) &&
+      computedStatus === "auto_approved";
     const [updated] = await db
       .update(dealCandidates)
       .set({
         ...scoreFields,
-        status: keepHumanStatus ? existing.status : computedStatus,
+        status: keepHumanStatus
+          ? existing.status
+          : keepPublishedStatus
+            ? "published"
+            : computedStatus,
         ...(keepHumanStatus ? {} : { reviewedBy: null, reviewedAt: null }),
       })
-      .where(eq(dealCandidates.id, existing.id))
+      .where(
+        and(
+          eq(dealCandidates.id, existing.id),
+          eq(dealCandidates.offerId, existing.offerId),
+          eq(dealCandidates.status, existing.status),
+        ),
+      )
       .returning();
 
     if (!updated) throw new Error("Failed to update deal candidate");

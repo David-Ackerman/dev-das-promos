@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import { env } from "./env.js";
 
 import authPlugin from "./plugins/auth.js";
 import dbPlugin from "./plugins/db.js";
@@ -23,7 +24,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     logger: {
       level: process.env.NODE_ENV === "production" ? "info" : "warn",
     },
-    trustProxy: true,
+    // Only the private Docker reverse proxy may supply forwarding headers.
+    trustProxy: env.NODE_ENV === "production" ? ["loopback", "linklocal", "uniquelocal"] : false,
   });
 
   await app.register(securityPlugin);

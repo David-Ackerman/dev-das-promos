@@ -47,7 +47,7 @@ export async function seedMarketplaceProducts(
           url: offer.url,
           sellerName: offer.sellerName,
           sellerRating: offer.sellerRating,
-          metadata: { catalogKey },
+          metadata: { source: "mock", catalogKey },
         })
         .returning();
 

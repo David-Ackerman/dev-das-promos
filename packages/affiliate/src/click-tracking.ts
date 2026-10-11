@@ -32,6 +32,17 @@ export interface ClickTrackingRecord {
   referrer: string | undefined;
 }
 
+function summarizeReferrer(referrer: string | undefined | null): string | undefined {
+  if (!referrer) return undefined;
+
+  try {
+    const url = new URL(referrer);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Builds the privacy-safe record persisted for a click. Raw IP is hashed
  * (never stored) and the user agent is reduced to a coarse summary; see
@@ -41,6 +52,6 @@ export function buildClickTrackingRecord(input: ClickTrackingInput): ClickTracki
   return {
     ipHash: input.ip ? hashIp(input.ip, input.ipHashSalt) : undefined,
     userAgentSummary: summarizeUserAgent(input.userAgent),
-    referrer: input.referrer,
+    referrer: summarizeReferrer(input.referrer),
   };
 }

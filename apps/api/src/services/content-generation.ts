@@ -1,4 +1,4 @@
-import { createRedirectCode } from "@dev-das-promos/affiliate";
+import { createRedirectCode, isAllowedAffiliateDestination } from "@dev-das-promos/affiliate";
 import { getScoreLabel } from "@dev-das-promos/config";
 import {
   type ContentGenerator,
@@ -13,8 +13,16 @@ import type { QueueBundle, Redis } from "@dev-das-promos/queue";
 import type { PublicationChannel } from "@dev-das-promos/shared";
 import { and, eq } from "drizzle-orm";
 import { env } from "../env.js";
+import {
+  affiliateLinkSupportError,
+  requiresManualAffiliateLink,
+} from "../lib/affiliate-link-support.js";
 import { reserveDailyAiContentSlot } from "../lib/ai-content-quota.js";
-import { providerRegistryOptionsFromEnv } from "../lib/provider-registry-options.js";
+import { isOfferCurrent, isPublishableDealStatus } from "../lib/deal-freshness.js";
+import {
+  hasRealMarketplaceCredentials,
+  providerRegistryOptionsFromEnv,
+} from "../lib/provider-registry-options.js";
 import { loadDealContext } from "./deal-context.js";
 
 const templateGenerator = new TemplateContentGenerator();
@@ -23,7 +31,16 @@ const openRouterGenerator = createOpenRouterContentGenerator({
   model: env.OPENROUTER_MODEL,
 });
 const openRouterConfigured = Boolean(env.OPENROUTER_API_KEY && env.OPENROUTER_MODEL);
-const CHANNELS: PublicationChannel[] = ["telegram", "x", "web"];
+const CHANNELS: PublicationChannel[] =
+  env.NODE_ENV === "production"
+    ? [
+        ...(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID ? (["telegram"] as const) : []),
+        ...(env.X_API_KEY && env.X_API_SECRET && env.X_ACCESS_TOKEN && env.X_ACCESS_TOKEN_SECRET
+          ? (["x"] as const)
+          : []),
+        "web",
+      ]
+    : ["telegram", "x", "web"];
 
 /**
  * Picks the AI generator for this deal only if OpenRouter is configured
@@ -73,7 +90,10 @@ async function findOrCreateRedirect(
     .select()
     .from(redirects)
     .where(and(eq(redirects.dealCandidateId, dealCandidateId), eq(redirects.channel, channel)));
-  if (existing) return existing.code;
+  if (existing) {
+    await db.update(redirects).set({ destinationUrl }).where(eq(redirects.id, existing.id));
+    return existing.code;
+  }
 
   const code = createRedirectCode();
   await db
@@ -94,9 +114,29 @@ export async function generateContentForDeal(
   queues: QueueBundle,
   dealCandidateId: string,
   redis: Redis,
+  options: { scheduled?: boolean; channel?: PublicationChannel } = {},
 ): Promise<void> {
   const context = await loadDealContext(db, dealCandidateId);
   if (!context) throw new Error(`Deal candidate ${dealCandidateId} not found`);
+  if (env.NODE_ENV === "production" && context.isDemoListing) {
+    throw new Error("Demo marketplace offers cannot be published in production");
+  }
+  if (requiresManualAffiliateLink(context.marketplace, env.NODE_ENV)) {
+    throw new Error(affiliateLinkSupportError(context.marketplace));
+  }
+  if (env.NODE_ENV === "production" && !hasRealMarketplaceCredentials(env, context.marketplace)) {
+    throw new Error(
+      `Real ${context.marketplace} credentials are required for production content generation`,
+    );
+  }
+  if (!isPublishableDealStatus(context.status)) {
+    throw new Error(
+      `Deal candidate ${dealCandidateId} cannot be published from status ${context.status}`,
+    );
+  }
+  if (!isOfferCurrent(context.availability, context.capturedAt)) {
+    throw new Error(`Deal candidate ${dealCandidateId} has no current available offer`);
+  }
 
   const providerRegistry = createProviderRegistry(providerRegistryOptionsFromEnv(env));
   const provider = providerRegistry[context.marketplace];
@@ -104,12 +144,26 @@ export async function generateContentForDeal(
     { externalId: context.externalId, productName: context.productName, url: context.productUrl },
     { campaign: "content-engine" },
   );
+  if (!isAllowedAffiliateDestination(context.marketplace, affiliateUrl)) {
+    throw new Error(`Affiliate URL for ${context.marketplace} has an invalid destination domain`);
+  }
+  // Validation parses the URL but the stored destination remains the exact
+  // provider-vended string; serializing through `URL` can normalize it.
+  const affiliateDestinationUrl = affiliateUrl;
+  // A deal can have redirects for several channels. A channel-scoped retry
+  // must not leave the public web CTA pointing to an older offer snapshot.
+  await db
+    .update(redirects)
+    .set({ destinationUrl: affiliateDestinationUrl })
+    .where(eq(redirects.dealCandidateId, dealCandidateId));
 
-  // One quota reservation for the whole deal, reused across all of its
-  // channels below -- see pickContentGenerator's doc comment.
-  const generator = await pickContentGenerator(redis);
+  // One quota reservation for the whole deal, reused across channels below.
+  // Existing content for the same offer snapshot is retried as-is, without
+  // spending a new AI slot.
+  let generator: ContentGenerator | undefined;
 
-  for (const channel of CHANNELS) {
+  const channels = options.channel ? [options.channel] : CHANNELS;
+  for (const channel of channels) {
     const [existingPublication] = await db
       .select()
       .from(publications)
@@ -117,9 +171,15 @@ export async function generateContentForDeal(
         and(eq(publications.dealCandidateId, dealCandidateId), eq(publications.channel, channel)),
       );
 
-    if (existingPublication?.status === "published") continue;
+    const publicationMatchesSnapshot = existingPublication?.metadata.offerId === context.offerId;
+    if (
+      (existingPublication?.status === "published" && publicationMatchesSnapshot) ||
+      existingPublication?.status === "publishing" ||
+      (existingPublication?.status === "failed" && !options.channel)
+    )
+      continue;
 
-    const code = await findOrCreateRedirect(db, dealCandidateId, channel, affiliateUrl);
+    const code = await findOrCreateRedirect(db, dealCandidateId, channel, affiliateDestinationUrl);
     // /go/:code is served by this API (see routes/go.ts), not the public web app.
     const goUrl = `${env.API_URL.replace(/\/+$/, "")}/go/${code}`;
 
@@ -148,23 +208,65 @@ export async function generateContentForDeal(
       goUrl,
     };
 
-    const generated = await generateWithFallback(generator, input);
-    const content =
-      channel === "telegram"
-        ? generated.telegram
-        : channel === "x"
-          ? generated.x
-          : generated.webSummary;
-
-    if (existingPublication) {
-      await db
-        .update(publications)
-        .set({ content, status: "queued" })
-        .where(eq(publications.id, existingPublication.id));
-    } else {
-      await db.insert(publications).values({ dealCandidateId, channel, content, status: "queued" });
+    const contentMatchesSnapshot =
+      existingPublication?.metadata.offerId === context.offerId &&
+      Boolean(existingPublication.content);
+    let content = contentMatchesSnapshot ? (existingPublication?.content ?? null) : null;
+    if (!content) {
+      generator ??= await pickContentGenerator(redis);
+      const generated = await generateWithFallback(generator, input);
+      content =
+        channel === "telegram"
+          ? generated.telegram
+          : channel === "x"
+            ? generated.x
+            : generated.webSummary;
     }
 
-    await queues.publication.add("publish", { dealCandidateId, channel });
+    if (existingPublication?.status === "queued") {
+      // A prior generator may have persisted content before its queue add.
+      // Keep it only when it was generated from this same offer snapshot.
+      if (
+        existingPublication.metadata.offerId !== context.offerId ||
+        !existingPublication.content
+      ) {
+        await db
+          .update(publications)
+          .set({
+            content,
+            externalPublicationId: null,
+            publishedAt: null,
+            errorMessage: null,
+            metadata: { ...existingPublication.metadata, offerId: context.offerId },
+          })
+          .where(eq(publications.id, existingPublication.id));
+      }
+    } else if (existingPublication) {
+      await db
+        .update(publications)
+        .set({
+          content,
+          status: "queued",
+          externalPublicationId: null,
+          publishedAt: null,
+          errorMessage: null,
+          metadata: { ...existingPublication.metadata, offerId: context.offerId },
+        })
+        .where(eq(publications.id, existingPublication.id));
+    } else {
+      await db.insert(publications).values({
+        dealCandidateId,
+        channel,
+        content,
+        status: "queued",
+        metadata: { offerId: context.offerId },
+      });
+    }
+
+    await queues.publication.add("publish", {
+      dealCandidateId,
+      channel,
+      ...(options.scheduled ? { scheduled: true } : {}),
+    });
   }
 }

@@ -20,6 +20,7 @@
     "db:generate": "pnpm --filter @dev-das-promos/database db:generate",
     "db:migrate": "pnpm --filter @dev-das-promos/database db:migrate",
     "db:seed": "pnpm --filter @dev-das-promos/database db:seed",
+    "db:bootstrap-admin": "pnpm --filter @dev-das-promos/database db:bootstrap-admin",
     "db:studio": "pnpm --filter @dev-das-promos/database db:studio"
   },
   "devDependencies": {

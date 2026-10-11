@@ -23,7 +23,7 @@ const MARKETPLACE_LABEL: Record<string, string> = {
 export function DealCard({ deal }: { deal: DealCardData }) {
   return (
     <Link
-      href={`/deal/${deal.slug}`}
+      href={`/deal/${encodeURIComponent(deal.slug)}`}
       className="card flex flex-col overflow-hidden transition hover:shadow-md"
     >
       <div className="relative aspect-square bg-white">
@@ -33,6 +33,7 @@ export function DealCard({ deal }: { deal: DealCardData }) {
             alt={deal.productName}
             fill
             className="object-contain p-4"
+            referrerPolicy="no-referrer"
             unoptimized
           />
         )}

@@ -1,0 +1,16 @@
+[Unit]
+Description=Back up das-promos PostgreSQL to the private S3 backup bucket
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/dev-das-promos
+EnvironmentFile=/etc/das-promos-backup.env
+UMask=0077
+TimeoutStartSec=2h
+ExecStart=/usr/bin/bash /home/ubuntu/dev-das-promos/infra/backup/backup-postgres.sh
+PrivateTmp=true

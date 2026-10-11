@@ -163,7 +163,14 @@ export default async function DealDetailPage({ params }: { params: Promise<{ id:
 
         <div className="card p-6">
           <h2 className="mb-3 text-sm font-medium text-neutral-400">Actions</h2>
-          <DealActions dealId={deal.dealCandidateId} status={deal.status} />
+          <DealActions
+            dealId={deal.dealCandidateId}
+            status={deal.status}
+            publicationNeedsReview={deal.publications.some(
+              (publication) =>
+                publication.status === "failed" || publication.status === "publishing",
+            )}
+          />
         </div>
 
         {deal.publications.length > 0 && (

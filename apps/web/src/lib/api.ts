@@ -1,4 +1,6 @@
-const API_URL = process.env.API_URL ?? "http://localhost:4000";
+const API_URL = (process.env.API_URL ?? "http://localhost:4000").replace(/\/+$/, "");
+
+export const SITE_URL = new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000");
 
 /**
  * Public site fetch helper. Uses Next.js's fetch cache with a short

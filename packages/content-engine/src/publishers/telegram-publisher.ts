@@ -1,6 +1,8 @@
 import type { PublicationPayload, PublicationResult, Publisher } from "../types.js";
 import { MockPublisher } from "./mock-publisher.js";
 
+const PUBLISH_REQUEST_TIMEOUT_MS = 30_000;
+
 export interface TelegramCredentials {
   botToken: string;
   chatId: string;
@@ -30,6 +32,7 @@ export class TelegramPublisher implements Publisher {
             text: payload.content,
             disable_web_page_preview: false,
           }),
+          signal: AbortSignal.timeout(PUBLISH_REQUEST_TIMEOUT_MS),
         },
       );
 

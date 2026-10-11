@@ -24,6 +24,8 @@ const SEARCH_ITEMS_RESPONSE = {
     items: [
       {
         asin: "B0C1EXAMPLE",
+        detailPageURL:
+          "https://www.amazon.com.br/dp/B0C1EXAMPLE?tag=dasdeals-20&linkCode=ogi&th=1&psc=1",
         itemInfo: {
           title: { displayValue: "Fone de Ouvido Bluetooth XYZ" },
           byLineInfo: { brand: { displayValue: "XYZ Brand" } },
@@ -54,6 +56,8 @@ const GET_ITEMS_RESPONSE = {
     items: [
       {
         asin: "B0C1EXAMPLE",
+        detailPageURL:
+          "https://www.amazon.com.br/dp/B0C1EXAMPLE?tag=dasdeals-20&linkCode=ogi&th=1&psc=1",
         itemInfo: {
           title: { displayValue: "Fone de Ouvido Bluetooth XYZ" },
           byLineInfo: { brand: { displayValue: "XYZ Brand" } },
@@ -119,6 +123,7 @@ describe("AmazonCreatorsApiProvider", () => {
     expect(tokenCalls).toHaveLength(1); // cached, not re-fetched on the second call
 
     const [, tokenInit] = tokenCalls[0] as [string, RequestInit];
+    expect(tokenInit.signal).toBeInstanceOf(AbortSignal);
     const tokenBody = JSON.parse(tokenInit.body as string);
     expect(tokenBody).toMatchObject({
       grant_type: "client_credentials",
@@ -154,7 +159,9 @@ describe("AmazonCreatorsApiProvider", () => {
     expect(offer?.productName).toBe("Fone de Ouvido Bluetooth XYZ");
     expect(offer?.brand).toBe("XYZ Brand");
     expect(offer?.imageUrl).toBe("https://m.media-amazon.com/images/I/example.jpg");
-    expect(offer?.url).toBe("https://www.amazon.com.br/dp/B0C1EXAMPLE");
+    expect(offer?.url).toBe(
+      "https://www.amazon.com.br/dp/B0C1EXAMPLE?tag=dasdeals-20&linkCode=ogi&th=1&psc=1",
+    );
     expect(offer?.sellerName).toBe("Amazon.com.br");
     expect(offer?.priceCents).toBe(12_990);
     expect(offer?.originalPriceCents).toBe(19_990);
@@ -231,7 +238,7 @@ describe("AmazonCreatorsApiProvider", () => {
     expect(fetchMock).toHaveBeenCalled();
   });
 
-  it("builds an affiliate url carrying the configured tag and campaign sub-tag", async () => {
+  it("preserves Amazon's vended affiliate url without mutating its attribution parameters", async () => {
     stubFetchWithToken(() => jsonResponse(GET_ITEMS_RESPONSE));
 
     const provider = makeProvider();
@@ -239,9 +246,7 @@ describe("AmazonCreatorsApiProvider", () => {
     const affiliateUrl = await provider.buildAffiliateUrl(product!, {
       campaign: "telegram-launch",
     });
-    const parsed = new URL(affiliateUrl);
-    expect(parsed.searchParams.get("tag")).toBe("dasdeals-20");
-    expect(parsed.searchParams.get("ascsubtag")).toBe("telegram-launch");
+    expect(affiliateUrl).toBe(product?.url);
   });
 
   it("throws a clear error when the token request fails", async () => {
@@ -323,7 +328,7 @@ describe("createAmazonProvider", () => {
     ).toBeInstanceOf(AmazonBrazilProvider);
   });
 
-  it("returns the real Creators API provider when both credentials are supplied", () => {
+  it("returns the real Creators API provider when OAuth credentials and Partner Tag are supplied", () => {
     const provider = createAmazonProvider({
       affiliateTag: "dasdeals-20",
       creatorsClientId: "test-client-id",

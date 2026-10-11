@@ -23,4 +23,10 @@ describe("GET /health", () => {
     expect(typeof body.timestamp).toBe("string");
     expect(new Date(body.timestamp).toISOString()).toBe(body.timestamp);
   });
+
+  it("reports ready when Postgres and Redis respond", async () => {
+    const response = await app.inject({ method: "GET", url: "/ready" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ status: "ready" });
+  });
 });

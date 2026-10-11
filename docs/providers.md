@@ -8,7 +8,7 @@ of the core pipeline: **`MarketplaceProvider`** (how offers come in) and
 flowchart LR
     subgraph "packages/providers"
         MP[MarketplaceProvider interface]
-        AMZ[AmazonBrazilProvider mock / AmazonPaapiProvider real]
+        AMZ[AmazonBrazilProvider mock / AmazonCreatorsApiProvider real]
         SHO[ShopeeBrazilProvider mock / ShopeeOpenApiProvider real]
         MLV[MercadoLivreProvider mock / MercadoLivreApiProvider real]
         MP --- AMZ
@@ -64,7 +64,7 @@ PRNG), so re-running ingestion or the seed script produces the same demo
 data every time.
 
 Each marketplace also has a real, API-backed sibling class in the same
-file (`AmazonPaapiProvider`, `ShopeeOpenApiProvider`,
+file (`AmazonCreatorsApiProvider`, `ShopeeOpenApiProvider`,
 `MercadoLivreApiProvider`), all implementing the same
 `MarketplaceProvider` interface. A `create<X>Provider(credentials?)`
 factory per marketplace (`createAmazonProvider`, `createShopeeProvider`,
@@ -78,6 +78,11 @@ are called; nothing else in the pipeline references a concrete class.
 seeder) intentionally only ever passes the affiliate tag/id fields, never
 the real-mode credentials, so `pnpm db:seed` stays on mock data even in a
 fully-credentialed production environment.
+
+Every real provider request, including token refreshes, has a 30-second
+timeout so a stalled marketplace API cannot pin a queue worker indefinitely.
+A timeout fails the current ingestion job; provider-specific retry behavior
+continues to apply where implemented.
 
 **Do not scrape marketplace pages or call undocumented private APIs** --
 that violates marketplace terms of service and is a legal/ToS risk this
@@ -101,19 +106,20 @@ enum -- Creators API's enum values are cleaner than PA-API's free-text
 message field ever was).
 
 **Verified directly against Amazon's own Creators API docs**
-(`affiliate-program.amazon.com/creatorsapi/docs/en-us/*`): the OAuth
-token request, the `getItems` cURL example, the full `searchItems`
-request/response shape, and the complete `offersV2` resource shape are
-all taken verbatim from those pages. Two things are **inferred**, not
-directly confirmed, and worth double-checking against a real account
-before relying on them in production:
-1. The Brazil `marketplace` string (`www.amazon.com.br`) -- the docs
-   don't enumerate per-country values, this follows the documented
-   `www.amazon.com` example pattern.
-2. `getItems`' response envelope key (`itemsResult`) and the
-   image/brand resource paths -- inferred from the documented
-   PascalCase-to-lowerCamelCase migration rule, since only `searchItems`'
-   full response shape was directly documented.
+(`affiliate-program.amazon.com/creatorsapi/docs/en-us/*`): Brazil uses
+the `www.amazon.com.br` marketplace value, `getItems` returns
+`itemsResult.items`, and the `searchItems`, item information, images,
+`offersV2`, and OAuth request/response shapes used here match the
+documented examples and resources. A live account check is still required
+to confirm approved API access, the configured Associate tag, and that
+real product results have the expected destination and price.
+
+For affiliate attribution, the provider retains the API-vended
+`detailPageURL` unchanged after checking HTTPS, the Brazilian Amazon host,
+and the configured `tag`. Amazon warns that modifying a vended URL can
+remove attribution. Channel measurement is done by the application's own
+tracked `/go/:code` redirect, so campaign information is not appended to
+Amazon's URL.
 
 Old PA-API credentials (`AMAZON_PAAPI_ACCESS_KEY`/`_SECRET_KEY`) do
 **not** work here -- register separately at
@@ -132,15 +138,30 @@ generation (forwarding `context.subId`/`context.campaign` as GraphQL
 `subIds`). Retries on HTTP 429 / GraphQL rate-limit error code `10030`
 with exponential backoff.
 
-**Caveat worth knowing**: the exact endpoint/schema/signature format was
-verified against a third-party-hosted mirror of Shopee's affiliate docs
-(no direct API console access was available while building this), not
-fetched from an authenticated developer-portal source. The shapes are
-internally consistent and corroborated across independent sources, but
-should be spot-checked against your own Shopee Partner/Affiliate
-developer console before relying on it in production -- if Shopee has
-since changed a field name or the signature recipe, this is the first
-place to look.
+For scoring, `priceMin` is the observed offer price and `originalPriceCents`
+is derived only when Shopee supplies a valid `priceDiscountRate`. `priceMax`
+is retained as variant-price metadata; a higher variant price is not evidence
+of a previous/list price. Affiliate `commission` is stored as
+`affiliateCommissionCents` metadata and is never treated as a customer coupon
+or subtracted from the shopper's price. The API does not expose a separate
+customer coupon field, so the pipeline records no coupon unless a provider
+actually supplies one.
+
+**Production verification is still required**: the official
+[Shopee Affiliate Open API Explorer](https://open-api.affiliate.shopee.com.br/explorer)
+is the authoritative place to inspect and run Brazil-region queries, but
+its schema is not visible until you enter an approved App ID and Secret.
+Without those credentials, this implementation's field names and response
+shape could only be cross-checked against a third-party-hosted mirror of
+the API documentation. Before enabling real ingestion, use the Explorer
+with the production affiliate account to confirm `productOfferV2`,
+`generateShortLink`, the price/commission fields, and the actual
+destination URL; then complete the real ingest → approve → publish → click
+cycle in `docs/aws-deployment.md` Part 5. The signature recipe and
+field names remain unverified against Shopee's authenticated schema until
+that live check is complete. The Explorer is hosted on Shopee's official
+Brazil Affiliate API domain; the request-signing details above still need
+confirmation against the approved account's current Explorer output.
 
 ## Mercado Livre
 
@@ -227,14 +248,13 @@ intervention (with one caveat on rotation -- see below).
 every `grant_type=refresh_token` exchange returns a *new* refresh token
 and immediately invalidates the old one, and an unused refresh token
 expires after ~6 months. `MercadoLivreApiProvider` caches the rotated
-token in memory and keeps using it for the life of the process, and logs
-a warning containing the new value so an operator can update
-`MERCADO_LIVRE_REFRESH_TOKEN` before the *next* restart -- there's no way
-for the provider to rewrite the environment/secret store itself. If the
-refresh token is ever invalid/expired/revoked, every call fails with a
-clear, distinct error message telling you the manual authorization-code
-flow (steps 1-3 above) must be repeated -- this is unrecoverable
-automatically, by design of Mercado Livre's OAuth flow.
+token in memory and keeps using it for the life of the process. It never
+logs the token. There is no secure persistence adapter for the rotated
+value, so before restarting the process, repeat the authorization-code
+flow (steps 1-3 above) and update `MERCADO_LIVRE_REFRESH_TOKEN` in the
+deployment secret source. If the configured refresh token is ever
+invalid/expired/revoked, every call fails with a clear, distinct error
+message; repeat that same manual OAuth flow to recover.
 
 ### API endpoints used
 
@@ -250,7 +270,7 @@ automatically, by design of Mercado Livre's OAuth flow.
 
 ### Affiliate links: no official programmatic API exists
 
-Unlike Amazon (Creators API) and Shopee (Open Platform), **Mercado Livre does
+Unlike Amazon (Creators API) and Shopee (Affiliate Open API), **Mercado Livre does
 not currently expose a documented, public API for generating affiliate
 links.** Its "Programa de Afiliados" (relaunched 2023) only issues
 tracked short links (`mercadolivre.com.br/sec/...`) through a web portal
@@ -301,7 +321,11 @@ interface Publisher {
   external. Used automatically whenever real credentials aren't
   configured, so local dev and CI never require live bot tokens.
 - **`TelegramPublisher`** -- a real implementation that calls the Telegram
-  Bot API's `sendMessage` endpoint. `createTelegramPublisher()`
+  Bot API's `sendMessage` endpoint with a 30-second request timeout.
+  `XPublisher` applies the same timeout to the X API. A timeout can happen
+  after the remote service accepted a post, so inspect the channel before
+  manually retrying a failed or stale publication.
+  `createTelegramPublisher()`
   (`packages/content-engine/src/publishers/telegram-publisher.ts`) falls
   back to `MockPublisher` when `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`
   aren't set, so startup never fails on missing credentials.
@@ -315,8 +339,10 @@ interface Publisher {
   before posting, on top of the caller already respecting that limit when
   generating content.
 - **`WebPublisher`** -- a no-op success; "publishing" to the public site
-  channel just means the DealCandidate becomes visible through
-  `/public/deals`, there's no external call to make.
+  channel records that the deal is ready for `/public/deals`, with no
+  external call to make. Public deal, product, and category listings require
+  this channel's publication to have succeeded; a successful Telegram or X
+  post by itself does not expose the deal on the public website.
 
 ### Content generation stays separate from publishing
 
@@ -341,10 +367,14 @@ Two `ContentGenerator` implementations exist:
   `DealContentInput`'s fields as a plain-text fact sheet and instructs the
   model (system prompt, not user-editable) to use *only* those facts --
   no inventing prices, stock levels, or urgency claims -- and to respond
-  with a JSON object of the three channel fields. The disclosure text and
-  X's character limit are then enforced **deterministically** after the
-  model responds (never trusted to the model), exactly like the plain
-  templates. `createOpenRouterContentGenerator({ apiKey, model })` falls
+  with a JSON object of the three channel fields. Model-supplied links are
+  removed; the application appends the channel-specific tracked `/go/:code`
+  link and disclosure, then fits the copy to the configured local X length
+  ceiling. That ceiling uses JavaScript string length and does not reproduce
+  X's weighted Unicode and URL counting; X remains the final validator.
+  Oversized posts are refused without truncating the tracked link or
+  disclosure. These constraints are never trusted to the model.
+  `createOpenRouterContentGenerator({ apiKey, model })` falls
   back to `TemplateContentGenerator` when either is absent, and
   `apps/api/src/services/content-generation.ts` also falls back to it for
   a single deal if the OpenRouter call throws for any reason (network
@@ -363,8 +393,9 @@ that could go stale.
 (default 10) caps how many deals get AI-generated content per UTC day --
 comfortably under OpenRouter's free-tier request cap (50/day on a fresh
 account, 1000/day after any credit purchase; each deal makes up to 3
-OpenRouter calls, one per channel, since each channel embeds its own
-`/go/:code` redirect link). The counter is Redis-backed
+OpenRouter calls, one per channel, so each channel receives distinct copy.
+The tracked link is appended by the application after the model responds.
+The counter is Redis-backed
 (`apps/api/src/lib/ai-content-quota.ts`, key `ai-content:daily-count:<UTC
 date>`) so it survives process restarts, and is checked **once per deal**
 (not once per channel) in `generateContentForDeal` -- reusing whichever

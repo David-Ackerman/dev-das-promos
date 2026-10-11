@@ -1,12 +1,16 @@
 import { adminUsers } from "@dev-das-promos/database";
 import { verifyPassword } from "@dev-das-promos/shared";
-import { eq } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { clearSessionCookie, setSessionCookie } from "../plugins/auth.js";
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: z
+    .string()
+    .trim()
+    .email()
+    .transform((email) => email.toLowerCase()),
   password: z.string().min(1),
 });
 
@@ -23,7 +27,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
       const [admin] = await fastify.db
         .select()
         .from(adminUsers)
-        .where(eq(adminUsers.email, parsed.data.email));
+        .where(sql`lower(${adminUsers.email}) = ${parsed.data.email}`);
       if (!admin) {
         return reply.code(401).send({ error: "Invalid email or password" });
       }

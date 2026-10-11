@@ -1,6 +1,11 @@
 import { marketplaceEnum } from "@dev-das-promos/database";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { env } from "../env.js";
+import {
+  hasRealMarketplaceApiCredentials,
+  realMarketplaceCredentialsError,
+} from "../lib/provider-registry-options.js";
 
 const bodySchema = z.object({
   marketplace: z.enum(marketplaceEnum.enumValues),
@@ -14,6 +19,15 @@ export default async function adminIngestionRoutes(fastify: FastifyInstance) {
     const parsed = bodySchema.safeParse(request.body);
     if (!parsed.success)
       return reply.code(400).send({ error: "Invalid body", details: parsed.error.flatten() });
+
+    if (
+      env.NODE_ENV === "production" &&
+      !hasRealMarketplaceApiCredentials(env, parsed.data.marketplace)
+    ) {
+      return reply.code(409).send({
+        error: realMarketplaceCredentialsError(parsed.data.marketplace),
+      });
+    }
 
     await fastify.queues.offerIngestion.add("ingest", parsed.data);
     return { queued: true, marketplace: parsed.data.marketplace };

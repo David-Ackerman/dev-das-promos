@@ -6,8 +6,15 @@ import {
   offers,
   products,
 } from "@dev-das-promos/database";
+import { sanitizeMarketplaceImageUrl } from "@dev-das-promos/providers";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
+import { env } from "../env.js";
+import {
+  currentOfferConditions,
+  nonMockMarketplaceProductCondition,
+  publishedWebPublicationCondition,
+} from "../lib/deal-freshness.js";
 
 export default async function publicCategoriesRoutes(fastify: FastifyInstance) {
   fastify.get("/public/categories", async () => {
@@ -42,13 +49,25 @@ export default async function publicCategoriesRoutes(fastify: FastifyInstance) {
       .innerJoin(offers, eq(dealCandidates.offerId, offers.id))
       .innerJoin(marketplaceProducts, eq(offers.marketplaceProductId, marketplaceProducts.id))
       .innerJoin(products, eq(marketplaceProducts.productId, products.id))
-      .where(and(inArray(products.categoryId, categoryIds), eq(dealCandidates.status, "published")))
+      .where(
+        and(
+          inArray(products.categoryId, categoryIds),
+          eq(dealCandidates.status, "published"),
+          publishedWebPublicationCondition(),
+          ...(env.NODE_ENV === "production" ? [nonMockMarketplaceProductCondition()] : []),
+          ...currentOfferConditions(),
+        ),
+      )
       .orderBy(desc(dealCandidates.dealScore));
 
     return {
       category,
       children,
-      deals: deals.map((d) => ({ ...d, scoreLabel: getScoreLabel(d.dealScore) })),
+      deals: deals.map((d) => ({
+        ...d,
+        imageUrl: sanitizeMarketplaceImageUrl(d.imageUrl),
+        scoreLabel: getScoreLabel(d.dealScore),
+      })),
     };
   });
 }

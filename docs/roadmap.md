@@ -1,9 +1,10 @@
-# Roadmap / designed-for-but-not-implemented
+# Roadmap / deferred and partially implemented capabilities
 
-This platform's architecture deliberately leaves room for the following
-without requiring a rewrite. Nothing below is implemented in the MVP --
-this page exists so the next engineer (or a future session) knows what was
-anticipated and where the seam already is.
+This platform's architecture deliberately leaves room for the capabilities
+below without requiring a rewrite. Some foundations already exist (such as
+the Mercado Livre provider and query-time deal expiration); each section
+describes what remains before that capability is complete. This page records
+work deferred beyond the launch MVP and the seams already in place.
 
 ## An editable UI/n8n-driven schedule
 
@@ -64,7 +65,7 @@ rather than only the current single `DEFAULT_DEAL_SCORE_WEIGHTS`).
 
 ## Multi-worker / separated deployment
 
-`apps/api` runs the Fastify server and all five BullMQ workers
+`apps/api` runs the Fastify server and all six BullMQ workers
 (`packages/queue`'s `QUEUE_NAMES`) in one process today (see
 `docs/architecture.md`'s "modular monolith" note). Splitting a queue's
 worker into its own deployable process is a config/deployment change
@@ -74,10 +75,12 @@ or content-generation volume outgrows a single process.
 
 ## Deal expiration
 
-`dealCandidateStatusEnum` already includes `"expired"`, but nothing
-currently transitions a deal into it. A scheduled job (n8n-triggered, or a
-sixth BullMQ queue) that marks stale published deals expired once their
-offer is no longer available (`availability: "out_of_stock"` on the latest
-offer, or no fresh offer observed in N days) is the natural next piece --
-`docs/architecture.md`'s ingestion sequence already produces the signal
-(availability on each `offers` row) this would key off of.
+An out-of-stock observation now transitions a candidate to `"expired"`.
+Public and scheduled-publishing queries also exclude out-of-stock offers
+and observations older than 72 hours, so stale deals cannot be shown or
+newly published. Affiliate redirects also reject deals that are no longer
+published or whose offer is out of stock or older than 72 hours, including
+links saved in old channel posts. A future cleanup job should persist
+`"expired"` for deals whose latest observation simply ages past 72 hours;
+today those deals are hidden by the query filter but retain their previous
+database status until another observation is evaluated.

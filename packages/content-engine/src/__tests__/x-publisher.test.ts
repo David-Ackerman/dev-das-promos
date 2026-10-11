@@ -92,21 +92,21 @@ describe("XPublisher", () => {
     expect(result.errorMessage).toBe("network down");
   });
 
-  it("truncates content longer than X's character limit before posting", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(jsonResponse(201, { data: { id: "1", text: "x" } }));
+  it("refuses oversized content without truncating required fields or calling X", async () => {
+    const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
     const longContent = "a".repeat(300);
     const publisher = new XPublisher(CREDENTIALS);
-    await publisher.publish({ dealCandidateId: "d1", channel: "x", content: longContent });
+    const result = await publisher.publish({
+      dealCandidateId: "d1",
+      channel: "x",
+      content: longContent,
+    });
 
-    const call = fetchMock.mock.calls[0] as [string, RequestInit];
-    const requestInit = call[1];
-    const sentBody = JSON.parse(requestInit.body as string) as { text: string };
-    expect(sentBody.text.length).toBeLessThanOrEqual(280);
-    expect(sentBody.text.endsWith("…")).toBe(true);
+    expect(result.status).toBe("failed");
+    expect(result.errorMessage).toContain("refusing to truncate");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("builds a well-formed OAuth 1.0a Authorization header", async () => {
@@ -120,6 +120,7 @@ describe("XPublisher", () => {
 
     const call = fetchMock.mock.calls[0] as [string, RequestInit];
     const requestInit = call[1];
+    expect(requestInit.signal).toBeInstanceOf(AbortSignal);
     const headers = requestInit.headers as Record<string, string>;
     const authHeader = headers.authorization as string;
 

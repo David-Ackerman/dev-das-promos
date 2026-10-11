@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { slugify, toCents } from "@dev-das-promos/shared";
 import { seededInt } from "./deterministic-random.js";
 import { MOCK_CATALOG } from "./mock-catalog.js";
+import { providerRequestSignal } from "./request.js";
 import type {
   AffiliateContext,
   FetchOffersOptions,
@@ -11,14 +12,10 @@ import type {
 } from "./types.js";
 
 /**
- * MOCK provider. A real integration must use Shopee's Open Platform /
- * Affiliate API under an approved partner/affiliate account. There is no
- * legitimate unofficial API for Shopee product or price data. Swap this
- * class for an Open-Platform-backed implementation behind the same
- * `MarketplaceProvider` interface.
- *
- * TODO(real-integration): requires Shopee Open Platform partner id/key +
- * an approved affiliate id. See docs/providers.md.
+ * Deterministic mock retained for local development and demo seeding. The
+ * real Affiliate Open API implementation is ShopeeOpenApiProvider below;
+ * createShopeeProvider selects it when its approved app credentials exist.
+ * There is no legitimate unofficial API for Shopee product or price data.
  */
 export class ShopeeBrazilProvider implements MarketplaceProvider {
   readonly marketplace = "shopee_br" as const;
@@ -343,7 +340,11 @@ export class ShopeeOpenApiProvider implements MarketplaceProvider {
   }
 
   private toOffer(node: ShopeeProductOfferNode): MarketplaceOfferData {
-    const priceCents = parseShopeeMoneyToCents(node.priceMin) ?? 0;
+    const priceCents = parseShopeeMoneyToCents(node.priceMin);
+    if (priceCents === undefined || priceCents <= 0) {
+      throw new Error(`Shopee offer ${node.itemId} has no valid positive priceMin`);
+    }
+    const variantPriceMaxCents = parseShopeeMoneyToCents(node.priceMax);
 
     let originalPriceCents: number | undefined;
     if (
@@ -352,20 +353,12 @@ export class ShopeeOpenApiProvider implements MarketplaceProvider {
       node.priceDiscountRate < 100
     ) {
       originalPriceCents = Math.round(priceCents / (1 - node.priceDiscountRate / 100));
-    } else {
-      const maxCents = parseShopeeMoneyToCents(node.priceMax);
-      if (maxCents !== undefined && maxCents > priceCents) {
-        originalPriceCents = maxCents;
-      }
     }
 
-    // The affiliate API has no explicit customer-facing "coupon" field, so
-    // the closest available value is the affiliate `commission` amount
-    // Shopee pays out for the offer -- this is NOT a shopper-facing
-    // discount, but it's the only per-offer monetary incentive the schema
-    // exposes, and the task explicitly asked to map commission/coupon info
-    // here where available.
-    const couponValueCents = parseShopeeMoneyToCents(node.commission);
+    // Affiliate commission is revenue for the publisher, not a discount for
+    // the shopper. Keep it as listing metadata and never subtract it from
+    // the price used for discount scoring.
+    const affiliateCommissionCents = parseShopeeMoneyToCents(node.commission);
 
     return {
       externalId: String(node.itemId),
@@ -380,7 +373,6 @@ export class ShopeeOpenApiProvider implements MarketplaceProvider {
       // task instructions we leave them undefined rather than guess.
       priceCents,
       originalPriceCents,
-      couponValueCents,
       currency: "BRL",
       // The Affiliate Open API doesn't expose stock/availability for
       // offer-search results.
@@ -395,6 +387,8 @@ export class ShopeeOpenApiProvider implements MarketplaceProvider {
         commissionRate: node.commissionRate,
         sellerCommissionRate: node.sellerCommissionRate,
         shopeeCommissionRate: node.shopeeCommissionRate,
+        affiliateCommissionCents,
+        variantPriceMaxCents,
         periodStartTime: node.periodStartTime,
         periodEndTime: node.periodEndTime,
       },
@@ -443,6 +437,7 @@ export class ShopeeOpenApiProvider implements MarketplaceProvider {
             authorization: `SHA256 Credential=${this.credentials.appId}, Timestamp=${timestamp}, Signature=${signature}`,
           },
           body: payload,
+          signal: providerRequestSignal(),
         });
       } catch (error) {
         if (attempt < MAX_REQUEST_ATTEMPTS) {

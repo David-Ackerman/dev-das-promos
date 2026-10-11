@@ -11,11 +11,12 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "db:generate": "tsx ./node_modules/drizzle-kit/bin.cjs generate",
-    "db:migrate": "tsx src/migrate.ts",
-    "db:seed": "tsx src/seed/index.ts",
-    "db:studio": "tsx ./node_modules/drizzle-kit/bin.cjs studio"
+    "test": "dotenv -e ../../.env -- vitest run",
+    "db:generate": "dotenv -e ../../.env -- tsx ./node_modules/drizzle-kit/bin.cjs generate",
+    "db:migrate": "dotenv -e ../../.env -- tsx src/migrate.ts",
+    "db:seed": "dotenv -e ../../.env -- tsx src/seed/index.ts",
+    "db:bootstrap-admin": "dotenv -e ../../.env -- tsx src/bootstrap-admin.ts",
+    "db:studio": "dotenv -e ../../.env -- tsx ./node_modules/drizzle-kit/bin.cjs studio"
   },
   "dependencies": {
     "@dev-das-promos/config": "workspace:*",
@@ -29,6 +30,7 @@
     "@dev-das-promos/deal-engine": "workspace:*",
     "@dev-das-promos/providers": "workspace:*",
     "drizzle-kit": "^0.30.1",
+    "dotenv-cli": "^11.0.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

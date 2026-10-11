@@ -5,8 +5,10 @@ function baseSource(overrides: Partial<NodeJS.ProcessEnv> = {}): NodeJS.ProcessE
   return {
     DATABASE_URL: "postgres://localhost:5432/das_promos",
     REDIS_URL: "redis://localhost:6379",
-    INTERNAL_API_TOKEN: "a-token-that-is-long-enough",
-    AUTH_SECRET: "a-secret-that-is-long-enough",
+    INTERNAL_API_TOKEN: "ci-internal-token-with-at-least-32-characters",
+    AUTH_SECRET: "ci-auth-secret-with-at-least-32-characters",
+    ADMIN_EMAIL: "operator@das-promos.test",
+    ADMIN_PASSWORD: "ci-admin-password-with-12-chars",
     ...overrides,
   } as NodeJS.ProcessEnv;
 }
@@ -20,26 +22,26 @@ describe("loadEnv", () => {
     const env = loadEnv(baseSource());
     expect(env.DATABASE_URL).toBe("postgres://localhost:5432/das_promos");
     expect(env.REDIS_URL).toBe("redis://localhost:6379");
-    expect(env.INTERNAL_API_TOKEN).toBe("a-token-that-is-long-enough");
-    expect(env.AUTH_SECRET).toBe("a-secret-that-is-long-enough");
+    expect(env.INTERNAL_API_TOKEN).toBe("ci-internal-token-with-at-least-32-characters");
+    expect(env.AUTH_SECRET).toBe("ci-auth-secret-with-at-least-32-characters");
   });
 
   it("throws a readable error when DATABASE_URL is missing", () => {
     const source = baseSource();
-    delete (source as Record<string, unknown>).DATABASE_URL;
+    (source as Record<string, unknown>).DATABASE_URL = undefined;
     expect(() => loadEnv(source)).toThrowError(/DATABASE_URL/);
   });
 
   it("throws a readable error when REDIS_URL is missing", () => {
     const source = baseSource();
-    delete (source as Record<string, unknown>).REDIS_URL;
+    (source as Record<string, unknown>).REDIS_URL = undefined;
     expect(() => loadEnv(source)).toThrowError(/REDIS_URL/);
   });
 
   it("lists every failing field in a single error when multiple are missing", () => {
     const source = baseSource();
-    delete (source as Record<string, unknown>).DATABASE_URL;
-    delete (source as Record<string, unknown>).REDIS_URL;
+    (source as Record<string, unknown>).DATABASE_URL = undefined;
+    (source as Record<string, unknown>).REDIS_URL = undefined;
     try {
       loadEnv(source);
       throw new Error("expected loadEnv to throw");
@@ -61,7 +63,7 @@ describe("loadEnv", () => {
   });
 
   it("applies defaults for optional fields when they are omitted", () => {
-    const env = loadEnv(baseSource());
+    const env = loadEnv(baseSource({ ADMIN_EMAIL: undefined, ADMIN_PASSWORD: undefined }));
     expect(env.NODE_ENV).toBe("development");
     expect(env.API_PORT).toBe(4000);
     expect(env.API_URL).toBe("http://localhost:4000");
@@ -73,6 +75,17 @@ describe("loadEnv", () => {
     expect(env.OPENROUTER_API_KEY).toBeUndefined();
     expect(env.OPENROUTER_MODEL).toBeUndefined();
     expect(env.AI_CONTENT_DAILY_LIMIT).toBe(10);
+    expect(env.CLICK_EVENT_RETENTION_DAYS).toBe(180);
+  });
+
+  it("validates the click-event retention window", () => {
+    expect(
+      loadEnv(baseSource({ CLICK_EVENT_RETENTION_DAYS: "90" })).CLICK_EVENT_RETENTION_DAYS,
+    ).toBe(90);
+    resetEnvCache();
+    expect(() => loadEnv(baseSource({ CLICK_EVENT_RETENTION_DAYS: "29" }))).toThrowError(
+      /CLICK_EVENT_RETENTION_DAYS/,
+    );
   });
 
   it("coerces API_PORT from a string to a number", () => {
@@ -80,10 +93,44 @@ describe("loadEnv", () => {
     expect(env.API_PORT).toBe(5000);
   });
 
+  it("requires a shared cookie domain for production subdomains", () => {
+    const source = baseSource({
+      NODE_ENV: "production",
+      DATABASE_URL:
+        "postgres://das_promos:0123456789abcdef0123456789abcdef@localhost:5432/das_promos",
+      API_URL: "https://api.example.com",
+      ADMIN_URL: "https://admin.example.com",
+      PUBLIC_WEB_URL: "https://example.com",
+    });
+    expect(() => loadEnv(source)).toThrowError(/SESSION_COOKIE_DOMAIN/);
+
+    const configured = loadEnv({ ...source, SESSION_COOKIE_DOMAIN: ".example.com" });
+    expect(configured.SESSION_COOKIE_DOMAIN).toBe(".example.com");
+  });
+
+  it("requires production service URLs to be bare HTTPS origins", () => {
+    const source = baseSource({
+      NODE_ENV: "production",
+      DATABASE_URL:
+        "postgres://das_promos:0123456789abcdef0123456789abcdef@localhost:5432/das_promos",
+      API_URL: "https://api.example.test/v1",
+      ADMIN_URL: "https://admin.example.test",
+      PUBLIC_WEB_URL: "https://example.test",
+      SESSION_COOKIE_DOMAIN: ".example.test",
+    });
+
+    expect(() => loadEnv(source)).toThrowError(/HTTPS origins without credentials, paths/);
+  });
+
   it("respects explicitly provided optional values instead of defaults", () => {
     const env = loadEnv(
       baseSource({
         NODE_ENV: "production",
+        DATABASE_URL:
+          "postgres://das_promos:0123456789abcdef0123456789abcdef@localhost:5432/das_promos",
+        API_URL: "https://api.example.test",
+        ADMIN_URL: "https://api.example.test",
+        PUBLIC_WEB_URL: "https://example.test",
         API_PORT: "8080",
         AMAZON_AFFILIATE_TAG: "das-promos-20",
       }),
@@ -94,14 +141,32 @@ describe("loadEnv", () => {
   });
 
   it("memoizes the parsed env and ignores a differing source on subsequent calls", () => {
-    const first = loadEnv(baseSource({ NODE_ENV: "production" }));
+    const first = loadEnv(
+      baseSource({
+        NODE_ENV: "production",
+        DATABASE_URL:
+          "postgres://das_promos:0123456789abcdef0123456789abcdef@localhost:5432/das_promos",
+        API_URL: "https://api.example.test",
+        ADMIN_URL: "https://api.example.test",
+        PUBLIC_WEB_URL: "https://example.test",
+      }),
+    );
     const second = loadEnv(baseSource({ NODE_ENV: "test" }));
     expect(first).toBe(second);
     expect(second.NODE_ENV).toBe("production");
   });
 
   it("re-parses after resetEnvCache is called", () => {
-    loadEnv(baseSource({ NODE_ENV: "production" }));
+    loadEnv(
+      baseSource({
+        NODE_ENV: "production",
+        DATABASE_URL:
+          "postgres://das_promos:0123456789abcdef0123456789abcdef@localhost:5432/das_promos",
+        API_URL: "https://api.example.test",
+        ADMIN_URL: "https://api.example.test",
+        PUBLIC_WEB_URL: "https://example.test",
+      }),
+    );
     resetEnvCache();
     const env = loadEnv(baseSource({ NODE_ENV: "test" }));
     expect(env.NODE_ENV).toBe("test");

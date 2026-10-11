@@ -98,10 +98,11 @@ describe("MercadoLivreApiProvider", () => {
   });
 
   it("exchanges the refresh token for an access token before the first request", async () => {
-    const fetchMock = vi.fn(async (input: any, init?: any) => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/oauth/token")) {
         expect(init?.method).toBe("POST");
+        expect(init?.signal).toBeInstanceOf(AbortSignal);
         const body = new URLSearchParams(init?.body as string);
         expect(body.get("grant_type")).toBe("refresh_token");
         expect(body.get("client_id")).toBe("test-app-id");
@@ -128,7 +129,7 @@ describe("MercadoLivreApiProvider", () => {
 
   it("caches the access token across calls and re-mints only after it expires", async () => {
     let tokenCallCount = 0;
-    const fetchMock = vi.fn(async (input: any) => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
       if (url.includes("/oauth/token")) {
         tokenCallCount += 1;
@@ -160,7 +161,7 @@ describe("MercadoLivreApiProvider", () => {
   it("caches a rotated refresh token in-process and reuses it on the next refresh", async () => {
     const refreshTokensSeen: string[] = [];
     let tokenCallCount = 0;
-    const fetchMock = vi.fn(async (input: any, init?: any) => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/oauth/token")) {
         tokenCallCount += 1;
@@ -193,7 +194,7 @@ describe("MercadoLivreApiProvider", () => {
   it("maps a search result to a MarketplaceOfferData with price in integer cents", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: any) => {
+      vi.fn(async (input: string | URL | Request) => {
         const url = String(input);
         if (url.includes("/oauth/token")) return jsonResponse(TOKEN_RESPONSE);
         if (url.includes("/sites/MLB/search")) return jsonResponse(SEARCH_RESPONSE);
@@ -216,7 +217,7 @@ describe("MercadoLivreApiProvider", () => {
   });
 
   it("sends category and limit through to the search request", async () => {
-    const fetchMock = vi.fn(async (input: any) => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
       if (url.pathname === "/oauth/token") return jsonResponse(TOKEN_RESPONSE);
       if (url.pathname === "/sites/MLB/search") {
@@ -235,7 +236,7 @@ describe("MercadoLivreApiProvider", () => {
   it("fetches a single product by external id, including seller rating", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: any) => {
+      vi.fn(async (input: string | URL | Request) => {
         const url = String(input);
         if (url.includes("/oauth/token")) return jsonResponse(TOKEN_RESPONSE);
         if (url.includes("/items/MLB1234567890")) return jsonResponse(ITEM_RESPONSE);
@@ -256,7 +257,7 @@ describe("MercadoLivreApiProvider", () => {
   it("returns null when the item lookup 404s", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: any) => {
+      vi.fn(async (input: string | URL | Request) => {
         const url = String(input);
         if (url.includes("/oauth/token")) return jsonResponse(TOKEN_RESPONSE);
         if (url.includes("/items/")) {
@@ -289,7 +290,7 @@ describe("MercadoLivreApiProvider", () => {
     let searchAttempts = 0;
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: any) => {
+      vi.fn(async (input: string | URL | Request) => {
         const url = String(input);
         if (url.includes("/oauth/token")) return jsonResponse(TOKEN_RESPONSE);
         if (url.includes("/sites/MLB/search")) {

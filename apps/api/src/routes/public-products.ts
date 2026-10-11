@@ -7,8 +7,15 @@ import {
   offers,
   products,
 } from "@dev-das-promos/database";
-import { eq } from "drizzle-orm";
+import { sanitizeMarketplaceImageUrl } from "@dev-das-promos/providers";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
+import { env } from "../env.js";
+import {
+  currentOfferConditions,
+  nonMockMarketplaceProductCondition,
+  publishedWebPublicationCondition,
+} from "../lib/deal-freshness.js";
 
 export default async function publicProductsRoutes(fastify: FastifyInstance) {
   fastify.get("/public/products/:slug", async (request, reply) => {
@@ -31,9 +38,9 @@ export default async function publicProductsRoutes(fastify: FastifyInstance) {
 
     if (!product) return reply.code(404).send({ error: "Product not found" });
 
-    // One row per currently-active deal candidate for this product (each
+    // Only expose currently available, published candidates. Each
     // marketplace listing has at most one, kept up to date by evaluateOffer's
-    // upsert-by-slug logic) -- NOT one row per historical offer.
+    // upsert-by-slug logic -- NOT one row per historical offer.
     const listings = await fastify.db
       .select({
         marketplaceProductId: marketplaceProducts.id,
@@ -49,7 +56,19 @@ export default async function publicProductsRoutes(fastify: FastifyInstance) {
       .from(dealCandidates)
       .innerJoin(offers, eq(dealCandidates.offerId, offers.id))
       .innerJoin(marketplaceProducts, eq(offers.marketplaceProductId, marketplaceProducts.id))
-      .where(eq(marketplaceProducts.productId, product.id));
+      .where(
+        and(
+          eq(marketplaceProducts.productId, product.id),
+          eq(dealCandidates.status, "published"),
+          publishedWebPublicationCondition(),
+          ...(env.NODE_ENV === "production" ? [nonMockMarketplaceProductCondition()] : []),
+          ...currentOfferConditions(),
+        ),
+      );
+
+    if (listings.length === 0) {
+      return reply.code(404).send({ error: "Product not found" });
+    }
 
     const listingsWithHistory = await Promise.all(
       listings.map(async (listing) => ({
@@ -59,6 +78,10 @@ export default async function publicProductsRoutes(fastify: FastifyInstance) {
       })),
     );
 
-    return { ...product, listings: listingsWithHistory };
+    return {
+      ...product,
+      imageUrl: sanitizeMarketplaceImageUrl(product.imageUrl),
+      listings: listingsWithHistory,
+    };
   });
 }

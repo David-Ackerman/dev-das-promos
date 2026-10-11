@@ -12,7 +12,9 @@ Parameters:
     Description: Existing EC2 key pair, created via the EC2 console (Key Pairs -> Create key pair), used for the one-time manual SSH setup in docs/aws-deployment.md Part 3.
   SshAllowedCidr:
     Type: String
-    Description: "CIDR allowed to SSH in, e.g. your IP as x.x.x.x/32. Find your IP at https://whatismyip.com. Avoid 0.0.0.0/0."
+    Description: "Your public IPv4 address as a /32 CIDR, e.g. 203.0.113.42/32."
+    AllowedPattern: '^(?:[0-9]{1,3}\.){3}[0-9]{1,3}/32$'
+    ConstraintDescription: "Use a single public IPv4 address with the /32 mask; wider SSH CIDRs are not allowed."
   InstanceProfileName:
     Type: String
     Default: dev-das-promos-ec2-ssm-profile
@@ -20,25 +22,33 @@ Parameters:
   InstanceType:
     Type: String
     Default: t3.small
-    Description: 2GB RAM -- Postgres + Redis + the Node process together want more headroom than t3.micro's 1GB.
+    Description: >
+      2GB RAM -- Postgres + Redis + the Node process together want more
+      headroom than t3.micro's 1GB. If changing this, update the t3.small
+      IAM launch guard in bootstrap.yaml at the same time.
   AmiId:
-    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
-    Description: Always resolves to the current Ubuntu 22.04 AMI for the deploying region -- never goes stale.
+    Type: AWS::EC2::Image::Id
+    Description: Region-specific Ubuntu 22.04 AMI ID pinned in the EC2_AMI_ID GitHub repository variable. Change deliberately when upgrading the host OS.
 
 Resources:
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: das-promos EC2 instance -- SSH (restricted) + API port
+      # This low-cost deployment intentionally uses the account's default
+      # VPC. See docs/aws-deployment.md Part 2; stack creation requires one.
+      GroupDescription: das-promos EC2 instance -- SSH (restricted) + HTTPS
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
           CidrIp: !Ref SshAllowedCidr
         - IpProtocol: tcp
-          FromPort: 4000
-          ToPort: 4000
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
@@ -62,8 +72,23 @@ Resources:
         - Key: Name
           Value: dev-das-promos
 
+  StaticPublicIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: dev-das-promos-api
+
+  StaticPublicIpAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt StaticPublicIp.AllocationId
+      InstanceId: !Ref Instance
+
 Outputs:
   InstanceId:
     Value: !Ref Instance
   PublicIp:
-    Value: !GetAtt Instance.PublicIp
+    Description: Static Elastic IP; point the API DNS A record here.
+    Value: !Ref StaticPublicIp

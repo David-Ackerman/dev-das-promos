@@ -11,6 +11,7 @@ export interface XCredentials {
 }
 
 const TWEETS_URL = "https://api.x.com/2/tweets";
+const PUBLISH_REQUEST_TIMEOUT_MS = 30_000;
 
 /**
  * RFC 3986 percent-encoding, as required by the OAuth 1.0a spec. This is
@@ -94,8 +95,8 @@ function extractErrorMessage(status: number, body: unknown): string {
  * and posts to the v2 `POST /2/tweets` endpoint. `payload.content` is
  * expected to already respect X's character limit (see
  * DEFAULT_CONTENT_LIMITS.x / packages/content-engine/src/limits.ts) by
- * the time it reaches this publisher; this class defensively truncates
- * as a last resort rather than relying solely on the caller.
+ * the time it reaches this publisher. Oversized content is rejected so
+ * the tracked link and affiliate disclosure are never silently truncated.
  */
 export class XPublisher implements Publisher {
   readonly channel = "x" as const;
@@ -104,8 +105,13 @@ export class XPublisher implements Publisher {
 
   async publish(payload: PublicationPayload): Promise<PublicationResult> {
     const limit = DEFAULT_CONTENT_LIMITS.x;
-    const text =
-      payload.content.length > limit ? `${payload.content.slice(0, limit - 1)}…` : payload.content;
+    if (payload.content.length > limit) {
+      return {
+        status: "failed",
+        errorMessage: `X post exceeds the ${limit}-character limit; refusing to truncate its tracked link or affiliate disclosure.`,
+      };
+    }
+    const text = payload.content;
 
     try {
       const authorization = buildAuthorizationHeader("POST", TWEETS_URL, this.credentials);
@@ -117,6 +123,7 @@ export class XPublisher implements Publisher {
           authorization,
         },
         body: JSON.stringify({ text }),
+        signal: AbortSignal.timeout(PUBLISH_REQUEST_TIMEOUT_MS),
       });
 
       const body = (await response.json()) as XSuccessBody & XErrorBody;

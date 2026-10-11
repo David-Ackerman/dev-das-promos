@@ -12,11 +12,17 @@ export interface DealEvaluationJob {
 
 export interface ContentGenerationJob {
   dealCandidateId: string;
+  /** Restrict regeneration to one channel when an operator retries a publication. */
+  channel?: PublicationChannel;
+  /** True for work created by the automatic schedule; used by its kill switch. */
+  scheduled?: boolean;
 }
 
 export interface PublicationJob {
   dealCandidateId: string;
   channel: PublicationChannel;
+  /** True for work created by the automatic schedule; used by its kill switch. */
+  scheduled?: boolean;
 }
 
 export interface AnalyticsProcessingJob {
@@ -27,6 +33,8 @@ export interface AnalyticsProcessingJob {
 export interface ScheduledPublishJob {
   /** Max deals to enqueue for publishing in this run; defaults to a small batch. */
   limit?: number;
+  /** Restrict automatic publishing to the marketplaces ingested by this schedule. */
+  marketplaces?: Marketplace[];
 }
 
 export interface JobPayloadMap {

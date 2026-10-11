@@ -73,6 +73,16 @@ export async function registerScheduledJobs(
   queues: QueueBundle,
   config: ScheduleConfig,
 ): Promise<void> {
+  const expectedIngestionKeys = new Set(
+    config.times.flatMap((time) =>
+      config.marketplaces.map((marketplace) => `scheduled-ingest-${marketplace}-${time}`),
+    ),
+  );
+  const expectedPublishKeys = new Set(config.times.map((time) => `scheduled-publish-${time}`));
+
+  await removeStaleSchedulers(queues.offerIngestion, "scheduled-ingest-", expectedIngestionKeys);
+  await removeStaleSchedulers(queues.scheduledPublish, "scheduled-publish-", expectedPublishKeys);
+
   for (const time of config.times) {
     const ingestCron = toDailyCron(parseTimeOfDay(time));
     for (const marketplace of config.marketplaces) {
@@ -87,11 +97,38 @@ export async function registerScheduledJobs(
     await queues.scheduledPublish.upsertJobScheduler(
       `scheduled-publish-${time}`,
       { pattern: publishCron, tz: "UTC" },
-      { name: "scheduled-publish", data: { limit: config.publishLimit } },
+      {
+        name: "scheduled-publish",
+        data: { limit: config.publishLimit, marketplaces: config.marketplaces },
+      },
     );
   }
 
   console.log(
     `[scheduler] registered ${config.times.length} ingest+publish cycle(s)/day for [${config.marketplaces.join(", ")}] at UTC times [${config.times.join(", ")}] (publish +${config.publishDelayMinutes}min)`,
   );
+}
+
+/** Remove only schedulers owned by this feature that are no longer configured. */
+async function removeStaleSchedulers(
+  queue: QueueBundle["offerIngestion"] | QueueBundle["scheduledPublish"],
+  keyPrefix: string,
+  expectedKeys: Set<string>,
+): Promise<void> {
+  const schedulers = await queue.getJobSchedulers();
+  await Promise.all(
+    schedulers
+      .filter(
+        (scheduler) => scheduler.key.startsWith(keyPrefix) && !expectedKeys.has(scheduler.key),
+      )
+      .map((scheduler) => queue.removeJobScheduler(scheduler.key)),
+  );
+}
+
+/** Disable future automatic cycles without touching unrelated queue schedulers. */
+export async function removeScheduledJobs(queues: QueueBundle): Promise<void> {
+  await Promise.all([
+    removeStaleSchedulers(queues.offerIngestion, "scheduled-ingest-", new Set()),
+    removeStaleSchedulers(queues.scheduledPublish, "scheduled-publish-", new Set()),
+  ]);
 }

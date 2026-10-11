@@ -6,9 +6,10 @@ import { redirects } from "./redirect.js";
 
 /**
  * Privacy-conscious click tracking: no raw IP, no raw user agent string
- * beyond a coarse device/browser summary. `ipHash` is a salted one-way
- * hash (see packages/shared/hash.ts), sufficient for de-duplication
- * without retaining personal data.
+ * beyond a coarse device/browser summary, and no referrer path or query
+ * string. `ipHash` is a truncated salted hash of the IP (see
+ * packages/shared/hash.ts); the original address is not stored. HTTP rate
+ * limiting is handled separately by Fastify.
  */
 export const clickEvents = pgTable(
   "click_events",

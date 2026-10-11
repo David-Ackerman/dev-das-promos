@@ -18,8 +18,10 @@ for the marketplace/publisher abstraction and how to extend it,
 [`docs/deployment.md`](./docs/deployment.md) for taking this to
 production ([`docs/aws-deployment.md`](./docs/aws-deployment.md) for a
 complete AWS-specific, credentials-included runbook), and
-[`docs/roadmap.md`](./docs/roadmap.md) for what's
-designed-for but not yet built.
+[`docs/deploy-week-2026-09-28.md`](./docs/deploy-week-2026-09-28.md)
+for the launch plan for the week of 28 September 2026, and
+[`docs/roadmap.md`](./docs/roadmap.md) for deferred and partially
+implemented capabilities.
 
 ## Stack
 
@@ -85,6 +87,10 @@ pnpm db:seed
 pnpm dev
 ```
 
+Database migration and Drizzle commands require `DATABASE_URL` from `.env`;
+they fail clearly if it is missing instead of silently selecting a local
+database.
+
 Then:
 
 - Admin dashboard: http://localhost:3001 (log in with `ADMIN_EMAIL` /
@@ -122,15 +128,16 @@ pnpm typecheck      # tsc --noEmit across the monorepo
 pnpm lint           # Biome check
 pnpm build           # build all apps/packages
 pnpm db:studio      # Drizzle Studio (inspect the database visually)
+pnpm db:bootstrap-admin # create only the admin account (no demo data)
 ```
 
 Per-package: `pnpm --filter @dev-das-promos/<package> <script>` (e.g.
 `pnpm --filter @dev-das-promos/deal-engine test`).
 
-Env vars are loaded from this repo's root `.env` -- `apps/api`,
-`apps/web`, and `apps/admin` each wrap their scripts with `dotenv-cli`
-(`dotenv -e ../../.env -- <command>`) rather than reading a per-app
-`.env` file. If you add a new script that needs env vars, wrap it the
+Env vars are loaded from this repo's root `.env` -- the app scripts and
+database commands wrap their commands with `dotenv-cli`
+(`dotenv -e ../../.env -- <command>`) rather than reading per-package
+`.env` files. If you add a new script that needs env vars, wrap it the
 same way.
 
 ## Key files & entry points
@@ -140,9 +147,9 @@ Organized by "I want to change X":
 | I want to change... | Look here |
 |---|---|
 | Scoring weights / approval thresholds | `packages/config/src/scoring-config.ts` (config) + `packages/deal-engine/src/{scoring,discount,components,monetization,approval}.ts` (formula) |
-| Disclosure/legal copy per channel | `packages/config/src/disclosure.ts` |
+| Affiliate disclosure copy per channel | `packages/config/src/disclosure.ts` |
 | Database schema | `packages/database/src/schema/*.ts` (one file per table) -- then `pnpm db:generate` + `pnpm db:migrate` |
-| Seed/demo data | `packages/database/src/seed/*.ts`, orchestrated by `seed/index.ts` (order matters). **`pnpm db:seed` truncates every demo table first** (`seed/reset.ts`) so it's safely re-runnable -- `admin_users` is the one table deliberately left alone, so re-seeding never invalidates your admin login. Don't run it if you have manual admin-UI/API changes you want to keep. |
+| Seed/demo data | `packages/database/src/seed/*.ts`, orchestrated by `seed/index.ts` (order matters). **`pnpm db:seed` truncates every demo table first** (`seed/reset.ts`) so it's safely re-runnable -- `admin_users` is the one table deliberately left alone, so re-seeding never invalidates your admin login. It always refuses `NODE_ENV=production`; remote hosts are also refused unless `ALLOW_DEMO_SEED=true` is explicitly set for a disposable non-production database. Don't run it if you have manual admin-UI/API changes you want to keep. |
 | API routes | `apps/api/src/routes/*.ts`, registered in `apps/api/src/app.ts`. `public-*.ts` = no auth; `admin-*.ts` = needs an admin session cookie; `internal.ts` = needs `X-Internal-Token` (n8n) |
 | Business logic behind a route | `apps/api/src/services/*.ts` (ingestion, deal-evaluation, approval, publication, redirect, categories, conversion-signal, content-generation) |
 | BullMQ workers | `apps/api/src/workers/*.ts`, started in-process by `startWorkers()` in `apps/api/src/server.ts` |
@@ -162,9 +169,12 @@ Organized by "I want to change X":
   *after* the first seed does **not** update an already-seeded admin.
   Either seed with a new email, or edit the `admin_users` row directly
   (`pnpm db:studio` is the easiest way).
-- Session mechanism: a cookie signed with `AUTH_SECRET`, issued by
-  `POST /auth/login` (`apps/api/src/routes/auth.ts`) and checked on every
-  `admin-*` route by `apps/api/src/plugins/auth.ts`.
+- In production, create the first login with `pnpm db:bootstrap-admin`;
+  the demo seed is disabled there.
+- Session mechanism: a seven-day cookie signed with `AUTH_SECRET`, with
+  server-validated expiry, issued by `POST /auth/login`
+  (`apps/api/src/routes/auth.ts`) and checked on every `admin-*` route by
+  `apps/api/src/plugins/auth.ts`.
 
 ## Environment variables
 
@@ -176,14 +186,18 @@ at startup by `packages/config/src/env.ts` (zod). Highlights:
 | `DATABASE_URL` | yes | Postgres connection string |
 | `REDIS_URL` | yes | Redis connection string (BullMQ) |
 | `API_PORT`, `API_URL`, `ADMIN_URL`, `PUBLIC_WEB_URL` | yes | Service URLs; `API_URL` is also where `/go/:code` lives |
+| `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL` | web app | Browser API base and public canonical origin; production site URL also drives sitemap and robots metadata |
+| `PUBLIC_OPERATOR_NAME`, `PUBLIC_CONTACT_EMAIL` | production web app | Public operator identity and privacy contact shown on `/privacy`; both are required for production builds |
 | `INTERNAL_API_TOKEN` | yes | Shared secret for n8n-facing `/internal/*` routes |
 | `AUTH_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` | yes | Admin session signing + seeded admin login |
-| `AMAZON_AFFILIATE_TAG`, `SHOPEE_AFFILIATE_ID`, `MERCADO_LIVRE_AFFILIATE_ID` | no | Marketplace mocks work without these |
-| `AMAZON_CREATORS_CLIENT_ID`, `AMAZON_CREATORS_CLIENT_SECRET` | no | Activates the real Amazon provider (Creators API -- replaces the retired PA-API 5.0, see `docs/providers.md`) |
+| `SESSION_COOKIE_DOMAIN` | production | Shared parent domain for the admin/API cookie, e.g. `.example.com` |
+| `API_HOST`, `POSTGRES_PASSWORD` | production Compose | API DNS name for Caddy HTTPS and database secret |
+| `AMAZON_AFFILIATE_TAG`, `SHOPEE_AFFILIATE_ID`, `MERCADO_LIVRE_AFFILIATE_ID` | no | Marketplace mocks work without these; Amazon real ingestion also requires its Partner Tag |
+| `AMAZON_CREATORS_CLIENT_ID`, `AMAZON_CREATORS_CLIENT_SECRET` | no | Activates the real Amazon provider (Creators API -- replaces the retired PA-API 5.0; use with `AMAZON_AFFILIATE_TAG`, see `docs/providers.md`) |
 | `SHOPEE_APP_ID`, `SHOPEE_APP_SECRET` | no | Activates the real Shopee provider (Affiliate Open API) |
 | `MERCADO_LIVRE_APP_ID`, `MERCADO_LIVRE_CLIENT_SECRET`, `MERCADO_LIVRE_REFRESH_TOKEN` | no | Activates the real Mercado Livre provider; requires a one-time manual OAuth2 setup, see `docs/providers.md` |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | no | Falls back to `MockPublisher` when absent |
-| `X_API_KEY` / `X_API_SECRET` / `X_ACCESS_TOKEN` / `X_ACCESS_TOKEN_SECRET` | no | Activates real X posting (OAuth 1.0a); falls back to `MockPublisher` when absent |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | no | Falls back to `MockPublisher` in development; production skips the channel when absent |
+| `X_API_KEY` / `X_API_SECRET` / `X_ACCESS_TOKEN` / `X_ACCESS_TOKEN_SECRET` | no | Activates real X posting (OAuth 1.0a); production skips the channel when absent |
 | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` | no | Activates the real AI-backed `ContentGenerator` (OpenRouter); the default template generator needs neither |
 | `AI_CONTENT_DAILY_LIMIT` | no (default `10`) | Caps AI-generated posts per UTC day, comfortably under OpenRouter's free-tier request cap |
 | `SCHEDULE_ENABLED` | no (default `false`) | Turns on the self-scheduled ingest + publish routine -- see "Automated posting routine" below |
@@ -198,14 +212,21 @@ live. Set `SCHEDULE_ENABLED=true` plus `SCHEDULE_TIMES` (comma-separated
 24h UTC `HH:mm`, e.g. `09:00,13:00,17:00,21:00` for 4x/day) and
 `SCHEDULE_MARKETPLACES`. At each configured time it ingests fresh offers
 for every configured marketplace; `SCHEDULE_PUBLISH_DELAY_MINUTES` (default
-15) later, it publishes up to `SCHEDULE_PUBLISH_LIMIT` (default 5) of the
-highest-scoring deals that are approved but not yet published --
-`packages/database`'s `dealCandidates.status` flipping to `"published"`
-is what keeps a deal from being re-published on the next cycle, so this
-always reflects whatever is currently ready, never stale/reprocessed
-data. Off by default so dev/CI never spontaneously post to real
-Telegram/X channels; changing the schedule needs an env change + restart
-(see `docs/roadmap.md` for the n8n-driven/UI-editable upgrade path).
+15) later, it publishes up to `SCHEDULE_PUBLISH_LIMIT` (default 1) of the
+highest-scoring deals that are approved but not yet published. Only
+`amazon_br` and `shopee_br` are supported because the routine must generate
+affiliate links itself. Existing publication records are excluded from
+later cycles; failed or ambiguous sends require admin inspection and
+confirmation before retry.
+Off by default so dev/CI never spontaneously post to real Telegram/X
+channels; changing the schedule needs an env change + restart
+(see `docs/roadmap.md` for the n8n-driven/UI-editable upgrade path). With
+`SCHEDULE_ENABLED=false`, workers discard queued scheduled jobs while
+leaving manually requested jobs available. Queued automated jobs also
+re-check the configured marketplace list at each stage after a restart, so
+removing a marketplace prevents older queued jobs from continuing it. An
+external post already in progress cannot be cancelled; check the channel
+before retrying.
 
 ## What's mocked vs. real
 
@@ -213,13 +234,14 @@ Telegram/X channels; changing the schedule needs an env change + restart
   Amazon (Creators API), Shopee (Affiliate Open API), and Mercado Livre,
   each behind a `create<X>Provider(credentials?)` factory that falls back
   to the deterministic mock provider when the real credentials aren't
-  configured -- no scraping, no undocumented APIs. See
+  configured in development. Production ingestion rejects missing real
+  credentials -- no scraping, no undocumented APIs. See
   [`docs/providers.md`](./docs/providers.md) for exactly which env vars
   activate each real integration.
-- **Telegram publishing**: real (calls the Bot API), with an automatic
-  mock fallback when no bot token is configured.
+- **Telegram publishing**: real (calls the Bot API), with a mock fallback
+  in development when no bot token is configured.
 - **X (Twitter) publishing**: real (OAuth 1.0a-signed `POST /2/tweets`),
-  with an automatic mock fallback when credentials aren't configured.
+  with a mock fallback in development when credentials aren't configured.
 - **Web publishing**: trivially real -- "publishing" to the site is just
   making the deal query-able through `/public/*`.
 - **Content generation**: two implementations. The default,
@@ -251,7 +273,7 @@ formula, saturation curves, and approval thresholds are in
 
 ## Testing
 
-`pnpm test` runs the full suite (281 tests as of this writing) across
+`pnpm test` runs the full suite across
 every package and app via Turborepo. Coverage breakdown:
 
 - `deal-engine`, `affiliate`, `content-engine`, `providers`, `analytics`,

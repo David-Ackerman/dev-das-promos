@@ -95,6 +95,7 @@ describe("ShopeeOpenApiProvider", () => {
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("https://open-api.affiliate.shopee.com.br/graphql");
     expect(init.method).toBe("POST");
+    expect(init.signal).toBeInstanceOf(AbortSignal);
     const authHeader = init.headers.authorization as string;
     expect(authHeader).toMatch(
       /^SHA256 Credential=test-app-id, Timestamp=\d+, Signature=[0-9a-f]{64}$/,
@@ -117,8 +118,9 @@ describe("ShopeeOpenApiProvider", () => {
     expect(offer.sellerName).toBe("XYZ Official Store");
     // priceDiscountRate of 35 derives the original price from priceMin.
     expect(offer.originalPriceCents).toBe(Math.round(12990 / (1 - 35 / 100)));
-    // commission ("10.39") is the only per-offer monetary field available.
-    expect(offer.couponValueCents).toBe(1039);
+    // Commission is affiliate revenue, not a shopper discount/coupon.
+    expect(offer.couponValueCents).toBeUndefined();
+    expect(offer.metadata?.affiliateCommissionCents).toBe(1039);
     // No clean 0-100 equivalent for rating/sales -> both omitted.
     expect(offer.sellerRating).toBeUndefined();
     expect(offer.popularityScore).toBeUndefined();

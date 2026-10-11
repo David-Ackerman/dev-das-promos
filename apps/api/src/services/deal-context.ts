@@ -9,8 +9,10 @@ import {
   products,
   redirects,
 } from "@dev-das-promos/database";
+import { sanitizeMarketplaceImageUrl } from "@dev-das-promos/providers";
 import type { Marketplace } from "@dev-das-promos/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { publishedWebPublicationCondition } from "../lib/deal-freshness.js";
 
 export interface DealContext {
   dealCandidateId: string;
@@ -37,9 +39,11 @@ export interface DealContext {
   originalPriceCents: number | null;
   effectivePriceCents: number;
   currency: string;
+  availability: "in_stock" | "low_stock" | "out_of_stock" | "unknown";
   capturedAt: Date;
   marketplaceProductId: string;
   marketplace: Marketplace;
+  isDemoListing: boolean;
   externalId: string;
   productUrl: string;
   sellerName: string | null;
@@ -54,7 +58,7 @@ export interface DealContext {
   categoryName: string | null;
   categorySlug: string | null;
   history: PriceHistorySummary;
-  /** The /go/:code short-link code for the "web" channel, when publication has run. */
+  /** The /go/:code short-link code created for the "web" channel, if present. */
   redirectCode: string | undefined;
 }
 
@@ -90,9 +94,11 @@ export async function loadDealContext(
       originalPriceCents: offers.originalPriceCents,
       effectivePriceCents: offers.effectivePriceCents,
       currency: offers.currency,
+      availability: offers.availability,
       capturedAt: offers.capturedAt,
       marketplaceProductId: marketplaceProducts.id,
       marketplace: marketplaceProducts.marketplace,
+      isDemoListing: sql<boolean>`coalesce(${marketplaceProducts.metadata}->>'source' = 'mock', false) or (${marketplaceProducts.metadata} ? 'catalogKey')`,
       externalId: marketplaceProducts.externalId,
       productUrl: marketplaceProducts.url,
       sellerName: marketplaceProducts.sellerName,
@@ -122,24 +128,33 @@ export async function loadDealContext(
     .select({ code: redirects.code })
     .from(redirects)
     .where(and(eq(redirects.dealCandidateId, dealCandidateId), eq(redirects.channel, "web")));
-  const [anyRedirect] = webRedirect
-    ? []
-    : await db
-        .select({ code: redirects.code })
-        .from(redirects)
-        .where(eq(redirects.dealCandidateId, dealCandidateId));
-
-  return { ...row, history, redirectCode: webRedirect?.code ?? anyRedirect?.code };
+  return {
+    ...row,
+    imageUrl: sanitizeMarketplaceImageUrl(row.imageUrl),
+    history,
+    redirectCode: webRedirect?.code,
+  };
 }
 
 export async function loadDealContextBySlug(
   db: Database,
   slug: string,
+  options: { requirePublishedWebPublication?: boolean } = {},
 ): Promise<DealContext | null> {
   const [row] = await db
-    .select({ id: dealCandidates.id })
+    .select({ id: dealCandidates.id, offerId: offers.id })
     .from(dealCandidates)
-    .where(eq(dealCandidates.slug, slug));
+    .innerJoin(offers, eq(dealCandidates.offerId, offers.id))
+    .where(
+      options.requirePublishedWebPublication
+        ? and(eq(dealCandidates.slug, slug), publishedWebPublicationCondition())
+        : eq(dealCandidates.slug, slug),
+    );
   if (!row) return null;
-  return loadDealContext(db, row.id);
+  const context = await loadDealContext(db, row.id);
+  // The first query validates the web publication against its offer snapshot.
+  // If ingestion replaced that offer before the context query, fail closed
+  // instead of returning the new offer under the old publication.
+  if (context && context.offerId !== row.offerId) return null;
+  return context;
 }

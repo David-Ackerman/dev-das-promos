@@ -1,17 +1,23 @@
+import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 
-const databaseUrl =
-  process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/das_promos";
-
 async function main() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error("DATABASE_URL is required to run database migrations");
+  }
+
   const migrationClient = postgres(databaseUrl, { max: 1 });
   const db = drizzle(migrationClient);
-  console.log(`Running migrations against ${databaseUrl.replace(/:[^:@]+@/, ":***@")}`);
-  await migrate(db, { migrationsFolder: new URL("../drizzle", import.meta.url).pathname });
-  console.log("Migrations complete.");
-  await migrationClient.end();
+  try {
+    console.log("Running database migrations.");
+    await migrate(db, { migrationsFolder: fileURLToPath(new URL("../drizzle", import.meta.url)) });
+    console.log("Migrations complete.");
+  } finally {
+    await migrationClient.end();
+  }
 }
 
 main().catch((error) => {

@@ -1,3 +1,4 @@
+import { ADMIN_SESSION_COOKIE_NAME } from "@dev-das-promos/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -13,8 +14,10 @@ describe("apiFetchServer", () => {
     cookies.mockReset();
   });
 
-  it("forwards the incoming cookies as a cookie header and disables caching", async () => {
-    cookies.mockResolvedValue({ toString: () => "admin_session=abc123" });
+  it("forwards only the admin session cookie and disables caching", async () => {
+    cookies.mockResolvedValue({
+      get: () => ({ name: ADMIN_SESSION_COOKIE_NAME, value: "abc123" }),
+    });
     const fetchMock = vi
       .fn()
       .mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: "1" }) });
@@ -27,7 +30,7 @@ describe("apiFetchServer", () => {
       expect.objectContaining({
         cache: "no-store",
         headers: expect.objectContaining({
-          cookie: "admin_session=abc123",
+          cookie: `${ADMIN_SESSION_COOKIE_NAME}=abc123`,
           "content-type": "application/json",
         }),
       }),
@@ -36,7 +39,7 @@ describe("apiFetchServer", () => {
   });
 
   it("merges caller-provided init headers with the cookie header", async () => {
-    cookies.mockResolvedValue({ toString: () => "" });
+    cookies.mockResolvedValue({ get: () => undefined });
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -51,7 +54,7 @@ describe("apiFetchServer", () => {
   });
 
   it("throws ApiAuthError on a 401 response instead of a generic Error", async () => {
-    cookies.mockResolvedValue({ toString: () => "" });
+    cookies.mockResolvedValue({ get: () => undefined });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 401 }));
 
     await expect(apiFetchServer("/auth/me")).rejects.toBeInstanceOf(ApiAuthError);
@@ -59,7 +62,7 @@ describe("apiFetchServer", () => {
   });
 
   it("throws a descriptive Error for other non-ok statuses", async () => {
-    cookies.mockResolvedValue({ toString: () => "" });
+    cookies.mockResolvedValue({ get: () => undefined });
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({ ok: false, status: 500, text: async () => "server exploded" }),

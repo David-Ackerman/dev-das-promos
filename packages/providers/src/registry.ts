@@ -9,7 +9,7 @@ export interface ProviderRegistryOptions {
   shopeeAffiliateId?: string;
   mercadoLivreAffiliateId?: string;
 
-  /** Amazon Creators API credentials. Real provider used only when both are set. */
+  /** Amazon Creators API credentials. Real provider also requires the marketplace Partner Tag. */
   amazonCreatorsClientId?: string;
   amazonCreatorsClientSecret?: string;
 

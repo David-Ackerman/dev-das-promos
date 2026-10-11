@@ -52,7 +52,6 @@ function buildFactSheet(input: DealContentInput): string {
     `Deal score: ${input.dealScore.toFixed(0)}/100 (${input.scoreLabel})`,
     input.signals.length ? `Signals: ${input.signals.join("; ")}` : undefined,
     input.reasoning ? `Reasoning: ${input.reasoning}` : undefined,
-    `Link: ${input.goUrl}`,
   ];
   return lines.filter((line): line is string => Boolean(line)).join("\n");
 }
@@ -60,9 +59,11 @@ function buildFactSheet(input: DealContentInput): string {
 const SYSTEM_PROMPT = `You write short, punchy social/web copy for real product deals for a Brazilian Portuguese audience (write in pt-BR).
 
 Rules, no exceptions:
-- Use ONLY the facts given to you below. Never invent a price, a stock level, a seller claim, an urgency claim, or any detail not explicitly present in the facts.
+- Use ONLY the facts given to you below. Never invent a price, a stock level,
+  a seller claim, an urgency claim, or any detail not explicitly present in the facts.
+- Do not include any URL, domain, email address, or markdown link. The
+  application adds the tracked offer link separately.
 - Do not include a disclosure/ad disclaimer yourself -- it is appended separately after your output.
-- Do not include the link yourself for the "x" and "telegram" fields unless it's the exact link given -- it may be appended separately.
 - Respond with ONLY a single JSON object, no markdown fences, no commentary, with exactly these three string keys: "telegram", "x", "webSummary".
 - "telegram": a few sentences, can include an emoji or two, engaging but factual.
 - "x": very short (under 200 characters), punchy, hook-driven.
@@ -116,14 +117,24 @@ export class OpenRouterContentGenerator implements ContentGenerator {
 
     const parsed = parseGeneratedContent(raw);
 
-    // The disclosure and X's character limit are compliance/platform
-    // constraints, not the model's job to get right -- enforce both
-    // deterministically the same way the plain templates do, regardless
-    // of what the model produced.
+    // Links, disclosures, and platform limits are application-owned
+    // constraints: strip model links, then append the tracked URL and
+    // disclosure deterministically.
+    const telegramDraft = stripLinks(parsed.telegram);
+    const xDraft = stripLinks(parsed.x);
+    const webSummaryDraft = stripLinks(parsed.webSummary);
+    if (!telegramDraft || !xDraft || !webSummaryDraft) {
+      throw new Error("OpenRouter response contained no usable copy after removing links");
+    }
+
     return {
-      telegram: `${parsed.telegram.trim()}\n\n${DISCLOSURE_TEXT.telegram}`,
-      x: fitWithDisclosure(parsed.x.trim(), DISCLOSURE_TEXT.x, this.limits.x),
-      webSummary: `${parsed.webSummary.trim()}\n\n${DISCLOSURE_TEXT.web}`,
+      telegram: fitBeforeSuffix(
+        telegramDraft,
+        `\n\n👉 Ver oferta: ${input.goUrl}\n\n${DISCLOSURE_TEXT.telegram}`,
+        4096,
+      ),
+      x: fitBeforeSuffix(xDraft, `\n${input.goUrl}\n${DISCLOSURE_TEXT.x}`, this.limits.x),
+      webSummary: `${webSummaryDraft}\n\n${DISCLOSURE_TEXT.web}`,
     };
   }
 }
@@ -158,16 +169,37 @@ function parseGeneratedContent(raw: string): { telegram: string; x: string; webS
   return candidate as { telegram: string; x: string; webSummary: string };
 }
 
-/** Fits `draft` ahead of `disclosure` within `limit` chars, never truncating the disclosure itself. */
-function fitWithDisclosure(draft: string, disclosure: string, limit: number): string {
-  const suffix = `\n${disclosure}`;
+/** Fits model copy before an application-owned suffix, preserving the tracked link/disclosure. */
+function fitBeforeSuffix(draft: string, suffix: string, limit: number): string {
   const availableForDraft = limit - suffix.length;
+  if (availableForDraft <= 0) {
+    return suffix;
+  }
   const fittedDraft =
     availableForDraft > 0 && draft.length > availableForDraft
       ? `${draft.slice(0, Math.max(0, availableForDraft - 1))}…`
       : draft;
-  const content = `${fittedDraft}${suffix}`;
-  return content.length <= limit ? content : content.slice(0, limit);
+  return `${fittedDraft}${suffix}`;
+}
+
+/** Prevent model output from adding untracked links to externally published copy. */
+function stripLinks(text: string): string {
+  const linkPattern = new RegExp(
+    [
+      String.raw`(?:[a-z][a-z0-9+.-]*:\/\/|www\.)[^\s<>{}\[\]]+`,
+      String.raw`\b(?:[a-z0-9][a-z0-9-]*\.)+[a-z]{2,}\b(?:\/[^\s<>{}\[\]]*)?`,
+      String.raw`\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:\/[^\s<>{}\[\]]*)?`,
+      String.raw`\blocalhost(?::\d+)?(?:\/[^\s<>{}\[\]]*)?`,
+    ].join("|"),
+    "gi",
+  );
+
+  return text
+    .replace(linkPattern, "")
+    .replace(/\[\s*\]\s*\(\s*\)|\(\s*\)/g, "")
+    .replace(/\s+([,.;!?])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
 }
 
 export function createOpenRouterContentGenerator(

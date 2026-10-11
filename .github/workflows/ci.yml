@@ -1,0 +1,71 @@
+name: Validate application
+
+on:
+  pull_request: {}
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: das_promos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d das_promos"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      ALLOW_LOCAL_HTTP_API_URL: "true"
+      API_URL: http://localhost:4000
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+      NEXT_PUBLIC_SITE_URL: https://web.example.test
+      PUBLIC_OPERATOR_NAME: das promos CI fixture
+      PUBLIC_CONTACT_EMAIL: ci@example.test
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/das_promos
+      REDIS_URL: redis://localhost:6379
+      INTERNAL_API_TOKEN: ci-internal-token-at-least-16-characters
+      AUTH_SECRET: ci-auth-secret-at-least-16-characters
+      ADMIN_EMAIL: admin@example.com
+      ADMIN_PASSWORD: ci-admin-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: cp .env.example .env
+      - run: sed -i '/^NODE_ENV=/d' .env
+      - run: pnpm db:migrate
+      - run: pnpm db:seed
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: Validate production Compose configuration
+        env:
+          API_HOST: api.example.test
+          POSTGRES_PASSWORD: ci-compose-password
+        run: docker compose -f infra/docker/docker-compose.prod.yml config --quiet
+      - name: Build production API image
+        run: docker build -f apps/api/Dockerfile -t das-promos-api:ci .

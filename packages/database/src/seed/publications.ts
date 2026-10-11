@@ -30,13 +30,12 @@ const MARKETPLACE_LABEL: Record<Marketplace, string> = {
 };
 
 /**
- * Publishes the strongest deals end-to-end (redirect + content + mock
- * publish on all three channels) so the seeded database demonstrates the
- * full pipeline, not just raw scored candidates.
+ * Simulates manual review of the strongest pending demo deals, then publishes
+ * them end-to-end (redirect + content + mock publish on all three channels).
  */
 export async function seedPublications(db: Database, deals: SeededDeal[]): Promise<void> {
   const toPublish = [...deals]
-    .filter((d) => d.status === "auto_approved" || d.status === "approved")
+    .filter((d) => ["auto_approved", "approved", "pending"].includes(d.status))
     .sort((a, b) => b.score - a.score)
     .slice(0, 6);
 
@@ -48,6 +47,13 @@ export async function seedPublications(db: Database, deals: SeededDeal[]): Promi
   const contentGenerator = new TemplateContentGenerator();
 
   for (const deal of toPublish) {
+    if (deal.status === "pending") {
+      await db
+        .update(dealCandidates)
+        .set({ status: "approved", reviewedBy: "demo-seed", reviewedAt: new Date() })
+        .where(eq(dealCandidates.id, deal.dealCandidateId));
+    }
+
     const [row] = await db
       .select({
         dealScore: dealCandidates.dealScore,
