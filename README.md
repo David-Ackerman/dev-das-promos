@@ -1,299 +1,135 @@
-# das-promos
+# dev-das-promos
 
-A data-driven affiliate deals platform for Amazon Brazil, Shopee Brazil,
-and Mercado Livre: it ingests marketplace offers, tracks real price
-history, scores deals against a transparent formula, generates
-channel-specific content, supports optional human approval, publishes to
-Telegram/X/the public web site, tracks clicks and conversions, and feeds
-measured outcomes back into scoring. It is the TypeScript-native evolution
-of an earlier n8n-only autoposter -- n8n is kept, but only as the
-scheduling/ops layer (see [`docs/n8n.md`](./docs/n8n.md)), not as the
-place business logic lives.
-
-See [`docs/architecture.md`](./docs/architecture.md) for the full system
-diagram and domain model, [`docs/deal-engine.md`](./docs/deal-engine.md)
-for exactly how a deal is scored, [`docs/providers.md`](./docs/providers.md)
-for the marketplace/publisher abstraction and how to extend it,
-[`docs/analytics.md`](./docs/analytics.md) for the click/conversion model,
-[`docs/deployment.md`](./docs/deployment.md) for taking this to
-production ([`docs/aws-deployment.md`](./docs/aws-deployment.md) for a
-complete AWS-specific, credentials-included runbook), and
-[`docs/deploy-week-2026-09-28.md`](./docs/deploy-week-2026-09-28.md)
-for the launch plan for the week of 28 September 2026, and
-[`docs/roadmap.md`](./docs/roadmap.md) for deferred and partially
-implemented capabilities.
-
-## Stack
-
-TypeScript (strict), pnpm workspaces + Turborepo, Fastify (API), Next.js
-App Router (admin + public site), React, Tailwind v4, TanStack Query,
-PostgreSQL + Drizzle ORM, Redis + BullMQ, Zod, Vitest, Biome, Docker
-Compose (Postgres/Redis only).
-
-## Package structure
+Finds Amazon and Shopee deals a few times a day and turns them into posts with your affiliate links and a short, funny AI-written text. It sends each post to **you on Telegram for approval**. When you tap ✅, it publishes to your **Telegram groups**, **WhatsApp** and **X**, and every link goes through our own redirect so we can see **which products, stores and channels get clicks**.
 
 ```
-apps/
-  api/      Fastify HTTP API + BullMQ workers, admin auth, /go/:code redirects
-  admin/    Next.js admin dashboard
-  web/      Next.js public site (SEO deal/product/category pages)
-
-packages/
-  config/          Validated env + scoring weights/thresholds + disclosure copy
-  shared/          Money, slugs, hashing, shared types, password hashing
-  database/        Drizzle schema, migrations, client, price-history queries, seed data
-  deal-engine/     Pure scoring/discount/monetization/approval logic (fully unit tested)
-  providers/       MarketplaceProvider abstraction; Amazon Creators API /
-                   Shopee Affiliate Open API / Mercado Livre real
-                   implementations, each with a mock fallback
-  affiliate/       Commission resolution, redirect building, click-tracking helpers
-  content-engine/  Deterministic content templates + Publisher abstraction
-  queue/           BullMQ queue names, job payload types, connection factory
-  analytics/       Click/conversion aggregation queries + pure merge logic
-
-infra/
-  docker/          docker-compose.yml (Postgres + Redis only)
-  n8n/             n8n workflow documentation
-
-docs/               Architecture, deal-engine, providers, analytics, n8n, roadmap
+GitHub Actions (cron, 5x/day)                Cloudflare Worker (always on, free)
+ ├─ fetch Shopee / Amazon deals               ├─ /telegram/webhook  ✅ ❌ 🔄 buttons, /stats …
+ ├─ pick the best (discount, sales, no repeats)│     └─ on ✅: Telegram groups, WhatsApp, X
+ ├─ affiliate link + AI text                  ├─ /go/<code>  log click → 302 to affiliate link
+ └─ preview → your Telegram bot               └─ /wa/<code>  open WhatsApp with the post ready
+                     \                       /
+                      Neon Postgres (free, 1 GB) ← daily backup to GitHub
 ```
 
-Full rationale for this layout, including why the apps run as a modular
-monolith rather than microservices, is in
-[`docs/architecture.md`](./docs/architecture.md).
+Everything runs on free plans: **GitHub Actions**, **Cloudflare Workers** and **Neon Postgres**. There are no servers to look after. To deploy, you push to `main`.
 
-## Local setup
+## How it works day to day
 
-Requires Node 20+, pnpm 10+, and Docker (for Postgres/Redis).
+1. At 9h, 12h, 15h, 18h and 21h (Brasília time), the bot sends you previews of the best new deals (`POSTS_PER_RUN`, default 2).
+2. Each preview has these buttons:
+   - **✅ Aprovar** publishes it everywhere.
+   - **❌ Recusar** discards it. The product won't come back for 14 days.
+   - **🔄 Outro texto** asks the AI for a new joke.
+   - **Reply to the preview with your own text** and it replaces the AI text.
+3. After you approve, the preview shows a **📲 Enviar no WhatsApp** button. It opens WhatsApp with the post already written, so you just pick the groups (see the WhatsApp section below for why).
+4. If you don't answer a preview within 12h, it expires, because prices change.
+
+Bot commands: `/stats 7` shows clicks per channel, per store and the top products. `/pendentes` lists posts waiting for you. `/buscar` looks for deals right now. `/id` shows the id of the chat it's sent in, which you need when setting up groups.
+
+## Setup (one time, about 30 minutes)
+
+### 1. Database: Neon
+1. Create a free account at [neon.tech](https://neon.tech) and make a project in the **São Paulo** region.
+2. Click **Connect** and copy the connection string. That's `DATABASE_URL`.
+
+Neon's free plan never deletes your data. If you go over a limit, it pauses instead of deleting anything. Migrations here only ever *add* tables and columns, and a test blocks any `DROP` or `TRUNCATE`. On top of that, every deploy and every night saves a `pg_dump` backup to GitHub.
+
+### 2. Cloudflare Worker
+1. Create a free account at [dash.cloudflare.com](https://dash.cloudflare.com). Open **Workers & Pages** once so your `*.workers.dev` subdomain gets created.
+2. Go to **My Profile → API Tokens → Create Token → "Edit Cloudflare Workers"**. That token is `CLOUDFLARE_API_TOKEN`.
+3. Copy the **Account ID** from the Workers overview page. That's `CLOUDFLARE_ACCOUNT_ID`.
+
+### 3. Telegram
+1. You already have the bot. Its token from @BotFather is `TELEGRAM_BOT_TOKEN`.
+2. Make up a random secret (`openssl rand -hex 24`, or any 32+ letters and numbers). That's `TELEGRAM_WEBHOOK_SECRET`.
+3. Add the bot as an **admin** in each promo group.
+4. The `TELEGRAM_ADMIN_CHAT_ID` and `TELEGRAM_GROUP_IDS` values come from the bot's `/id` command, which only works after the first deploy (step 5). For now you can put a placeholder like `0` in `TELEGRAM_ADMIN_CHAT_ID`, then update both and redeploy.
+
+### 4. GitHub settings
+In the repo, go to **Settings → Secrets and variables → Actions** and add:
+
+| Secrets | Variables |
+| --- | --- |
+| `DATABASE_URL` | `PUBLIC_BASE_URL` (after the first deploy) |
+| `TELEGRAM_BOT_TOKEN` | `TELEGRAM_ADMIN_CHAT_ID`, `TELEGRAM_GROUP_IDS` |
+| `TELEGRAM_WEBHOOK_SECRET` | `SHOPEE_APP_ID`, `SHOPEE_KEYWORDS` |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | `AMAZON_CLIENT_ID`, `AMAZON_PARTNER_TAG`, `AMAZON_KEYWORDS` |
+| `SHOPEE_APP_SECRET`, `AMAZON_CLIENT_SECRET` | `AI_MODEL`, `WHATSAPP_MODE`, `X_MODE`, `MIN_DISCOUNT_PCT`… |
+| `AI_API_KEY` (and X/WhatsApp keys if used) | |
+
+Every setting is explained in [`.env.example`](.env.example). Any name you add here is picked up automatically, so you never need to edit a workflow.
+
+### 5. Deploy
+Push to `main`, or open **Actions → Deploy → Run workflow**. The deploy:
+1. runs the tests,
+2. backs up the database, then applies new migrations,
+3. deploys the Worker and uploads its settings,
+4. points your Telegram bot at the Worker.
+
+The first run prints your Worker URL in a warning. Save it as the `PUBLIC_BASE_URL` variable. Then send `/id` to your bot privately and inside each group, fill in `TELEGRAM_ADMIN_CHAT_ID` and `TELEGRAM_GROUP_IDS`, and run **Deploy** once more.
+
+Test it with **Actions → Collect deals → Run workflow**. The previews should show up in your Telegram chat.
+
+## WhatsApp
+WhatsApp's official API **can't post into normal groups**: its groups API is capped at 8 participants. So there are three options:
+
+- `WHATSAPP_MODE=share` (default) is free and safe. After you approve, you tap **📲 Enviar no WhatsApp**, pick the groups and send. That's 2 taps, and it's still tracked through its own `/go` link.
+- `evolution` uses [Evolution API](https://github.com/EvolutionAPI/evolution-api), a self-hosted server with a WhatsApp number linked by QR code. It's fully automatic.
+- `zapi` uses [Z-API](https://z-api.io), a paid hosted service. It's also fully automatic.
+
+The last two are unofficial and WhatsApp can ban numbers that look like spam. If you use them, use a dedicated number and keep the volume reasonable.
+
+## X / Twitter
+X dropped its free API in 2026. It's now pay-per-use, and **posts with a link cost a lot more** than plain text posts.
+- `X_MODE=no-link` posts the joke, product and price plus "🔗 Link na bio". This is the cheap option.
+- `X_MODE=link` puts the tracked link in the post. It's more expensive per post.
+- `X_MODE=off` disables X.
+
+Check current prices in the X developer console.
+
+## What we track
+- Every channel and every group gets its **own** `/go/<code>` link, so you can compare Telegram group A, group B, WhatsApp and X.
+- Clicks from link-preview robots (Telegram, WhatsApp and X fetch the link to draw the preview) are flagged and **left out** of `/stats`.
+- Shopee links carry the post's `ref` as a **sub-id**, so Shopee's own conversion report shows which post made each sale. Amazon links stay exactly as Amazon returns them, because changing them can break attribution, so for Amazon we only see clicks.
+- `price_snapshots` keeps every price we've seen, which lets us spot fake "discounts" later.
+
+Want to dig deeper? Open the Neon SQL editor and query `clicks`, `links`, `posts` and `products`.
+
+## Local development
+Requires Node 22.18+ (it runs TypeScript directly; there's no build step).
 
 ```bash
-# 1. Install dependencies
-pnpm install
-
-# 2. Copy the env template and fill in secrets (defaults work for local dev)
-cp .env.example .env
-
-# 3. Start Postgres + Redis
-docker compose -f infra/docker/docker-compose.yml up -d
-
-# 4. Run migrations
-pnpm db:migrate
-
-# 5. Seed realistic demo data (categories, products, price history,
-#    affiliate programs, scored deals, publications, clicks, conversions)
-pnpm db:seed
-
-# 6. Start everything (api on :4000, admin on :3001, web on :3000)
-pnpm dev
+npm install
+cp .env.example .env          # fill it in (a Neon "dev" branch is perfect for DATABASE_URL)
+npm run migrate
+npm run collect:dry           # fetch deals + AI text and print the previews, sends nothing
+npm run collect               # real run: sends previews to your bot
+npm test                      # unit tests; end-to-end tests run too if TEST_DATABASE_URL is set
+npm run typecheck
 ```
 
-Database migration and Drizzle commands require `DATABASE_URL` from `.env`;
-they fail clearly if it is missing instead of silently selecting a local
-database.
+## Changing the schema
+Add a new file such as `migrations/002_something.sql`. Never edit or delete an applied file, and only use `ADD`/`CREATE` (a test rejects `DROP`, `TRUNCATE` and `DELETE`). It's applied automatically on the next deploy.
 
-Then:
-
-- Admin dashboard: http://localhost:3001 (log in with `ADMIN_EMAIL` /
-  `ADMIN_PASSWORD` from your `.env`, seeded automatically by `db:seed`)
-- Public site: http://localhost:3000
-- API health check: http://localhost:4000/health
-
-### First-deliverable walkthrough
-
-This exercises the full MVP loop end to end:
-
-1. `pnpm dev` (all three apps + BullMQ workers running).
-2. In the admin dashboard, trigger ingestion for a marketplace (or call
-   `POST /internal/ingestion/run` with the `X-Internal-Token` header --
-   see [`docs/n8n.md`](./docs/n8n.md)). Mock offers are generated
-   deterministically by `packages/providers`.
-3. Offers are automatically scored (`packages/deal-engine`) and land as
-   `DealCandidate`s with status `auto_approved`, `pending`, or `rejected`
-   per the configured thresholds.
-4. Approve/reject a `pending` deal from `/deals` in the admin dashboard.
-5. Publish an approved deal -- content is generated
-   (`packages/content-engine`) and sent through the configured (or
-   mocked) publishers.
-6. Visit the deal on the public site (`/deal/:slug`) -- price history
-   chart, score, and the affiliate CTA link are all live.
-7. Click the CTA -- it hits `/go/:code`, is tracked (IP hashed, never
-   stored raw), and redirects to the marketplace.
-8. Check `/analytics` in the admin dashboard for the recorded click.
-
-### Other useful commands
-
+## Restoring a backup
+Download `backup.dump` from **Actions → Backup database → a run → Artifacts**, then run:
 ```bash
-pnpm test          # run all package/app test suites (Vitest)
-pnpm typecheck      # tsc --noEmit across the monorepo
-pnpm lint           # Biome check
-pnpm build           # build all apps/packages
-pnpm db:studio      # Drizzle Studio (inspect the database visually)
-pnpm db:bootstrap-admin # create only the admin account (no demo data)
+pg_restore --no-owner --no-acl -d "$DATABASE_URL" backup.dump
 ```
+Neon also lets you restore to any point in the last 6 hours (free plan).
 
-Per-package: `pnpm --filter @dev-das-promos/<package> <script>` (e.g.
-`pnpm --filter @dev-das-promos/deal-engine test`).
-
-Env vars are loaded from this repo's root `.env` -- the app scripts and
-database commands wrap their commands with `dotenv-cli`
-(`dotenv -e ../../.env -- <command>`) rather than reading per-package
-`.env` files. If you add a new script that needs env vars, wrap it the
-same way.
-
-## Key files & entry points
-
-Organized by "I want to change X":
-
-| I want to change... | Look here |
-|---|---|
-| Scoring weights / approval thresholds | `packages/config/src/scoring-config.ts` (config) + `packages/deal-engine/src/{scoring,discount,components,monetization,approval}.ts` (formula) |
-| Affiliate disclosure copy per channel | `packages/config/src/disclosure.ts` |
-| Database schema | `packages/database/src/schema/*.ts` (one file per table) -- then `pnpm db:generate` + `pnpm db:migrate` |
-| Seed/demo data | `packages/database/src/seed/*.ts`, orchestrated by `seed/index.ts` (order matters). **`pnpm db:seed` truncates every demo table first** (`seed/reset.ts`) so it's safely re-runnable -- `admin_users` is the one table deliberately left alone, so re-seeding never invalidates your admin login. It always refuses `NODE_ENV=production`; remote hosts are also refused unless `ALLOW_DEMO_SEED=true` is explicitly set for a disposable non-production database. Don't run it if you have manual admin-UI/API changes you want to keep. |
-| API routes | `apps/api/src/routes/*.ts`, registered in `apps/api/src/app.ts`. `public-*.ts` = no auth; `admin-*.ts` = needs an admin session cookie; `internal.ts` = needs `X-Internal-Token` (n8n) |
-| Business logic behind a route | `apps/api/src/services/*.ts` (ingestion, deal-evaluation, approval, publication, redirect, categories, conversion-signal, content-generation) |
-| BullMQ workers | `apps/api/src/workers/*.ts`, started in-process by `startWorkers()` in `apps/api/src/server.ts` |
-| Admin auth | `apps/api/src/plugins/auth.ts` (session cookie) + `apps/api/src/routes/auth.ts` (login route) + `apps/api/src/lib/internal-auth.ts` (separate `/internal/*` token auth) |
-| A marketplace integration | `packages/providers/src/*` (one file per marketplace + `registry.ts`) -- see [`docs/providers.md`](./docs/providers.md) |
-| A publishing channel | `packages/content-engine/src/*` (publishers + templates) |
-| Public site pages | `apps/web/src/app/**/page.tsx`; shared UI in `apps/web/src/components/*`; API calls via `apps/web/src/lib/api.ts` |
-| Admin dashboard pages | `apps/admin/src/app/**/page.tsx`; shared UI in `apps/admin/src/components/*`; API calls via `apps/admin/src/lib/api-client.ts` (browser) / `api-server.ts` (server components, forwards the session cookie) |
-
-## Admin access
-
-- Log in at http://localhost:3001/login with `ADMIN_EMAIL` /
-  `ADMIN_PASSWORD` from `.env`.
-- That login row is created by `pnpm db:seed`
-  (`packages/database/src/seed/admin.ts`), which is a no-op if the email
-  already exists -- changing `ADMIN_EMAIL`/`ADMIN_PASSWORD` in `.env`
-  *after* the first seed does **not** update an already-seeded admin.
-  Either seed with a new email, or edit the `admin_users` row directly
-  (`pnpm db:studio` is the easiest way).
-- In production, create the first login with `pnpm db:bootstrap-admin`;
-  the demo seed is disabled there.
-- Session mechanism: a seven-day cookie signed with `AUTH_SECRET`, with
-  server-validated expiry, issued by `POST /auth/login`
-  (`apps/api/src/routes/auth.ts`) and checked on every `admin-*` route by
-  `apps/api/src/plugins/auth.ts`.
-
-## Environment variables
-
-See [`.env.example`](./.env.example) for the full annotated list, validated
-at startup by `packages/config/src/env.ts` (zod). Highlights:
-
-| Variable | Required | Notes |
-|---|---|---|
-| `DATABASE_URL` | yes | Postgres connection string |
-| `REDIS_URL` | yes | Redis connection string (BullMQ) |
-| `API_PORT`, `API_URL`, `ADMIN_URL`, `PUBLIC_WEB_URL` | yes | Service URLs; `API_URL` is also where `/go/:code` lives |
-| `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL` | web app | Browser API base and public canonical origin; production site URL also drives sitemap and robots metadata |
-| `PUBLIC_OPERATOR_NAME`, `PUBLIC_CONTACT_EMAIL` | production web app | Public operator identity and privacy contact shown on `/privacy`; both are required for production builds |
-| `INTERNAL_API_TOKEN` | yes | Shared secret for n8n-facing `/internal/*` routes |
-| `AUTH_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` | yes | Admin session signing + seeded admin login |
-| `SESSION_COOKIE_DOMAIN` | production | Shared parent domain for the admin/API cookie, e.g. `.example.com` |
-| `API_HOST`, `POSTGRES_PASSWORD` | production Compose | API DNS name for Caddy HTTPS and database secret |
-| `AMAZON_AFFILIATE_TAG`, `SHOPEE_AFFILIATE_ID`, `MERCADO_LIVRE_AFFILIATE_ID` | no | Marketplace mocks work without these; Amazon real ingestion also requires its Partner Tag |
-| `AMAZON_CREATORS_CLIENT_ID`, `AMAZON_CREATORS_CLIENT_SECRET` | no | Activates the real Amazon provider (Creators API -- replaces the retired PA-API 5.0; use with `AMAZON_AFFILIATE_TAG`, see `docs/providers.md`) |
-| `SHOPEE_APP_ID`, `SHOPEE_APP_SECRET` | no | Activates the real Shopee provider (Affiliate Open API) |
-| `MERCADO_LIVRE_APP_ID`, `MERCADO_LIVRE_CLIENT_SECRET`, `MERCADO_LIVRE_REFRESH_TOKEN` | no | Activates the real Mercado Livre provider; requires a one-time manual OAuth2 setup, see `docs/providers.md` |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | no | Falls back to `MockPublisher` in development; production skips the channel when absent |
-| `X_API_KEY` / `X_API_SECRET` / `X_ACCESS_TOKEN` / `X_ACCESS_TOKEN_SECRET` | no | Activates real X posting (OAuth 1.0a); production skips the channel when absent |
-| `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` | no | Activates the real AI-backed `ContentGenerator` (OpenRouter); the default template generator needs neither |
-| `AI_CONTENT_DAILY_LIMIT` | no (default `10`) | Caps AI-generated posts per UTC day, comfortably under OpenRouter's free-tier request cap |
-| `SCHEDULE_ENABLED` | no (default `false`) | Turns on the self-scheduled ingest + publish routine -- see "Automated posting routine" below |
-| `SCHEDULE_TIMES`, `SCHEDULE_MARKETPLACES`, `SCHEDULE_PUBLISH_DELAY_MINUTES`, `SCHEDULE_PUBLISH_LIMIT` | no | Configure the routine's times/marketplaces/batch size; see `docs/deployment.md` |
-
-## Automated posting routine
-
-`apps/api/src/lib/scheduler.ts` can self-schedule the whole ingest ->
-score -> publish loop using BullMQ job schedulers already running inside
-the same process -- no separate cron host or n8n setup required to go
-live. Set `SCHEDULE_ENABLED=true` plus `SCHEDULE_TIMES` (comma-separated
-24h UTC `HH:mm`, e.g. `09:00,13:00,17:00,21:00` for 4x/day) and
-`SCHEDULE_MARKETPLACES`. At each configured time it ingests fresh offers
-for every configured marketplace; `SCHEDULE_PUBLISH_DELAY_MINUTES` (default
-15) later, it publishes up to `SCHEDULE_PUBLISH_LIMIT` (default 1) of the
-highest-scoring deals that are approved but not yet published. Only
-`amazon_br` and `shopee_br` are supported because the routine must generate
-affiliate links itself. Existing publication records are excluded from
-later cycles; failed or ambiguous sends require admin inspection and
-confirmation before retry.
-Off by default so dev/CI never spontaneously post to real Telegram/X
-channels; changing the schedule needs an env change + restart
-(see `docs/roadmap.md` for the n8n-driven/UI-editable upgrade path). With
-`SCHEDULE_ENABLED=false`, workers discard queued scheduled jobs while
-leaving manually requested jobs available. Queued automated jobs also
-re-check the configured marketplace list at each stage after a restart, so
-removing a marketplace prevents older queued jobs from continuing it. An
-external post already in progress cannot be cancelled; check the channel
-before retrying.
-
-## What's mocked vs. real
-
-- **Marketplace data** (`packages/providers`): real integrations exist for
-  Amazon (Creators API), Shopee (Affiliate Open API), and Mercado Livre,
-  each behind a `create<X>Provider(credentials?)` factory that falls back
-  to the deterministic mock provider when the real credentials aren't
-  configured in development. Production ingestion rejects missing real
-  credentials -- no scraping, no undocumented APIs. See
-  [`docs/providers.md`](./docs/providers.md) for exactly which env vars
-  activate each real integration.
-- **Telegram publishing**: real (calls the Bot API), with a mock fallback
-  in development when no bot token is configured.
-- **X (Twitter) publishing**: real (OAuth 1.0a-signed `POST /2/tweets`),
-  with a mock fallback in development when credentials aren't configured.
-- **Web publishing**: trivially real -- "publishing" to the site is just
-  making the deal query-able through `/public/*`.
-- **Content generation**: two implementations. The default,
-  `TemplateContentGenerator`, is fully deterministic (template-based),
-  free, and needs no credentials. `OpenRouterContentGenerator` is a real
-  AI-backed alternative (see `docs/providers.md`) that activates when
-  `OPENROUTER_API_KEY`/`OPENROUTER_MODEL` are set, capped at
-  `AI_CONTENT_DAILY_LIMIT` (default 10) AI-generated posts per day to
-  stay on OpenRouter's free tier -- falls back to templates automatically
-  once the daily quota is spent, or if a call fails for any reason.
-- **Conversion data**: seeded synthetically for demo purposes
-  (`packages/database/src/seed/conversions.ts`); the click-tracking path
-  itself (`/go/:code`) is fully real.
-
-## Adding a marketplace or a publication channel
-
-Both are one-file-plus-registry-entry changes by design -- see
-[`docs/providers.md`](./docs/providers.md) for the exact steps.
-
-## How deal scoring works
-
-Short version: a weighted formula (30% real historical discount, 20%
-advertised discount, 15% commission, 10% seller rating, 10% popularity,
-10% conversion rate, 5% freshness), where "real discount" is computed
-against an observed 90-day (or 30-day, or advertised-price-fallback)
-price average rather than trusting the marketplace's own "was" price. Full
-formula, saturation curves, and approval thresholds are in
-[`docs/deal-engine.md`](./docs/deal-engine.md).
-
-## Testing
-
-`pnpm test` runs the full suite across
-every package and app via Turborepo. Coverage breakdown:
-
-- `deal-engine`, `affiliate`, `content-engine`, `providers`, `analytics`,
-  `shared`, `config` -- pure unit tests, no infrastructure needed.
-- `queue`, `database`, `apps/api` -- integration tests that run against
-  your **real local Postgres/Redis** (the same ones `pnpm dev` uses, not
-  a separate test database or mocks), so Docker must be up first
-  (`docker compose -f infra/docker/docker-compose.yml up -d`). These
-  tests only ever insert rows with randomly-generated ids and clean up
-  exactly what they created in `afterAll` -- they never truncate a table
-  or touch pre-existing seed data, and it's safe to run them against a
-  DB you're also using for manual testing.
-- `apps/web`, `apps/admin` -- component/lib tests via Vitest + jsdom +
-  React Testing Library. Async server components under `src/app/**` that
-  fetch live data aren't covered by design -- they're exercised by
-  running the app itself, not unit tests.
-
-```bash
-pnpm test                                            # everything
-pnpm --filter @dev-das-promos/<pkg> test              # one package (e.g. api, deal-engine)
-cd packages/<pkg> && pnpm exec vitest run src/__tests__/<file>.test.ts   # one file
-pnpm typecheck                                       # tsc --noEmit, whole monorepo
+## Files
+```
+src/
+  collect.ts        pick deals → affiliate link → AI text → preview      (GitHub Actions)
+  bot.ts            buttons, replies and commands                         (Worker)
+  publish.ts        approve → Telegram groups, WhatsApp, X                (Worker)
+  http.ts           /go, /wa, /telegram/webhook routes; worker.ts wires Neon
+  providers/        amazon.ts, shopee.ts
+  publishers/       whatsapp.ts, x.ts
+  ai.ts render.ts preview.ts repo.ts telegram.ts config.ts
+  jobs/             CLI entry points used by npm scripts and workflows
+migrations/         SQL, applied once each, never rolled back
+.github/workflows/  deploy (push to main), collect (cron), backup (daily), ci (PRs)
 ```

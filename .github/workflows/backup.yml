@@ -1,0 +1,30 @@
+name: Backup database
+
+# Daily pg_dump of the Neon database, kept 90 days as a workflow artifact
+# (Actions > this workflow > a run > Artifacts). Restore with:
+#   pg_restore --no-owner --no-acl -d "<DATABASE_URL>" backup.dump
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          docker run --rm -e PGURL="$DATABASE_URL" postgres:18-alpine \
+            sh -c 'pg_dump "$PGURL" --format=custom --no-owner --no-acl' > backup.dump
+          test -s backup.dump
+          ls -lh backup.dump
+      - uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_number }}
+          path: backup.dump
+          retention-days: 90

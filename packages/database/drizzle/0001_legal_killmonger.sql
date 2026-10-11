@@ -1,1 +1,0 @@
-ALTER TYPE "public"."marketplace" ADD VALUE 'mercado_livre';

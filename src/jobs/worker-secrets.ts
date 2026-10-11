@@ -1,0 +1,49 @@
+// Writes the settings the Cloudflare Worker needs (only the non-empty ones)
+// to a JSON file for `wrangler secret bulk`. Marketplace keys stay out of the
+// Worker: affiliate links are created by the scheduled job.
+import { writeFileSync } from "node:fs";
+
+const WORKER_KEYS = [
+  "DATABASE_URL",
+  "PUBLIC_BASE_URL",
+  "TELEGRAM_BOT_TOKEN",
+  "TELEGRAM_ADMIN_CHAT_ID",
+  "TELEGRAM_ADMIN_USER_IDS",
+  "TELEGRAM_WEBHOOK_SECRET",
+  "TELEGRAM_GROUP_IDS",
+  "WHATSAPP_MODE",
+  "WHATSAPP_GROUP_IDS",
+  "EVOLUTION_API_URL",
+  "EVOLUTION_API_KEY",
+  "EVOLUTION_INSTANCE",
+  "ZAPI_INSTANCE_ID",
+  "ZAPI_TOKEN",
+  "ZAPI_CLIENT_TOKEN",
+  "X_MODE",
+  "X_API_KEY",
+  "X_API_SECRET",
+  "X_ACCESS_TOKEN",
+  "X_ACCESS_TOKEN_SECRET",
+  "X_NO_LINK_TEXT",
+  "AI_BASE_URL",
+  "AI_API_KEY",
+  "AI_MODEL",
+  "OPENROUTER_API_KEY",
+  "OPENROUTER_MODEL",
+  "POST_FOOTER",
+  "GH_DISPATCH_TOKEN",
+  "GH_REPO",
+  "GH_REF",
+];
+
+const out = process.argv[2] ?? "worker-secrets.json";
+const secrets: Record<string, string> = {};
+for (const key of WORKER_KEYS) {
+  const value = process.env[key];
+  if (value !== undefined && value !== "") secrets[key] = value;
+}
+for (const key of ["DATABASE_URL", "PUBLIC_BASE_URL", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ADMIN_CHAT_ID", "TELEGRAM_WEBHOOK_SECRET"]) {
+  if (!secrets[key]) throw new Error(`${key} is required for the Worker`);
+}
+writeFileSync(out, JSON.stringify(secrets));
+console.log(`Worker settings: ${Object.keys(secrets).join(", ")}`);

@@ -1,18 +1,7 @@
-name: Deploy to AWS EC2
+name: Deploy
 
-# Runs on every push to main: authenticates to AWS via OIDC (no stored
-# AWS keys or GitHub SSH private keys) using the official
-# aws-actions/configure-aws-credentials action, then tells AWS Systems
-# Manager to fetch the exact CI-validated commit, then run the same
-# Docker Compose rebuild and migration commands from Part 3 of
-# docs/aws-deployment.md on the EC2 instance. CI does not build or push an
-# image; the VM builds it, matching the deployment docs. This depends on
-# infra/aws/bootstrap.yaml (one-time, console) having run --
-# see docs/aws-deployment.md Part 2/3.5.
-#
-# Infrastructure is applied first through the reusable infra.yml workflow.
-# The application rollout stays disabled until the one-time EC2 setup is
-# complete and PRODUCTION_DEPLOY_ENABLED is set to true in repository vars.
+# Push to main = tests, then database migrations (additive only, data is
+# never dropped), then the Cloudflare Worker, then the Telegram webhook.
 on:
   push:
     branches: [main]
@@ -22,104 +11,64 @@ permissions:
   contents: read
 
 concurrency:
-  group: das-promos-production-deploy
+  group: deploy
   cancel-in-progress: false
 
 jobs:
-  validate:
+  test:
     uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read
-
-  infra:
-    needs: validate
-    if: github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/infra.yml
-    permissions:
-      id-token: write
-      contents: read
 
   deploy:
-    needs: [validate, infra]
-    if: github.ref == 'refs/heads/main' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
+    needs: test
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write # required for OIDC -- do not add AWS access keys as secrets instead
-      contents: read
     steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package.json
+      - run: npm install --no-audit --no-fund
 
-      - name: Deploy via SSM
+      - name: Load settings from repository variables and secrets
+        run: node src/jobs/gh-export-env.ts
+        env:
+          VARS_JSON: ${{ toJSON(vars) }}
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+
+      - name: Back up the database before migrating
         run: |
-          set -e
-          INSTANCE_ID=$(aws cloudformation describe-stacks \
-            --stack-name dev-das-promos-infra \
-            --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
-            --output text)
-          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
-            echo "Could not read InstanceId from dev-das-promos-infra" >&2
-            exit 1
+          docker run --rm -e PGURL="$DATABASE_URL" postgres:18-alpine \
+            sh -c 'pg_dump "$PGURL" --format=custom --no-owner --no-acl' > pre-deploy.dump
+          ls -lh pre-deploy.dump
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pre-deploy-backup-${{ github.sha }}
+          path: pre-deploy.dump
+          retention-days: 30
+
+      - name: Migrate database
+        run: npm run migrate
+
+      - name: Deploy Cloudflare Worker
+        id: worker
+        run: |
+          npx wrangler deploy | tee wrangler.log
+          URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' wrangler.log | head -1 || true)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          if [ -z "$PUBLIC_BASE_URL" ] && [ -n "$URL" ]; then
+            echo "PUBLIC_BASE_URL=$URL" >> "$GITHUB_ENV"
+            echo "::warning::Add a repository variable PUBLIC_BASE_URL=$URL (Settings > Secrets and variables > Actions > Variables) so the scheduled job uses it too."
           fi
 
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name "AWS-RunShellScript" \
-            --comment "Deploy dev-das-promos (${{ github.sha }})" \
-            --parameters commands='[
-              "set -e",
-              "cd /home/ubuntu/dev-das-promos",
-              "sudo -u ubuntu git fetch origin main",
-              "sudo -u ubuntu git checkout --detach ${{ github.sha }}",
-              "docker compose -f infra/docker/docker-compose.prod.yml config --quiet",
-              "docker compose -f infra/docker/docker-compose.prod.yml up -d --wait --wait-timeout 120 postgres redis",
-              "docker compose -f infra/docker/docker-compose.prod.yml build api",
-              "docker compose -f infra/docker/docker-compose.prod.yml run --rm --no-deps api sh -c \"cd /app/packages/database && pnpm exec tsx src/migrate.ts\"",
-              "docker compose -f infra/docker/docker-compose.prod.yml up -d --no-build",
-              "docker compose -f infra/docker/docker-compose.prod.yml exec -T api node -e \"fetch(\\\"http://127.0.0.1:4000/ready\\\").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""
-            ]' \
-            --query "Command.CommandId" --output text)
+      - name: Upload Worker settings
+        run: |
+          node src/jobs/worker-secrets.ts "$RUNNER_TEMP/worker-secrets.json"
+          npx wrangler secret bulk "$RUNNER_TEMP/worker-secrets.json"
+          rm -f "$RUNNER_TEMP/worker-secrets.json"
 
-          # EC2 builds can outlast the AWS CLI waiter's short fixed timeout.
-          # Poll the invocation for up to 30 minutes and only decide after a
-          # terminal status is available.
-          sleep 5
-          STATUS=""
-          for attempt in $(seq 1 180); do
-            if ! STATUS=$(aws ssm get-command-invocation \
-              --command-id "$COMMAND_ID" \
-              --instance-id "$INSTANCE_ID" \
-              --query "Status" --output text 2>&1); then
-              if [[ "$STATUS" == *InvocationDoesNotExist* ]]; then
-                sleep 10
-                continue
-              fi
-              echo "$STATUS" >&2
-              exit 1
-            fi
-            case "$STATUS" in
-              Success|Cancelled|TimedOut|Failed|DeliveryTimedOut|ExecutionTimedOut|Undeliverable|Terminated|InvalidPlatform|AccessDenied|NoInstancesInTag|Incomplete)
-                break
-                ;;
-              *)
-                if (( attempt % 6 == 0 )); then
-                  echo "SSM deployment still running (status: ${STATUS:-pending})."
-                fi
-                sleep 10
-                ;;
-            esac
-          done
+      - name: Point the Telegram bot at the Worker
+        run: npm run set-webhook
 
-          aws ssm get-command-invocation \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$INSTANCE_ID" \
-            --query "{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}" \
-            --output json
-
-          if [ "$STATUS" != "Success" ]; then
-            echo "SSM deployment did not succeed (status: ${STATUS:-unknown})." >&2
-            exit 1
-          fi
+      - name: Smoke test
+        run: curl -fsS "$PUBLIC_BASE_URL/health"

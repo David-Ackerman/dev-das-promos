@@ -1,0 +1,10 @@
+# Cloudflare Worker: tracked redirects (/go), WhatsApp share links (/wa) and
+# the Telegram bot webhook. Deployed by .github/workflows/deploy.yml.
+# All settings are Worker secrets uploaded by that workflow -- nothing here.
+name = "das-promos"
+main = "src/worker.ts"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[observability]
+enabled = true
