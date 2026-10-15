@@ -1,6 +1,7 @@
 // Writes the settings the Cloudflare Worker needs (only the non-empty ones)
-// to a JSON file for `wrangler secret bulk`. Marketplace keys stay out of the
-// Worker: affiliate links are created by the scheduled job.
+// to a JSON file for `wrangler secret bulk`. Affiliate links are created by the
+// scheduled job; the Worker only needs Shopee's keys to re-check prices before
+// publishing (Amazon's stay out).
 import { writeFileSync } from "node:fs";
 
 const WORKER_KEYS = [
@@ -34,6 +35,8 @@ const WORKER_KEYS = [
   "POST_FOOTER",
   "QUEUE_INTERVAL_MINUTES",
   "POSTING_HOURS",
+  "SHOPEE_APP_ID",
+  "SHOPEE_APP_SECRET",
   "GH_DISPATCH_TOKEN",
   "GH_REPO",
   "GH_COLLECT_WORKFLOW",

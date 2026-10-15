@@ -7,7 +7,7 @@ const POST_SELECT = `
          p.discount_pct, p.lowest_seen_cents, p.affiliate_url, p.caption, p.caption_short, p.hashtag, p.ai_model,
          p.preview_chat_id, p.preview_message_id::text AS preview_message_id, p.preview_has_photo,
          to_char(p.scheduled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS scheduled_at,
-         pr.marketplace, pr.title, pr.image_url, pr.product_url
+         p.price_from_admin, pr.marketplace, pr.external_id, pr.title, pr.image_url, pr.product_url
   FROM posts p JOIN products pr ON pr.id = p.product_id`;
 
 export async function upsertProduct(db: Db, c: Candidate): Promise<number> {
@@ -85,6 +85,7 @@ export async function createPost(
     affiliateUrl: string;
     lowestSeenCents?: number | null;
     hashtag?: string | null;
+    priceFromAdmin?: boolean;
     caption: string;
     captionShort: string;
     aiModel: string;
@@ -92,8 +93,9 @@ export async function createPost(
 ): Promise<PostRow> {
   const rows = await db.query<{ id: number }>(
     `INSERT INTO posts (product_id, ref, price_cents, original_price_cents, discount_pct,
-                        commission_rate, affiliate_url, caption, caption_short, ai_model, lowest_seen_cents, hashtag)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+                        commission_rate, affiliate_url, caption, caption_short, ai_model, lowest_seen_cents, hashtag,
+                        price_from_admin)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
     [
       input.productId,
       input.ref,
@@ -107,9 +109,31 @@ export async function createPost(
       input.aiModel,
       input.lowestSeenCents ?? null,
       input.hashtag ?? null,
+      input.priceFromAdmin ?? false,
     ],
   );
   return (await getPost(db, (rows[0] as { id: number }).id)) as PostRow;
+}
+
+/** A re-checked price: the post shows it from now on, and it joins the price history. */
+export async function updatePostPrice(
+  db: Db,
+  post: { id: number; product_id: number },
+  priceCents: number,
+  originalPriceCents: number | null,
+  discountPct: number,
+): Promise<void> {
+  await db.query(`UPDATE posts SET price_cents = $2, original_price_cents = $3, discount_pct = $4 WHERE id = $1`, [
+    post.id,
+    priceCents,
+    originalPriceCents,
+    discountPct,
+  ]);
+  await db.query(`INSERT INTO price_snapshots (product_id, price_cents, original_price_cents) VALUES ($1, $2, $3)`, [
+    post.product_id,
+    priceCents,
+    originalPriceCents,
+  ]);
 }
 
 export async function getPost(db: Db, id: number): Promise<PostRow | undefined> {

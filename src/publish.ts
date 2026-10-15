@@ -1,6 +1,7 @@
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { pendingKeyboard, queuedKeyboard, renderInput, retryKeyboard, statusHeader, updatePreview } from "./preview.ts";
+import { checkPrice } from "./pricecheck.ts";
 import { postTweet } from "./publishers/x.ts";
 import { sendWhatsApp } from "./publishers/whatsapp.ts";
 import { renderTelegram, renderWhatsApp, renderX } from "./render.ts";
@@ -13,11 +14,12 @@ import {
   recordPublication,
   setSchedule,
   transition,
+  updatePostPrice,
 } from "./repo.ts";
 import { formatSlot, nextSlot } from "./schedule.ts";
 import { type Keyboard, sendPost } from "./telegram.ts";
 import type { PostRow } from "./types.ts";
-import { errorMessage, escapeHtml } from "./util.ts";
+import { brl, discountPct, errorMessage, escapeHtml } from "./util.ts";
 
 export function goUrl(cfg: Config, code: string): string {
   return `${cfg.publicBaseUrl}/go/${code}`;
@@ -126,13 +128,13 @@ export async function publishEverywhere(
 export async function approvePost(cfg: Config, db: Db, postId: number, opts: { auto?: boolean } = {}): Promise<string> {
   if (cfg.queue.intervalMinutes <= 0) {
     if (!(await transition(db, postId, "pending", "publishing"))) return "Esse post já foi processado.";
-    return finishPublishing(cfg, db, postId);
+    return finishPublishing(cfg, db, postId, { checkPrice: true });
   }
   if (!(await transition(db, postId, "pending", "queued"))) return "Esse post já foi processado.";
   const now = new Date();
   const at = nextSlot(now, await queueTail(db), cfg.queue);
   if (at.getTime() <= now.getTime() + 60_000 && (await transition(db, postId, "queued", "publishing"))) {
-    return finishPublishing(cfg, db, postId);
+    return finishPublishing(cfg, db, postId, { checkPrice: true });
   }
   await setSchedule(db, postId, at);
   const post = (await getPost(db, postId)) as PostRow;
@@ -144,7 +146,7 @@ export async function approvePost(cfg: Config, db: Db, postId: number, opts: { a
 /** ⚡ on a queued post. */
 export async function publishNow(cfg: Config, db: Db, postId: number): Promise<string> {
   if (!(await transition(db, postId, "queued", "publishing"))) return "Esse post não está na fila.";
-  return finishPublishing(cfg, db, postId);
+  return finishPublishing(cfg, db, postId, { checkPrice: true });
 }
 
 /** ↩️ on a queued post: back to a normal preview. */
@@ -161,7 +163,7 @@ export async function publishDue(cfg: Config, db: Db): Promise<number> {
   let published = 0;
   for (const id of await dueQueued(db, 1)) {
     if (await transition(db, id, "queued", "publishing")) {
-      await finishPublishing(cfg, db, id);
+      await finishPublishing(cfg, db, id, { checkPrice: true });
       published++;
     }
   }
@@ -179,9 +181,44 @@ export async function retryPost(cfg: Config, db: Db, postId: number): Promise<st
   return finishPublishing(cfg, db, postId);
 }
 
+/**
+ * Right before a post goes out: is the price still what the preview showed?
+ * Higher -> back to the admin; gone -> not published; lower -> published with
+ * the better price. Returns the message for the admin when it stopped the post.
+ */
+async function holdIfPriceChanged(cfg: Config, db: Db, post: PostRow): Promise<string | undefined> {
+  if (post.price_from_admin) return undefined; // typed by the admin (e.g. a coupon price): trust it
+  const check = await checkPrice(cfg, post);
+  if (check.verdict === "unknown" && check.detail) console.warn(`price check #${post.id}: ${check.detail}`);
+  if (check.verdict === "gone") {
+    await transition(db, post.id, "publishing", "expired");
+    await updatePreview(cfg, post, `${statusHeader(post, "🚫", "Não publicado: o produto esgotou ou saiu do ar")}`, []);
+    return "Esgotou: não publiquei.";
+  }
+  if ((check.verdict === "higher" || check.verdict === "lower") && check.priceCents) {
+    const original = check.originalPriceCents ?? post.original_price_cents;
+    await updatePostPrice(db, post, check.priceCents, original, discountPct(check.priceCents, original ?? undefined));
+  }
+  if (check.verdict === "higher" && check.priceCents) {
+    await transition(db, post.id, "publishing", "pending");
+    const fresh = (await getPost(db, post.id)) as PostRow;
+    const header =
+      `💸 <b>#${post.id} O preço subiu: ${brl(post.price_cents)} → ${brl(check.priceCents)}</b>\n` +
+      "Não publiquei. Toque ✅ para publicar com o preço novo.";
+    await updatePreview(cfg, fresh, header, pendingKeyboard(fresh));
+    return "O preço subiu: não publiquei.";
+  }
+  return undefined;
+}
+
 /** The post is already in "publishing" (so nobody else is sending it): send and record the outcome. */
-async function finishPublishing(cfg: Config, db: Db, postId: number): Promise<string> {
-  const post = (await getPost(db, postId)) as PostRow;
+async function finishPublishing(cfg: Config, db: Db, postId: number, opts: { checkPrice?: boolean } = {}): Promise<string> {
+  let post = (await getPost(db, postId)) as PostRow;
+  if (opts.checkPrice) {
+    const held = await holdIfPriceChanged(cfg, db, post);
+    if (held) return held;
+    post = (await getPost(db, postId)) as PostRow; // may carry a lower price now
+  }
   // Buttons come off first so nobody can tap ✅ / 🔄 again; this edit failing must not stop the publish.
   await updatePreview(cfg, post, statusHeader(post, "⏳", "Publicando…"), []).catch((e) =>
     console.error("preview edit failed", errorMessage(e)),

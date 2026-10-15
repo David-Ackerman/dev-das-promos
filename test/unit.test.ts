@@ -10,6 +10,8 @@ import { renderTelegram, renderWhatsApp, renderX, xLength } from "../src/render.
 import type { Candidate } from "../src/types.ts";
 import { brl, discountPct, toCents } from "../src/util.ts";
 import { createHandler } from "../src/http.ts";
+import { comparePrice } from "../src/pricecheck.ts";
+import { fetchShopeeItem } from "../src/providers/shopee.ts";
 import { formatSlot, nextSlot, parsePostingHours } from "../src/schedule.ts";
 import { mockFetch, testConfig } from "./helpers.ts";
 
@@ -94,6 +96,31 @@ describe("publishing queue timing", () => {
     assert.deepEqual(parsePostingHours("9 - 22"), { startHour: 9, endHour: 22 });
     assert.deepEqual(parsePostingHours(undefined), { startHour: 8, endHour: 23 });
     assert.throws(() => parsePostingHours("22-8"), /POSTING_HOURS/);
+  });
+});
+
+describe("price check", () => {
+  it("treats 2% either way as the same price", () => {
+    assert.equal(comparePrice(10000, 10150), "same");
+    assert.equal(comparePrice(10000, 10300), "higher");
+    assert.equal(comparePrice(10000, 9700), "lower");
+  });
+  it("asks Shopee for exactly one item and tells 'gone' from 'unclear'", async () => {
+    const shopee = { appId: "a", appSecret: "s", keywords: [], sortType: 2 };
+    const node = { itemId: 123, productName: "Fone", productLink: "https://shopee.com.br/p", priceMin: "59.90", priceDiscountRate: 40 };
+    let answer: unknown = { data: { productOfferV2: { nodes: [node] } } };
+    const f = mockFetch([["affiliate.shopee", () => answer]]);
+    try {
+      assert.equal((await fetchShopeeItem(shopee, "123"))?.priceCents, 5990);
+      assert.match(f.calls[0]!.body.query, /productOfferV2\(itemId: 123,/);
+      answer = { data: { productOfferV2: { nodes: [] } } };
+      assert.equal(await fetchShopeeItem(shopee, "123"), undefined, "no longer offered");
+      answer = { data: { productOfferV2: { nodes: [{ ...node, itemId: 999 }] } } };
+      assert.equal(await fetchShopeeItem(shopee, "123"), null, "filter ignored: unclear, not gone");
+      assert.equal(await fetchShopeeItem(shopee, "12; drop"), null, "only digits are inlined");
+    } finally {
+      f.restore();
+    }
   });
 });
 

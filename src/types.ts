@@ -38,8 +38,11 @@ export interface PostRow {
   preview_has_photo: boolean;
   /** ISO time a queued post goes out; null when not queued. */
   scheduled_at: string | null;
+  /** The admin typed the price: the price check leaves it alone. */
+  price_from_admin: boolean;
   // joined from products
   marketplace: Marketplace;
+  external_id: string;
   title: string;
   image_url: string | null;
   product_url: string;

@@ -161,6 +161,7 @@ async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: numb
     ref: randomCode(10),
     candidate: c,
     affiliateUrl: sub.link, // already the affiliate link: never rewritten
+    priceFromAdmin: sub.priceCents !== undefined,
     lowestSeenCents: await lowestSeenPrice(db, productId, startedAt),
     caption: caption.caption,
     captionShort: caption.short,

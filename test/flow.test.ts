@@ -653,6 +653,56 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("re-checks the price right before publishing", async () => {
+    const cfg = testConfig({ X_MODE: "off", WHATSAPP_MODE: "off" });
+    let now: unknown = { nodes: [] };
+    const shopee = (c: { body: { query: string; variables: { input?: { subIds: string[] } } } }) =>
+      c.body.query.includes("productOfferV2") ? { data: { productOfferV2: now } } : shortLink();
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shopee]]);
+    const node = (id: string, price: string) => ({ itemId: Number(id), productName: "x", productLink: "https://shopee.com.br/p", priceMin: price, priceDiscountRate: 50 });
+    try {
+      const ids = { up: `9${Date.now() % 1e8}1`, down: `9${Date.now() % 1e8}2`, gone: `9${Date.now() % 1e8}3` };
+      await collect(cfg, [
+        offer("pc-up", { externalId: ids.up }),
+        offer("pc-down", { externalId: ids.down }),
+      ]);
+      await collect(cfg, [offer("pc-gone", { externalId: ids.gone })]);
+      const byExt = async (ext: string) =>
+        (await db.query<{ id: number; status: string; price_cents: number; preview_message_id: string }>(
+          `SELECT p.id, p.status, p.price_cents, p.preview_message_id::text FROM posts p JOIN products pr ON pr.id = p.product_id WHERE pr.external_id = $1 ORDER BY p.id DESC LIMIT 1`,
+          [ext],
+        ))[0]!;
+
+      // Price went up R$ 50 -> R$ 65: not published, back to the admin.
+      now = { nodes: [node(ids.up, "65.00")] };
+      const up = await byExt(ids.up);
+      await tap(cfg, `a:${up.id}`);
+      assert.equal((await byExt(ids.up)).status, "pending");
+      assert.equal((await byExt(ids.up)).price_cents, 6500);
+      const edit = f.to("editMessage").filter((c) => c.body.message_id === Number(up.preview_message_id)).at(-1)!.body;
+      assert.match(edit.caption ?? edit.text, /O preço subiu: R\$\s50,00 → R\$\s65,00/);
+      assert.equal(edit.reply_markup.inline_keyboard[0][0].callback_data, `a:${up.id}`);
+      await tap(cfg, `a:${up.id}`);
+      assert.equal((await byExt(ids.up)).status, "published", "approved again at the new price");
+
+      // Price went down: published with the better price.
+      now = { nodes: [node(ids.down, "40.00")] };
+      const down = await byExt(ids.down);
+      await tap(cfg, `a:${down.id}`);
+      assert.equal((await byExt(ids.down)).status, "published");
+      const group = f.calls.filter((c) => /sendPhoto|sendMessage/.test(c.url) && c.body.chat_id === "-1001").at(-1)!.body;
+      assert.match(group.caption ?? group.text, /<b>R\$\s40,00<\/b>/);
+
+      // Gone from Shopee: not published.
+      now = { nodes: [] };
+      const gone = await byExt(ids.gone);
+      await tap(cfg, `a:${gone.id}`);
+      assert.equal((await byExt(ids.gone)).status, "expired");
+    } finally {
+      f.restore();
+    }
+  });
+
   it("expires previews nobody answered", async () => {
     const cfg = testConfig();
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", () => new Response("x", { status: 500 })], ["affiliate.shopee", () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } })]]);

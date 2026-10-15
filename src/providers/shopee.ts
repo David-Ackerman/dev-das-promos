@@ -100,6 +100,27 @@ export function shopeeNodeToCandidate(node: OfferNode): Candidate | null {
   };
 }
 
+/**
+ * One item by id, for the price check before publishing.
+ * undefined = Shopee no longer offers it; null = answered, but not usable.
+ * The id is inlined (digits only) so no GraphQL variable type has to be guessed.
+ */
+export async function fetchShopeeItem(cfg: ShopeeConfig, itemId: string): Promise<Candidate | null | undefined> {
+  if (!/^\d{1,20}$/.test(itemId)) return null;
+  const data = await shopeeRequest<{ productOfferV2?: { nodes?: OfferNode[] } }>(
+    cfg,
+    `query { productOfferV2(itemId: ${itemId}, page: 1, limit: 1) { nodes {
+      itemId productName productLink offerLink imageUrl priceMin priceMax priceDiscountRate sales ratingStar commissionRate
+    } } }`,
+    {},
+  );
+  const nodes = data.productOfferV2?.nodes;
+  if (!nodes) return null;
+  const node = nodes.find((n) => String(n.itemId) === itemId);
+  if (!node) return nodes.length ? null : undefined; // other items back = the filter was ignored, not "gone"
+  return shopeeNodeToCandidate(node);
+}
+
 export async function fetchShopeeCandidates(cfg: ShopeeConfig, perKeyword = 20): Promise<Candidate[]> {
   const out: Candidate[] = [];
   for (const keyword of cfg.keywords) {
