@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { cleanAiText, generateCaption, parseAiJson, templateCaption } from "../src/ai.ts";
+import { cleanAiText, generateCaption, parseAiJson, parseAiReply, templateCaption } from "../src/ai.ts";
 import { isBlocked, pickCandidates } from "../src/collect.ts";
 import { amazonItemToCandidate, fetchAmazonCandidates } from "../src/providers/amazon.ts";
 import { shopeeNodeToCandidate } from "../src/providers/shopee.ts";
@@ -151,7 +151,7 @@ describe("ai", () => {
 
 describe("ai fallback", () => {
   const ok = { choices: [{ message: { content: '{"texto":"Oi","tweet":"Oi"}' } }] };
-  it("retries a busy model once, then moves to the next one", async () => {
+  it("moves on from a busy model at once instead of retrying it first", async () => {
     const tried: string[] = [];
     const f = mockFetch([["chat/completions", (c) => {
       tried.push(c.body.model);
@@ -161,7 +161,36 @@ describe("ai fallback", () => {
       const c = await generateCaption(testConfig({ AI_MODEL: "busy:free, spare:free" }).ai, cand({}));
       assert.equal(c.model, "spare:free");
       assert.equal(c.error, undefined);
-      assert.deepEqual(tried, ["busy:free", "busy:free", "spare:free"]);
+      assert.deepEqual(tried, ["busy:free", "spare:free"]);
+    } finally {
+      f.restore();
+    }
+  });
+  it("gives busy models a second go after trying every model once", async () => {
+    const tried: string[] = [];
+    const f = mockFetch([["chat/completions", (c) => {
+      tried.push(c.body.model);
+      const busyAgain = c.body.model === "a:free" || tried.length <= 3;
+      return busyAgain ? new Response("{}", { status: 429 }) : ok;
+    }]]);
+    try {
+      const c = await generateCaption(testConfig({ AI_MODEL: "a:free,b:free,c:free" }).ai, cand({}));
+      assert.deepEqual(tried, ["a:free", "b:free", "c:free", "a:free", "b:free"]);
+      assert.equal(c.model, "b:free");
+    } finally {
+      f.restore();
+    }
+  });
+  it("accepts reasoning blocks and plain-text replies, and names the model on every error", async () => {
+    assert.deepEqual(parseAiReply('<think>hmm, JSON...</think>{"texto":"Oi","tweet":"Tchau"}'), { texto: "Oi", tweet: "Tchau" });
+    assert.deepEqual(parseAiReply('"Seu setup pedindo upgrade"'), { texto: "Seu setup pedindo upgrade", tweet: "Seu setup pedindo upgrade" });
+    assert.throws(() => parseAiReply("<think>só pensou</think>"), /empty reply/);
+    const f = mockFetch([["chat/completions", (c) =>
+      c.body.model === "x:free" ? { choices: [{ message: { content: null } }] } : { choices: [{ message: { content: [{ type: "text", text: "Texto solto" }] } }] }]]);
+    try {
+      const c = await generateCaption(testConfig({ AI_MODEL: "x:free,y:free" }).ai, cand({}));
+      assert.equal(c.caption, "Texto solto");
+      assert.equal(c.model, "y:free");
     } finally {
       f.restore();
     }

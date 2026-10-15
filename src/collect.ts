@@ -149,7 +149,8 @@ export async function runCollect(
   for (const c of picks) {
     try {
       const ref = randomCode(10);
-      const caption = await generateCaption(cfg.ai, c);
+      // GitHub Actions has no 30s limit like the Worker: room for every model in AI_MODEL.
+      const caption = await generateCaption(cfg.ai, c, undefined, 60_000);
       aiError ||= caption.error ?? "";
       if (opts.dryRun) {
         log(`\n--- [dry-run] ${c.marketplace} ${c.externalId} score=${score(c).toFixed(1)} ---`);
