@@ -57,6 +57,24 @@ export async function lowestSeenPrice(db: Db, productId: number, before: string,
   return rows[0]?.lowest ?? null;
 }
 
+/** Lowest price per product in the `days` before `before` (one query for a whole run). */
+export async function lowestSeenPrices(
+  db: Db,
+  productIds: number[],
+  before: string,
+  days = 30,
+): Promise<Map<number, number>> {
+  if (!productIds.length) return new Map();
+  const rows = await db.query<{ product_id: number; lowest: number }>(
+    `SELECT product_id, min(price_cents)::int AS lowest FROM price_snapshots
+     WHERE product_id = ANY($1::int[]) AND captured_at < $2::timestamptz
+       AND captured_at > $2::timestamptz - make_interval(days => $3::int)
+     GROUP BY product_id`,
+    [productIds, before, days],
+  );
+  return new Map(rows.map((r) => [r.product_id, r.lowest]));
+}
+
 export async function createPost(
   db: Db,
   input: {

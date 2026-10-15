@@ -9,7 +9,7 @@ import {
   dbNow,
   expireStalePending,
   failStuckPublishing,
-  lowestSeenPrice,
+  lowestSeenPrices,
   recentlyUsedProductIds,
   transition,
   upsertProduct,
@@ -37,11 +37,28 @@ export function isBlocked(title: string, blockedWords: string[]): boolean {
   });
 }
 
-/** Higher is better: real discount first, popularity as a tie-breaker. */
+/** What one sale pays us, in cents. Shopee sends the rate as a fraction ("0.08"); some feeds use percent. */
+export function commissionCents(c: Candidate): number {
+  if (!c.commissionRate || c.commissionRate <= 0) return 0;
+  const rate = c.commissionRate > 1 ? c.commissionRate / 100 : c.commissionRate;
+  return Math.round(c.priceCents * rate);
+}
+
+/**
+ * Higher is better: the discount (what makes people click) first, then what a
+ * sale pays us, then popularity and rating. Commission is on a log scale so a
+ * pricey item can't win on commission alone: R$ 2 ≈ 4 points, R$ 20 ≈ 11, R$ 100+ = 16.
+ */
 export function score(c: Candidate): number {
   const popularity = c.sales ? Math.min(Math.log10(c.sales + 1) * 4, 16) : 0;
   const rating = c.rating ? Math.max(0, (c.rating - 4) * 5) : 0;
-  return c.discountPct + popularity + rating;
+  const commission = Math.min(Math.log10(commissionCents(c) / 100 + 1) * 8, 16);
+  return c.discountPct + popularity + rating + commission;
+}
+
+/** "Was cheaper in the last 30 days" (2% tolerance, so cents of noise don't count). */
+export function isFakeDiscount(priceCents: number, lowestSeenCents: number | undefined): boolean {
+  return lowestSeenCents !== undefined && lowestSeenCents < priceCents * 0.98;
 }
 
 /** Best deals first, alternating stores so one marketplace doesn't take every slot. */
@@ -129,21 +146,27 @@ export async function runCollect(
   // Remember every product/price we saw (price history), and skip recent ones.
   const productIds = new Map<string, number>();
   let used = new Set<number>();
-  let startedAt = "";
+  let lowest = new Map<number, number>();
   if (!opts.dryRun) {
-    startedAt = await dbNow(db);
+    const startedAt = await dbNow(db);
     for (const c of candidates) productIds.set(`${c.marketplace}:${c.externalId}`, await upsertProduct(db, c));
     used = await recentlyUsedProductIds(db, cfg.selection.cooldownDays);
+    lowest = await lowestSeenPrices(db, [...new Set(productIds.values())], startedAt);
   }
+  const idOf = (c: Candidate) => productIds.get(`${c.marketplace}:${c.externalId}`) ?? -1;
+  const fake = (c: Candidate) => cfg.selection.skipFakeDiscounts && isFakeDiscount(c.priceCents, lowest.get(idOf(c)));
   const picks = pickCandidates(candidates, {
     limit: cfg.selection.postsPerRun,
     minDiscountPct: cfg.selection.minDiscountPct,
-    exclude: (c) =>
-      used.has(productIds.get(`${c.marketplace}:${c.externalId}`) ?? -1) ||
-      isBlocked(c.title, cfg.selection.blockedWords),
+    exclude: (c) => used.has(idOf(c)) || isBlocked(c.title, cfg.selection.blockedWords) || fake(c),
   });
   const blocked = candidates.filter((c) => isBlocked(c.title, cfg.selection.blockedWords)).length;
-  log(`Picked ${picks.length} of ${candidates.length}${blocked ? ` (${blocked} skipped by BLOCKED_WORDS)` : ""}`);
+  const fakes = candidates.filter(fake).length;
+  log(
+    `Picked ${picks.length} of ${candidates.length}` +
+      (blocked ? ` (${blocked} skipped by BLOCKED_WORDS)` : "") +
+      (fakes ? ` (${fakes} skipped: cheaper in the last 30 days)` : ""),
+  );
 
   let aiError = "";
   for (const c of picks) {
@@ -168,13 +191,13 @@ export async function runCollect(
         continue;
       }
       const affiliateUrl = await affiliateUrlFor(cfg, c, ref);
-      const productId = productIds.get(`${c.marketplace}:${c.externalId}`) as number;
+      const productId = idOf(c);
       const post = await createPost(db, {
         productId,
         ref,
         candidate: c,
         affiliateUrl,
-        lowestSeenCents: await lowestSeenPrice(db, productId, startedAt),
+        lowestSeenCents: lowest.get(productId) ?? null,
         caption: caption.caption,
         captionShort: caption.short,
         hashtag: caption.hashtag,

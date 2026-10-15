@@ -62,6 +62,8 @@ export interface Config {
     pendingTtlHours: number;
     /** Offers whose title has any of these words are skipped (BLOCKED_WORDS). */
     blockedWords: string[];
+    /** Skip offers that were cheaper in the last 30 days: the "discount" isn't real. */
+    skipFakeDiscounts: boolean;
   };
   footer: string;
   githubDispatch?: { token: string; repo: string; workflow: string; ref: string };
@@ -77,6 +79,12 @@ export function list(value: string | undefined): string[] {
 function int(value: string | undefined, fallback: number): number {
   const n = Number.parseInt(value ?? "", 10);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function bool(value: string | undefined, fallback: boolean): boolean {
+  const v = value?.trim().toLowerCase();
+  if (!v) return fallback;
+  return !["false", "0", "no", "nao", "não", "off"].includes(v);
 }
 
 function req(env: Env, name: string): string {
@@ -128,6 +136,7 @@ export function loadConfig(env: Env): Config {
       cooldownDays: int(env.REPOST_COOLDOWN_DAYS, 14),
       pendingTtlHours: int(env.PENDING_TTL_HOURS, 12),
       blockedWords: list(env.BLOCKED_WORDS),
+      skipFakeDiscounts: bool(env.SKIP_FAKE_DISCOUNTS, true),
     },
     footer: env.POST_FOOTER?.trim() ?? "#publi · link de afiliado",
   };

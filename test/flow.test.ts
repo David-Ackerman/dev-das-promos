@@ -270,7 +270,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
   });
 
   it("tells the admin when the product was recently cheaper", async () => {
-    const cfg = testConfig({ REPOST_COOLDOWN_DAYS: "0" });
+    const cfg = testConfig({ REPOST_COOLDOWN_DAYS: "0", SKIP_FAKE_DISCOUNTS: "false" });
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
     const lastPreview = () => f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body.text as string;
     try {
@@ -285,6 +285,22 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       assert.match(lastPreview(), /⚠️ Já esteve por R\$\s39,90 nos últimos 30 dias/);
       await collect(cfg, [offer("hist", { priceCents: 3000, discountPct: 70 })]);
       assert.match(lastPreview(), /📉 Menor preço que vimos em 30 dias/);
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("skips fake discounts: products that were cheaper in the last 30 days", async () => {
+    const cfg = testConfig({ REPOST_COOLDOWN_DAYS: "0" });
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
+    try {
+      await collect(cfg, [offer("fake")]);
+      const { id } = (await db.query<{ id: number }>(`SELECT id FROM products WHERE external_id = $1`, [`fake-${suffix}`]))[0]!;
+      await db.query(`INSERT INTO price_snapshots (product_id, price_cents, captured_at) VALUES ($1, 3500, now() - interval '3 days')`, [id]);
+      const before = (await db.query(`SELECT 1 FROM posts WHERE product_id = $1`, [id])).length;
+      const res = await collect(cfg, [offer("fake")]);
+      assert.equal(res.previews, 0, "R$ 50 now, R$ 35 three days ago: not a real deal");
+      assert.equal((await db.query(`SELECT 1 FROM posts WHERE product_id = $1`, [id])).length, before);
     } finally {
       f.restore();
     }

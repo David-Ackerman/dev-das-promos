@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { cleanAiText, cleanHashtag, generateCaption, parseAiJson, parseAiReply, templateCaption } from "../src/ai.ts";
-import { isBlocked, pickCandidates } from "../src/collect.ts";
+import { commissionCents, isBlocked, isFakeDiscount, pickCandidates, score } from "../src/collect.ts";
 import { amazonItemToCandidate, fetchAmazonCandidates } from "../src/providers/amazon.ts";
 import { shopeeNodeToCandidate } from "../src/providers/shopee.ts";
 import { oauthHeader } from "../src/publishers/x.ts";
@@ -72,6 +72,23 @@ describe("render", () => {
     const noLink = renderX(input, "🔗 Link na bio");
     assert.ok(!noLink.includes("http"));
     assert.ok(xLength(noLink) <= 280);
+  });
+});
+
+describe("ranking", () => {
+  it("counts what a sale pays, without letting commission beat a much better discount", () => {
+    const cheapLowRate = cand({ priceCents: 5000, discountPct: 30, commissionRate: 0.02 });
+    const sameHighRate = cand({ priceCents: 5000, discountPct: 30, commissionRate: 0.12 });
+    assert.ok(score(sameHighRate) > score(cheapLowRate), "higher commission wins a tie");
+    assert.equal(commissionCents(cand({ priceCents: 10000, commissionRate: 8 })), 800, "percent values work too");
+    const pricey = cand({ priceCents: 500000, discountPct: 20, commissionRate: 0.1 });
+    const bigDiscount = cand({ priceCents: 5000, discountPct: 45, commissionRate: 0.02 });
+    assert.ok(score(bigDiscount) > score(pricey), "commission is capped");
+  });
+  it("calls a discount fake when the product was cheaper recently", () => {
+    assert.equal(isFakeDiscount(10000, 8000), true);
+    assert.equal(isFakeDiscount(10000, 9900), false, "2% tolerance");
+    assert.equal(isFakeDiscount(10000, undefined), false, "no history");
   });
 });
 
