@@ -1,4 +1,5 @@
 import type { Db } from "./db.ts";
+import type { SiteDeal } from "./site.ts";
 import type { Candidate, Channel, PostRow } from "./types.ts";
 import { randomCode } from "./util.ts";
 
@@ -261,6 +262,23 @@ export async function sentTelegramMessages(db: Db, postId: number): Promise<{ ta
      WHERE post_id = $1 AND channel = 'telegram' AND status = 'sent' AND external_id IS NOT NULL`,
     [postId],
   );
+}
+
+/** Live deals for the public page, each with its "web" link (created on first view). */
+export async function siteDeals(db: Db, days: number, limit: number): Promise<SiteDeal[]> {
+  const rows = await db.query<Omit<SiteDeal, "code"> & { code: string | null }>(
+    `SELECT p.id, pr.title, pr.marketplace, pr.image_url, p.price_cents, p.original_price_cents, p.discount_pct, p.caption,
+            to_char(p.published_at AT TIME ZONE 'America/Sao_Paulo', 'DD/MM "às" HH24:MI') AS published, l.code
+     FROM posts p JOIN products pr ON pr.id = p.product_id
+     LEFT JOIN links l ON l.post_id = p.id AND l.channel = 'web' AND l.target = ''
+     WHERE p.status IN ('published', 'partial') AND p.deal_ended_at IS NULL
+       AND p.published_at > now() - make_interval(days => $1::int)
+     ORDER BY p.published_at DESC LIMIT $2`,
+    [days, limit],
+  );
+  const out: SiteDeal[] = [];
+  for (const r of rows) out.push({ ...r, code: r.code ?? (await getOrCreateLink(db, r.id, "web")) });
+  return out;
 }
 
 export async function listQueued(db: Db): Promise<PostRow[]> {

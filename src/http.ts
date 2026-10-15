@@ -2,13 +2,15 @@ import { handleUpdate, type TgUpdate, triggerCollect } from "./bot.ts";
 import type { Config, Env } from "./config.ts";
 import type { Db } from "./db.ts";
 import { goUrl, publishDue } from "./publish.ts";
-import { getPost, recordClick, resolveLink } from "./repo.ts";
+import { getPost, recordClick, resolveLink, siteDeals } from "./repo.ts";
 import { sendText } from "./telegram.ts";
 import { whatsappShareUrl, xSharePage, xShareText } from "./share.ts";
+import { ROBOTS_TXT, sitePage } from "./site.ts";
 import { isValidCode, sha256Hex } from "./util.ts";
 
 /**
  * Cloudflare Worker (free plan). Routes:
+ *   GET  /, /ofertas        public page with the live deals
  *   GET  /go/:code          tracked redirect to the affiliate link (logs the click)
  *   GET  /wa/:code          opens WhatsApp with the post text ready to send
  *   GET  /x/:code           page to copy the X post or open it in the X app
@@ -32,7 +34,14 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
       const url = new URL(request.url);
       const path = url.pathname.replace(/\/+$/, "") || "/";
 
-      if (path === "/" || path === "/health") return new Response("ok");
+      if (path === "/health") return new Response("ok");
+      if (path === "/robots.txt") return new Response(ROBOTS_TXT, { headers: { "content-type": "text/plain; charset=utf-8" } });
+      if ((path === "/" || path === "/ofertas") && (request.method === "GET" || request.method === "HEAD")) {
+        const { db, cfg } = getDeps(env);
+        return new Response(sitePage(cfg, await siteDeals(db, 7, 60)), {
+          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" },
+        });
+      }
 
       const go = path.match(/^\/go\/([^/]+)$/);
       if (go && (request.method === "GET" || request.method === "HEAD")) {

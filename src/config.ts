@@ -71,6 +71,8 @@ export interface Config {
   queue: QueueSettings;
   /** Previews with at least this discount (and real AI text, no fake discount) are approved automatically. 0 = off. */
   autoApproveMinDiscountPct: number;
+  /** Public deals page (GET /). */
+  site: { name: string; telegramUrl?: string; whatsappUrl?: string };
   footer: string;
   githubDispatch?: { token: string; repo: string; workflow: string; ref: string };
 }
@@ -91,6 +93,12 @@ function bool(value: string | undefined, fallback: boolean): boolean {
   const v = value?.trim().toLowerCase();
   if (!v) return fallback;
   return !["false", "0", "no", "nao", "não", "off"].includes(v);
+}
+
+/** Only https links end up on the public page. */
+function httpsUrl(value: string | undefined): string | undefined {
+  const v = value?.trim();
+  return v && /^https:\/\/\S+$/.test(v) ? v : undefined;
 }
 
 function req(env: Env, name: string): string {
@@ -146,6 +154,11 @@ export function loadConfig(env: Env): Config {
     },
     queue: { intervalMinutes: Math.max(0, int(env.QUEUE_INTERVAL_MINUTES, 40)), ...parsePostingHours(env.POSTING_HOURS) },
     autoApproveMinDiscountPct: Math.max(0, int(env.AUTO_APPROVE_MIN_DISCOUNT, 0)),
+    site: {
+      name: env.SITE_NAME?.trim() || "Promoções do dia",
+      telegramUrl: httpsUrl(env.SITE_TELEGRAM_URL),
+      whatsappUrl: httpsUrl(env.SITE_WHATSAPP_URL),
+    },
     footer: env.POST_FOOTER?.trim() ?? "#publi · link de afiliado",
   };
 

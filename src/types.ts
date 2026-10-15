@@ -1,5 +1,5 @@
 export type Marketplace = "amazon" | "shopee" | "mercadolivre";
-export type Channel = "telegram" | "whatsapp" | "x";
+export type Channel = "telegram" | "whatsapp" | "x" | "web";
 
 /** A deal found on a marketplace, before we decide to post it. */
 export interface Candidate {

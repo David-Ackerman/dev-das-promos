@@ -751,6 +751,36 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("serves a public page with the live deals and their own tracked links", async () => {
+    const cfg = testConfig({ X_MODE: "off", WHATSAPP_MODE: "off", SITE_NAME: "Dev das Promos", SITE_TELEGRAM_URL: "https://t.me/+abc" });
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
+    try {
+      await collect(cfg, [offer("site-live", { title: "Fone <b>JBL</b> & Cia" }), offer("site-ended", { title: "Mouse Encerrado" })]);
+      for (const name of ["site-live", "site-ended"]) await tap(cfg, `a:${(await postFor(name)).id}`);
+      await db.query(`UPDATE posts SET deal_ended_at = now() WHERE id = $1`, [(await postFor("site-ended")).id]);
+
+      const handler = createHandler(() => ({ cfg, db }));
+      const page = await handler.fetch(new Request("https://w/"), {}, ctx);
+      assert.equal(page.status, 200);
+      assert.match(page.headers.get("content-type")!, /text\/html/);
+      const html = await page.text();
+      assert.ok(html.includes("Fone &lt;b&gt;JBL&lt;/b&gt; &amp; Cia"), "titles are escaped");
+      assert.ok(!html.includes("Mouse Encerrado"), "ended deals are hidden");
+      assert.ok(html.includes('href="https://t.me/+abc"'));
+      assert.match(html, /#publi/);
+      const live = (await postFor("site-live")).id;
+      const web = await db.query<{ code: string }>(`SELECT code FROM links WHERE post_id = $1 AND channel = 'web'`, [live]);
+      assert.equal(web.length, 1);
+      assert.ok(html.includes(`/go/${web[0]!.code}`));
+      await handler.fetch(new Request("https://w/ofertas"), {}, ctx);
+      assert.equal((await db.query(`SELECT 1 FROM links WHERE post_id = $1 AND channel = 'web'`, [live])).length, 1, "one link per deal");
+      assert.match(await (await handler.fetch(new Request("https://w/robots.txt"), {}, ctx)).text(), /Disallow: \/go\//);
+      assert.equal(await (await handler.fetch(new Request("https://w/health"), {}, ctx)).text(), "ok");
+    } finally {
+      f.restore();
+    }
+  });
+
   it("expires previews nobody answered", async () => {
     const cfg = testConfig();
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", () => new Response("x", { status: 500 })], ["affiliate.shopee", () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } })]]);
