@@ -48,12 +48,20 @@ export interface Config {
     sortType: number;
   };
   /** `models` are tried in order: free models are often busy (HTTP 429). */
-  ai: { baseUrl: string; apiKey?: string; models: string[] };
+  ai: {
+    baseUrl: string;
+    apiKey?: string;
+    models: string[];
+    /** Who the group is for (NICHE), so the jokes fit the audience. */
+    niche?: string;
+  };
   selection: {
     postsPerRun: number;
     minDiscountPct: number;
     cooldownDays: number;
     pendingTtlHours: number;
+    /** Offers whose title has any of these words are skipped (BLOCKED_WORDS). */
+    blockedWords: string[];
   };
   footer: string;
   githubDispatch?: { token: string; repo: string; workflow: string; ref: string };
@@ -112,12 +120,14 @@ export function loadConfig(env: Env): Config {
       baseUrl: (env.AI_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, ""),
       apiKey: env.AI_API_KEY?.trim() || env.OPENROUTER_API_KEY?.trim() || undefined,
       models: list(env.AI_MODEL || env.OPENROUTER_MODEL),
+      niche: env.NICHE?.trim() || undefined,
     },
     selection: {
       postsPerRun: int(env.POSTS_PER_RUN, 2),
       minDiscountPct: int(env.MIN_DISCOUNT_PCT, 20),
       cooldownDays: int(env.REPOST_COOLDOWN_DAYS, 14),
       pendingTtlHours: int(env.PENDING_TTL_HOURS, 12),
+      blockedWords: list(env.BLOCKED_WORDS),
     },
     footer: env.POST_FOOTER?.trim() ?? "#publi · link de afiliado",
   };

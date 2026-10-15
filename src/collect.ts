@@ -24,6 +24,19 @@ export interface CollectDeps {
   log?: (msg: string) => void;
 }
 
+function normalize(text: string): string {
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+/** True when the title has a blocked word or phrase. Whole words, accents ignored ("capa" ≠ "capacidade"). */
+export function isBlocked(title: string, blockedWords: string[]): boolean {
+  const t = ` ${normalize(title).replace(/[^a-z0-9]+/g, " ")} `;
+  return blockedWords.some((w) => {
+    const word = normalize(w).replace(/[^a-z0-9]+/g, " ").trim();
+    return word !== "" && t.includes(` ${word} `);
+  });
+}
+
 /** Higher is better: real discount first, popularity as a tie-breaker. */
 export function score(c: Candidate): number {
   const popularity = c.sales ? Math.min(Math.log10(c.sales + 1) * 4, 16) : 0;
@@ -125,9 +138,12 @@ export async function runCollect(
   const picks = pickCandidates(candidates, {
     limit: cfg.selection.postsPerRun,
     minDiscountPct: cfg.selection.minDiscountPct,
-    exclude: (c) => used.has(productIds.get(`${c.marketplace}:${c.externalId}`) ?? -1),
+    exclude: (c) =>
+      used.has(productIds.get(`${c.marketplace}:${c.externalId}`) ?? -1) ||
+      isBlocked(c.title, cfg.selection.blockedWords),
   });
-  log(`Picked ${picks.length} of ${candidates.length}`);
+  const blocked = candidates.filter((c) => isBlocked(c.title, cfg.selection.blockedWords)).length;
+  log(`Picked ${picks.length} of ${candidates.length}${blocked ? ` (${blocked} skipped by BLOCKED_WORDS)` : ""}`);
 
   let aiError = "";
   for (const c of picks) {

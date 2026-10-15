@@ -64,6 +64,8 @@ In the repo, go to **Settings → Environments → production** (create it if it
 | `SHOPEE_APP_SECRET`, `AMAZON_CLIENT_SECRET` | `AI_MODEL`, `WHATSAPP_MODE`, `X_MODE`, `MIN_DISCOUNT_PCT`… |
 | `AI_API_KEY` (and X/WhatsApp keys if used) | |
 
+To focus on a niche, set `SHOPEE_KEYWORDS` (what to search for), `BLOCKED_WORDS` (titles to skip, e.g. `capinha,película`) and `NICHE` (who the group is for, so the AI writes for them).
+
 `GH_DISPATCH_TOKEN` is what lets the Worker start the deal search on schedule and from `/buscar`. Create it at **GitHub → Settings → Developer settings → Fine-grained tokens**: only this repository, permission **Actions: Read and write**. Without it, no search runs on its own, and the bot warns you at each scheduled time.
 
 Every setting is explained in [`.env.example`](.env.example). Any name you add here is picked up automatically, so you never need to edit a workflow.

@@ -25,6 +25,7 @@ Regras:
 - Use SOMENTE as informações dadas. Não invente características, avaliações, frete, estoque, prazo ou urgência ("últimas unidades", "só hoje") que não foram informados.
 - NÃO escreva preço, desconto, link, @menções nem hashtags (o sistema adiciona isso depois).
 - No máximo 1 ou 2 emojis.
+- Se vier "Público do grupo", escreva para essas pessoas: use as referências e o jeito de falar delas.
 - Responda APENAS com JSON: {"texto": "...", "tweet": "..."}
   - "texto": 1 a 3 frases curtas (máx. 280 caracteres).
   - "tweet": uma frase de efeito (máx. 140 caracteres).`;
@@ -49,8 +50,9 @@ export function templateCaption(
   return { caption: line, short: line, model: "template" };
 }
 
-function facts(c: Candidate): string {
+function facts(c: Candidate, niche?: string): string {
   return [
+    niche ? `Público do grupo: ${niche}` : "",
     `Produto: ${c.title}`,
     `Loja: ${STORE[c.marketplace]}`,
     `Preço (só contexto, não escreva): ${brl(c.priceCents)}`,
@@ -106,7 +108,7 @@ async function askModel(cfg: Config["ai"], model: string, candidate: Candidate, 
       temperature: 0.9,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: facts(candidate) },
+        { role: "user", content: facts(candidate, cfg.niche) },
       ],
     }),
     signal: AbortSignal.timeout(timeoutMs),

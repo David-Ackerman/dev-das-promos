@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { cleanAiText, generateCaption, parseAiJson, templateCaption } from "../src/ai.ts";
-import { pickCandidates } from "../src/collect.ts";
+import { isBlocked, pickCandidates } from "../src/collect.ts";
 import { amazonItemToCandidate, fetchAmazonCandidates } from "../src/providers/amazon.ts";
 import { shopeeNodeToCandidate } from "../src/providers/shopee.ts";
 import { oauthHeader } from "../src/publishers/x.ts";
@@ -177,6 +177,28 @@ describe("ai fallback", () => {
       assert.equal(c.model, "template");
       assert.deepEqual(tried, ["a:free", "b:free"]);
       assert.match(c.error!, /a:free: HTTP 403 nope \| b:free: HTTP 403 nope/);
+    } finally {
+      f.restore();
+    }
+  });
+});
+
+describe("niche", () => {
+  it("blocks whole words and phrases, ignoring accents and case", () => {
+    const blocked = ["capa", "película", "kit 10"];
+    assert.ok(isBlocked("Capinha + Capa Anti Impacto iPhone", blocked));
+    assert.ok(isBlocked("Pelicula 3D Vidro", blocked), "accent-insensitive");
+    assert.ok(isBlocked("Cabo USB-C Kit 10 Unidades", blocked));
+    assert.ok(!isBlocked("Power Bank 20000mAh Alta Capacidade", blocked), "capa is not capacidade");
+    assert.ok(!isBlocked("Fone Bluetooth", []));
+  });
+  it("tells the AI who the group is for", async () => {
+    const f = mockFetch([["chat/completions", () => ({ choices: [{ message: { content: '{"texto":"Oi","tweet":"Oi"}' } }] })]]);
+    try {
+      await generateCaption(testConfig({ NICHE: "gamers e fãs de tecnologia" }).ai, cand({}));
+      const [system, user] = f.to("chat/completions")[0]!.body.messages;
+      assert.match(system.content, /Público do grupo/);
+      assert.match(user.content, /^Público do grupo: gamers e fãs de tecnologia\nProduto:/);
     } finally {
       f.restore();
     }
