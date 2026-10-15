@@ -79,6 +79,22 @@ The first run prints your Worker URL in a warning. Save it as the `PUBLIC_BASE_U
 
 Test it with **Actions → Collect deals → Run workflow**. The previews should show up in your Telegram chat.
 
+## Posting from your own links (Amazon, Mercado Livre)
+Until a store's API is available (Amazon only opens the Creators API after enough sales, and Mercado Livre has no public API), you can send the bot an affiliate link in your private chat:
+
+```
+https://amzn.to/abc123 129,90 199,90
+Texto do post (optional; without it the AI writes one)
+```
+
+- The bot opens the link and reads the product name, photo and prices when the store allows it. Amazon usually works. Mercado Livre blocks it, so type the price after the link.
+- The numbers after the link are the price and the old price, in any order. Prices you type win over what the page says.
+- If it can't read the product name, it tells you. Send it again with the name on the line below the link.
+- Your link is kept **exactly as you sent it**, so your affiliate tag is untouched. Clicks still go through the bot's `/go` tracking.
+- From there it's the normal flow: preview, ✅ ❌ 🔄, publish.
+
+Links sent inside groups are ignored. Only your private chat with the bot counts.
+
 ## WhatsApp
 WhatsApp's official API **can't post into normal groups**: its groups API is capped at 8 participants. So there are three options:
 
@@ -137,6 +153,7 @@ src/
   http.ts           /go, /wa, /telegram/webhook routes; worker.ts wires Neon
   providers/        amazon.ts, shopee.ts
   publishers/       whatsapp.ts, x.ts
+  manual.ts         links you send to the bot -> product -> preview       (Worker)
   ai.ts render.ts preview.ts share.ts repo.ts telegram.ts config.ts
   jobs/             CLI entry points used by npm scripts and workflows
 migrations/         SQL, applied once each, never rolled back

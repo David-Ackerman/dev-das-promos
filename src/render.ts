@@ -13,7 +13,7 @@ export interface RenderInput {
   footer: string;
 }
 
-const STORE: Record<Marketplace, string> = { amazon: "Amazon", shopee: "Shopee" };
+export const STORE: Record<Marketplace, string> = { amazon: "Amazon", shopee: "Shopee", mercadolivre: "Mercado Livre" };
 
 /** Telegram, HTML parse mode. */
 export function renderTelegram(p: RenderInput): string {

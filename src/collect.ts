@@ -61,7 +61,7 @@ export function pickCandidates(
 }
 
 async function affiliateUrlFor(cfg: Config, c: Candidate, ref: string): Promise<string> {
-  if (c.marketplace === "amazon") return c.productUrl; // already tagged by Amazon
+  if (c.marketplace !== "shopee") return c.productUrl; // Amazon vends it already tagged
   if (!cfg.shopee) throw new Error("Shopee not configured");
   return shopeeAffiliateLink(cfg.shopee, c.productUrl, ref);
 }

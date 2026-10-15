@@ -24,6 +24,8 @@ Small affiliate-deals bot. Full overview and setup in [README.md](./README.md).
   back. Never DROP/TRUNCATE/DELETE (enforced by `test/unit.test.ts`).
 - Money is integer cents.
 - The AI never writes prices or links; `src/render.ts` adds them.
+- Links the admin sends (`src/manual.ts`) are stored as `affiliate_url`
+  byte for byte: never rewrite them, or the affiliate tag can be lost.
 - Approve must stay idempotent: `transition(db, id, "pending", "publishing")`.
   Retry goes through the same gate from `failed`/`partial` and skips every
   destination already in `publications` as sent, so nothing is posted twice.

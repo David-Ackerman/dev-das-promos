@@ -1,12 +1,24 @@
 import { generateCaption } from "./ai.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
-import { EDIT_HINT, pendingKeyboard, updatePreview } from "./preview.ts";
+import { EDIT_HINT, pendingKeyboard, sendPreview, updatePreview } from "./preview.ts";
+import { buildCandidate, parseSubmission, SUBMIT_HELP, type Submission } from "./manual.ts";
 import { approvePost, declinePost, retryPost } from "./publish.ts";
-import { findPostByPreview, getPost, getStats, listPending, updateCaption } from "./repo.ts";
+import {
+  createPost,
+  dbNow,
+  findPostByPreview,
+  getPost,
+  getStats,
+  listPending,
+  lowestSeenPrice,
+  transition,
+  updateCaption,
+  upsertProduct,
+} from "./repo.ts";
 import { sendText, tg } from "./telegram.ts";
 import type { PostRow } from "./types.ts";
-import { errorMessage, escapeHtml, truncate } from "./util.ts";
+import { errorMessage, escapeHtml, randomCode, truncate } from "./util.ts";
 
 interface TgUser {
   id: number;
@@ -16,6 +28,8 @@ interface TgMessage {
   chat: { id: number; type: string; title?: string };
   from?: TgUser;
   text?: string;
+  /** Text under a photo/video; a shared product link can come this way. */
+  caption?: string;
   reply_to_message?: { message_id: number };
 }
 export interface TgUpdate {
@@ -32,7 +46,9 @@ const HELP = `<b>Comandos</b>
 
 Nas prévias: ✅ publica, ❌ descarta, 🔄 gera outro texto.\nDepois de aprovar, 🐦 abre o X com o post pronto (se X_MODE=share).
 Se algum canal falhar, 🔁 tenta de novo só onde faltou.
-Para escrever o texto você mesmo, responda à prévia com o texto novo.`;
+Para escrever o texto você mesmo, responda à prévia com o texto novo.
+
+${SUBMIT_HELP}`;
 
 function isAdmin(cfg: Config, userId: number | undefined): boolean {
   return userId !== undefined && cfg.telegram.adminUserIds.includes(String(userId));
@@ -116,6 +132,45 @@ export async function triggerCollect(cfg: Config): Promise<{ ok: boolean; messag
     : { ok: false, message: `Não consegui iniciar a busca: GitHub respondeu HTTP ${res.status}` };
 }
 
+/** A link sent in the admin chat becomes a preview, like the ones the search sends. */
+async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: number, sub: Submission): Promise<void> {
+  const token = cfg.telegram.botToken;
+  await tg(token, "setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👀" }] }).catch(() => {});
+  const built = await buildCandidate(sub);
+  if (!built.ok) {
+    await sendText(token, chatId, built.reason);
+    return;
+  }
+  const c = built.candidate;
+  const text = built.caption;
+  const startedAt = await dbNow(db);
+  const productId = await upsertProduct(db, c);
+  // Page read + AI must fit in the ~30s the Worker gets after answering Telegram.
+  const caption = text
+    ? { caption: truncate(text, 600), short: truncate(text, 150), model: "manual", error: undefined }
+    : await generateCaption(cfg.ai, c, undefined, 15_000);
+  const post = await createPost(db, {
+    productId,
+    ref: randomCode(10),
+    candidate: c,
+    affiliateUrl: sub.link, // already the affiliate link: never rewritten
+    lowestSeenCents: await lowestSeenPrice(db, productId, startedAt),
+    caption: caption.caption,
+    captionShort: caption.short,
+    aiModel: caption.model,
+  });
+  try {
+    await sendPreview(cfg, db, post);
+  } catch (error) {
+    await transition(db, post.id, "pending", "failed");
+    throw error;
+  }
+  if (caption.error) {
+    await sendText(token, chatId, `⚠️ A IA falhou, usei um texto padrão.
+<i>${escapeHtml(truncate(caption.error, 300))}</i>`);
+  }
+}
+
 async function handleCallback(cfg: Config, db: Db, cq: NonNullable<TgUpdate["callback_query"]>) {
   const answer = (text: string) =>
     tg(cfg.telegram.botToken, "answerCallbackQuery", { callback_query_id: cq.id, text }).catch(() => {});
@@ -160,9 +215,11 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
   if (!isAdmin(cfg, msg.from?.id)) return;
 
   // Replying to a preview replaces its text.
-  if (msg.reply_to_message && text && !command) {
-    const post = await findPostByPreview(db, chatId, msg.reply_to_message.message_id);
-    if (!post) return;
+  const replyTo = msg.reply_to_message && text && !command
+    ? await findPostByPreview(db, chatId, msg.reply_to_message.message_id)
+    : undefined;
+  if (replyTo) {
+    const post = replyTo;
     if (post.status !== "pending") {
       await sendText(token, chatId, "Essa prévia já foi processada.");
       return;
@@ -176,6 +233,15 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
       reaction: [{ type: "emoji", emoji: "👍" }],
     }).catch(() => {});
     return;
+  }
+
+  // A product link sent to the bot in the admin chat becomes a preview.
+  if (!command && chatId === cfg.telegram.adminChatId) {
+    const sub = parseSubmission(text || msg.caption?.trim() || "");
+    if (sub) {
+      await postFromLink(cfg, db, chatId, msg.message_id, sub);
+      return;
+    }
   }
 
   switch (command) {

@@ -1,4 +1,4 @@
-export type Marketplace = "amazon" | "shopee";
+export type Marketplace = "amazon" | "shopee" | "mercadolivre";
 export type Channel = "telegram" | "whatsapp" | "x";
 
 /** A deal found on a marketplace, before we decide to post it. */

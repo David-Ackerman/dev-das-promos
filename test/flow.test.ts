@@ -434,6 +434,106 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  const say = async (cfg: ReturnType<typeof testConfig>, text: string, chat = 111) => {
+    await createHandler(() => ({ cfg, db })).fetch(
+      new Request("https://w/telegram/webhook", {
+        method: "POST",
+        headers: { "x-telegram-bot-api-secret-token": "secret_secret_secret" },
+        body: JSON.stringify({ update_id: 1, message: { message_id: 50, chat: { id: chat, type: chat === 111 ? "private" : "supergroup" }, from: { id: 111 }, text } }),
+      }),
+      {},
+      ctx,
+    );
+    await flush();
+  };
+  type LinkPost = { id: number; status: string; price_cents: number; original_price_cents: number | null; caption: string; ai_model: string; title: string; marketplace: string; external_id: string };
+  const postByLink = async (link: string) =>
+    (await db.query<LinkPost>(
+      `SELECT p.id, p.status, p.price_cents, p.original_price_cents, p.caption, p.ai_model, pr.title, pr.marketplace, pr.external_id
+       FROM posts p JOIN products pr ON pr.id = p.product_id WHERE p.affiliate_url = $1 ORDER BY p.id DESC LIMIT 1`,
+      [link],
+    ))[0];
+
+  it("turns an Amazon link sent to the bot into a preview, and publishes the link untouched", async () => {
+    const cfg = testConfig({ X_MODE: "off", WHATSAPP_MODE: "off" });
+    const asin = `B0${suffix.toUpperCase().padEnd(8, "X").slice(0, 8)}`;
+    const link = `https://www.amazon.com.br/Fone-Bluetooth-Teste/dp/${asin}?tag=meu-20&linkCode=ll1`;
+    const page = `<span id="productTitle">Fone Bluetooth Teste</span>
+      <span id="corePrice_feature_div"><span class="a-offscreen">R$ 89,90</span></span>
+      <span class="a-text-price" data-a-strike="true"><span class="a-offscreen">R$ 179,80</span></span>`;
+    const f = mockFetch([
+      ["amazon.com.br", () => new Response(page, { status: 200 })],
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", ai],
+    ]);
+    try {
+      await say(cfg, link, -1001);
+      assert.equal(await postByLink(link), undefined, "links posted in groups are ignored");
+
+      await say(cfg, link);
+      const post = (await postByLink(link))!;
+      assert.equal(post.status, "pending");
+      assert.equal(post.marketplace, "amazon");
+      assert.equal(post.external_id, asin);
+      assert.equal(post.title, "Fone Bluetooth Teste");
+      assert.deepEqual([post.price_cents, post.original_price_cents], [8990, 17980]);
+      assert.equal(post.caption, "Texto da IA");
+      const preview = f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body;
+      assert.match(preview.text, /Prévia #\d+<\/b> · Amazon · -50%/);
+      assert.equal(preview.reply_markup.inline_keyboard[0][0].text, "✅ Aprovar");
+
+      await tap(cfg, `a:${post.id}`);
+      assert.equal((await postByLink(link))!.status, "published");
+      const groupMsg = f.calls.filter((c) => /sendMessage|sendPhoto/.test(c.url) && c.body.chat_id === "-1001").at(-1)!.body;
+      const code = (groupMsg.text ?? groupMsg.caption).match(/\/go\/([0-9a-zA-Z]+)/)[1];
+      const go = await createHandler(() => ({ cfg, db })).fetch(new Request(`https://w/go/${code}`, { method: "HEAD" }), {}, ctx);
+      assert.equal(go.headers.get("location"), link, "the affiliate link is kept byte for byte");
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("uses the typed price and text when the store blocks the page (Mercado Livre)", async () => {
+    const cfg = testConfig();
+    const link = `https://produto.mercadolivre.com.br/MLB-9${Date.now() % 1e8}-air-fryer-mondial-4l-_JM?matt_tool=123`;
+    const f = mockFetch([
+      ["mercadolivre.com.br", () => new Response("blocked", { status: 403 })],
+      ["amzn.to", () => new Response("captcha", { status: 503 })],
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", () => {
+        throw new Error("AI must not be called when the admin wrote the text");
+      }],
+    ]);
+    try {
+      await say(cfg, link);
+      assert.equal(await postByLink(link), undefined);
+      assert.match(f.to("sendMessage").at(-1)!.body.text, /Não consegui ler o preço na página \(HTTP 403\)\. Mande de novo/);
+
+      await say(cfg, `${link} 299 399,90\nA fritadeira que faltava 🍟`);
+      const post = (await postByLink(link))!;
+      assert.equal(post.marketplace, "mercadolivre");
+      assert.equal(post.title, "air fryer mondial 4l");
+      assert.deepEqual([post.price_cents, post.original_price_cents], [29900, 39990]);
+      assert.equal(post.caption, "A fritadeira que faltava 🍟");
+      assert.equal(post.ai_model, "manual");
+      assert.match(f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body.text, /Mercado Livre · -25%/);
+
+      // amzn.to without a readable page or a name in the URL: first line under the link is the name.
+      const short = `https://amzn.to/${suffix}`;
+      await say(cfg, `${short} 59,90`);
+      assert.match(f.to("sendMessage").at(-1)!.body.text, /nome do produto[\s\S]*Nome do produto/);
+      await say(cfg, `${short} 59,90\nKit 3 Cuecas Boxer\nConforto nível sofá 🛋️`);
+      const named = (await postByLink(short))!;
+      assert.equal(named.title, "Kit 3 Cuecas Boxer");
+      assert.equal(named.caption, "Conforto nível sofá 🛋️");
+
+      await say(cfg, "https://shopee.com.br/produto-x 10");
+      assert.match(f.to("sendMessage").at(-1)!.body.text, /Só aceito links da Amazon e do Mercado Livre/);
+    } finally {
+      f.restore();
+    }
+  });
+
   it("expires previews nobody answered", async () => {
     const cfg = testConfig();
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", () => new Response("x", { status: 500 })], ["affiliate.shopee", () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } })]]);

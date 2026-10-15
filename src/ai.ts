@@ -1,4 +1,5 @@
 import type { Config } from "./config.ts";
+import { STORE } from "./render.ts";
 import type { Candidate } from "./types.ts";
 import { brl, errorMessage, sleep, truncate } from "./util.ts";
 
@@ -51,7 +52,7 @@ export function templateCaption(
 function facts(c: Candidate): string {
   return [
     `Produto: ${c.title}`,
-    `Loja: ${c.marketplace === "amazon" ? "Amazon" : "Shopee"}`,
+    `Loja: ${STORE[c.marketplace]}`,
     `Preço (só contexto, não escreva): ${brl(c.priceCents)}`,
     c.discountPct ? `Desconto (só contexto, não escreva): ${c.discountPct}%` : "",
     c.rating ? `Nota dos compradores: ${c.rating}` : "",
@@ -129,9 +130,14 @@ async function askModel(cfg: Config["ai"], model: string, candidate: Candidate, 
  * Tries each model in AI_MODEL in order (a busy one gets one quick retry), all
  * inside AI_BUDGET_MS. If none answers, a template line is used and `error` says why.
  */
-export async function generateCaption(cfg: Config["ai"], candidate: Candidate, avoid?: string): Promise<Caption> {
+export async function generateCaption(
+  cfg: Config["ai"],
+  candidate: Candidate,
+  avoid?: string,
+  budgetMs = AI_BUDGET_MS,
+): Promise<Caption> {
   if (!cfg.apiKey || !cfg.models.length) return templateCaption(candidate, Date.now(), avoid);
-  const deadline = Date.now() + AI_BUDGET_MS;
+  const deadline = Date.now() + budgetMs;
   const errors: string[] = [];
   for (const model of cfg.models) {
     for (let attempt = 1; attempt <= 2; attempt++) {

@@ -1,12 +1,10 @@
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
-import { renderTelegram } from "./render.ts";
+import { renderTelegram, STORE } from "./render.ts";
 import { setPreview } from "./repo.ts";
 import { editPost, type Keyboard, sendPost } from "./telegram.ts";
 import type { PostRow } from "./types.ts";
 import { brl, escapeHtml } from "./util.ts";
-
-const STORE = { amazon: "Amazon", shopee: "Shopee" } as const;
 
 export function renderInput(cfg: Config, post: PostRow, link: string) {
   return {
