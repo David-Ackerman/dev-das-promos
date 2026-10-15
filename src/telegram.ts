@@ -31,7 +31,7 @@ export async function tg<T = unknown>(
 /** Telegram photo captions are capped at 1024 chars; longer posts go as text with link preview. */
 export const CAPTION_LIMIT = 1024;
 
-function visibleLength(html: string): number {
+export function visibleLength(html: string): number {
   return html.replace(/<[^>]+>/g, "").replace(/&(amp|lt|gt);/g, "x").length;
 }
 
@@ -102,6 +102,23 @@ export async function editPost(
     // published or declined preview never keeps ✅ / 🔄. Then report the original error.
     await tg(token, "editMessageReplyMarkup", { chat_id: chatId, message_id: messageId, reply_markup }).catch(() => {});
     throw error;
+  }
+}
+
+/**
+ * Edits a message without knowing if it went out as a photo (caption) or as
+ * text: tries one, and the other when Telegram says it's the wrong kind.
+ */
+export async function editAnyMessage(token: string, chatId: string, messageId: number, html: string, photoFirst: boolean): Promise<void> {
+  const kinds = photoFirst ? [true, false] : [false, true];
+  for (const [i, hasPhoto] of kinds.entries()) {
+    try {
+      await editPost(token, chatId, messageId, hasPhoto, html);
+      return;
+    } catch (error) {
+      const wrongKind = /there is no (caption|text) in the message/i.test((error as Error).message);
+      if (!wrongKind || i === kinds.length - 1) throw error;
+    }
   }
 }
 

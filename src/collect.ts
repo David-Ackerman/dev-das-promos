@@ -1,5 +1,5 @@
 import { generateCaption } from "./ai.ts";
-import { approvePost } from "./publish.ts";
+import { approvePost, flagEndedDeals } from "./publish.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { previewHtml, retryKeyboard, sendPreview, statusHeader, updatePreview } from "./preview.ts";
@@ -112,6 +112,8 @@ export interface CollectResult {
   previews: number;
   autoApproved: number;
   expired: number;
+  /** Published deals found sold out / pricier this run (group messages edited). */
+  ended: number;
   errors: string[];
 }
 
@@ -122,7 +124,7 @@ export async function runCollect(
   opts: { dryRun?: boolean } = {},
 ): Promise<CollectResult> {
   const log = deps.log ?? console.log;
-  const result: CollectResult = { found: 0, previews: 0, autoApproved: 0, expired: 0, errors: [] };
+  const result: CollectResult = { found: 0, previews: 0, autoApproved: 0, expired: 0, ended: 0, errors: [] };
 
   if (!opts.dryRun) {
     for (const post of await expireStalePending(db, cfg.selection.pendingTtlHours)) {
@@ -131,6 +133,11 @@ export async function runCollect(
     }
     for (const post of await failStuckPublishing(db, STUCK_PUBLISHING_MINUTES)) {
       await updatePreview(cfg, post, statusHeader(post, "⚠️", "Travou ao publicar"), retryKeyboard(post)).catch(() => {});
+    }
+    try {
+      result.ended = await flagEndedDeals(cfg, db, log);
+    } catch (error) {
+      log(`Checking published deals failed: ${errorMessage(error)}`);
     }
   }
 

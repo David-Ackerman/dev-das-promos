@@ -235,6 +235,34 @@ export async function listPending(db: Db): Promise<PostRow[]> {
   return db.query<PostRow>(`${POST_SELECT} WHERE p.status = 'pending' ORDER BY p.id`);
 }
 
+/** Published deals from the last `days` that haven't been marked as ended yet. */
+export async function recentlyPublished(db: Db, days: number, limit: number): Promise<PostRow[]> {
+  return db.query<PostRow>(
+    `${POST_SELECT} WHERE p.status IN ('published', 'partial') AND p.deal_ended_at IS NULL
+       AND p.published_at > now() - make_interval(days => $1::int)
+     ORDER BY p.published_at DESC LIMIT $2`,
+    [days, limit],
+  );
+}
+
+/** Marks a deal as over; false if someone already did. */
+export async function markDealEnded(db: Db, postId: number, note: string): Promise<boolean> {
+  const rows = await db.query(
+    `UPDATE posts SET deal_ended_at = now(), deal_note = $2 WHERE id = $1 AND deal_ended_at IS NULL RETURNING id`,
+    [postId, note],
+  );
+  return rows.length > 0;
+}
+
+/** Telegram messages a post was delivered as (group chat id + message id). */
+export async function sentTelegramMessages(db: Db, postId: number): Promise<{ target: string; message_id: string }[]> {
+  return db.query<{ target: string; message_id: string }>(
+    `SELECT DISTINCT target, external_id AS message_id FROM publications
+     WHERE post_id = $1 AND channel = 'telegram' AND status = 'sent' AND external_id IS NOT NULL`,
+    [postId],
+  );
+}
+
 export async function listQueued(db: Db): Promise<PostRow[]> {
   return db.query<PostRow>(`${POST_SELECT} WHERE p.status = 'queued' ORDER BY p.scheduled_at NULLS LAST, p.id`);
 }

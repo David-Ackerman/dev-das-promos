@@ -12,14 +12,17 @@ import {
   getPost,
   queueTail,
   recordPublication,
+  markDealEnded,
+  recentlyPublished,
+  sentTelegramMessages,
   setSchedule,
   transition,
   updatePostPrice,
 } from "./repo.ts";
 import { formatSlot, nextSlot } from "./schedule.ts";
-import { type Keyboard, sendPost } from "./telegram.ts";
+import { CAPTION_LIMIT, editAnyMessage, type Keyboard, sendPost, visibleLength } from "./telegram.ts";
 import type { PostRow } from "./types.ts";
-import { brl, discountPct, errorMessage, escapeHtml } from "./util.ts";
+import { brl, discountPct, errorMessage, escapeHtml, truncate } from "./util.ts";
 
 export function goUrl(cfg: Config, code: string): string {
   return `${cfg.publicBaseUrl}/go/${code}`;
@@ -253,6 +256,41 @@ async function finishPublishing(cfg: Config, db: Db, postId: number, opts: { che
   }`;
   await updatePreview(cfg, post, header, result.failed.length ? [...result.manual, ...retryKeyboard(post)] : result.manual);
   return status === "failed" ? "Falhou ao publicar 😕" : "Publicado! 🚀";
+}
+
+/** How long after publishing a deal is still watched, and how many are checked per run. */
+const WATCH_DAYS = 3;
+const WATCH_PER_RUN = 30;
+
+/**
+ * Search run: re-checks recently published deals. Sold out, or more than 5%
+ * pricier than when posted -> the Telegram group messages get a banner on top,
+ * so nobody clicks a dead deal. (WhatsApp / X messages can't be edited by us.)
+ */
+export async function flagEndedDeals(cfg: Config, db: Db, log: (msg: string) => void = console.log): Promise<number> {
+  let ended = 0;
+  for (const post of await recentlyPublished(db, WATCH_DAYS, WATCH_PER_RUN)) {
+    const check = await checkPrice(cfg, post);
+    let banner: string | undefined;
+    if (check.verdict === "gone") banner = "❌ <b>ESGOTOU</b> · essa promoção acabou";
+    else if (check.priceCents && check.priceCents > post.price_cents * 1.05) {
+      banner = `⚠️ <b>O preço subiu</b>: agora ${brl(check.priceCents)}`;
+    }
+    if (!banner || !(await markDealEnded(db, post.id, banner))) continue;
+    ended++;
+    for (const msg of await sentTelegramMessages(db, post.id)) {
+      const code = await getOrCreateLink(db, post.id, "telegram", msg.target);
+      let html = `${banner}\n\n${renderTelegram(renderInput(cfg, post, goUrl(cfg, code)))}`;
+      if (post.image_url && visibleLength(html) > CAPTION_LIMIT) {
+        html = `${banner}\n\n🛍️ <b>${escapeHtml(truncate(post.title, 110))}</b>`;
+      }
+      await editAnyMessage(cfg.telegram.botToken, msg.target, Number(msg.message_id), html, Boolean(post.image_url)).catch((e) =>
+        log(`Could not edit #${post.id} in ${msg.target}: ${errorMessage(e)}`),
+      );
+    }
+    log(`Deal #${post.id} ended: ${banner.replace(/<[^>]+>/g, "")}`);
+  }
+  return ended;
 }
 
 export async function declinePost(cfg: Config, db: Db, postId: number): Promise<string> {

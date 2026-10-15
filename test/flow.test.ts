@@ -703,6 +703,54 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("edits the group messages when a published deal sells out or gets pricier", async () => {
+    const cfg = testConfig({ X_MODE: "off", WHATSAPP_MODE: "off" });
+    const answers = new Map<string, unknown>();
+    const shopee = (c: { body: { query: string } }) => {
+      const id = c.body.query.match(/itemId: (\d+)/)?.[1];
+      return id ? { data: { productOfferV2: answers.get(id) ?? { nodes: [] } } } : shortLink();
+    };
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shopee]]);
+    const node = (id: string, price: string) => ({ itemId: Number(id), productName: "x", productLink: "https://shopee.com.br/p", priceMin: price, priceDiscountRate: 50 });
+    try {
+      // Nothing else of ours should be watched in this test.
+      await db.query(`UPDATE posts SET deal_ended_at = now() WHERE deal_ended_at IS NULL`);
+      const ids = { sold: `8${Date.now() % 1e8}1`, pricier: `8${Date.now() % 1e8}2`, fine: `8${Date.now() % 1e8}3` };
+      for (const id of Object.values(ids)) answers.set(id, { nodes: [node(id, "50.00")] });
+      await collect(cfg, [offer("end-sold", { externalId: ids.sold }), offer("end-up", { externalId: ids.pricier })]);
+      await collect(cfg, [offer("end-fine", { externalId: ids.fine })]);
+      const posts = await db.query<{ id: number; ext: string }>(
+        `SELECT p.id, pr.external_id AS ext FROM posts p JOIN products pr ON pr.id = p.product_id WHERE pr.external_id = ANY($1::text[])`,
+        [Object.values(ids)],
+      );
+      for (const p of posts) await tap(cfg, `a:${p.id}`);
+      const msgIdOf = async (id: number) =>
+        Number((await db.query<{ m: string }>(`SELECT external_id AS m FROM publications WHERE post_id = $1 AND target = '-1001' AND status = 'sent'`, [id]))[0]!.m);
+      const idOf = (ext: string) => posts.find((p) => p.ext === ext)!.id;
+
+      answers.set(ids.sold, { nodes: [] });
+      answers.set(ids.pricier, { nodes: [node(ids.pricier, "59.90")] });
+      answers.set(ids.fine, { nodes: [node(ids.fine, "51.00")] });
+      const before = f.to("editMessage").length;
+      const res = await collect(cfg, []);
+      assert.equal(res.ended, 2);
+      const edits = f.to("editMessage").slice(before);
+      const textFor = async (id: number) => {
+        const m = await msgIdOf(id);
+        return edits.filter((c) => c.body.message_id === m && c.body.chat_id === "-1001").map((c) => c.body.caption ?? c.body.text).at(-1) ?? "";
+      };
+      assert.match(await textFor(idOf(ids.sold)), /^❌ <b>ESGOTOU<\/b>/);
+      assert.match(await textFor(idOf(ids.pricier)), /^⚠️ <b>O preço subiu<\/b>: agora R\$\s59,90/);
+      assert.equal(await textFor(idOf(ids.fine)), "", "2% up is not an ended deal");
+      assert.equal(edits.filter((c) => c.body.chat_id === "-1002").length, 2, "every group gets the banner");
+
+      const again = await collect(cfg, []);
+      assert.equal(again.ended, 0, "flagged once");
+    } finally {
+      f.restore();
+    }
+  });
+
   it("expires previews nobody answered", async () => {
     const cfg = testConfig();
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", () => new Response("x", { status: 500 })], ["affiliate.shopee", () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } })]]);
