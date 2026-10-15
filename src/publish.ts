@@ -1,10 +1,20 @@
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
-import { renderInput, retryKeyboard, statusHeader, updatePreview } from "./preview.ts";
+import { pendingKeyboard, queuedKeyboard, renderInput, retryKeyboard, statusHeader, updatePreview } from "./preview.ts";
 import { postTweet } from "./publishers/x.ts";
 import { sendWhatsApp } from "./publishers/whatsapp.ts";
 import { renderTelegram, renderWhatsApp, renderX } from "./render.ts";
-import { deliveredTargets, getOrCreateLink, getPost, recordPublication, transition } from "./repo.ts";
+import {
+  deliveredTargets,
+  dueQueued,
+  getOrCreateLink,
+  getPost,
+  queueTail,
+  recordPublication,
+  setSchedule,
+  transition,
+} from "./repo.ts";
+import { formatSlot, nextSlot } from "./schedule.ts";
 import { type Keyboard, sendPost } from "./telegram.ts";
 import type { PostRow } from "./types.ts";
 import { errorMessage, escapeHtml } from "./util.ts";
@@ -108,12 +118,54 @@ export async function publishEverywhere(
   return result;
 }
 
-/** Approve button. Safe to call twice: only the first tap publishes. */
-export async function approvePost(cfg: Config, db: Db, postId: number): Promise<string> {
-  if (!(await transition(db, postId, "pending", "publishing"))) {
-    return "Esse post já foi processado.";
+/**
+ * Approve button (and auto-approve). Safe to call twice: only the first call
+ * wins the pending -> publishing / pending -> queued transition.
+ * With the queue on, the post waits for its slot; if the slot is now, it goes out right away.
+ */
+export async function approvePost(cfg: Config, db: Db, postId: number, opts: { auto?: boolean } = {}): Promise<string> {
+  if (cfg.queue.intervalMinutes <= 0) {
+    if (!(await transition(db, postId, "pending", "publishing"))) return "Esse post já foi processado.";
+    return finishPublishing(cfg, db, postId);
   }
+  if (!(await transition(db, postId, "pending", "queued"))) return "Esse post já foi processado.";
+  const now = new Date();
+  const at = nextSlot(now, await queueTail(db), cfg.queue);
+  if (at.getTime() <= now.getTime() + 60_000 && (await transition(db, postId, "queued", "publishing"))) {
+    return finishPublishing(cfg, db, postId);
+  }
+  await setSchedule(db, postId, at);
+  const post = (await getPost(db, postId)) as PostRow;
+  const who = opts.auto ? " · aprovado automaticamente 🤖" : "";
+  await updatePreview(cfg, post, `${statusHeader(post, "🕒", `Agendado para ${formatSlot(at, now)}`)}${who}`, queuedKeyboard(post));
+  return `Agendado para ${formatSlot(at, now)}`;
+}
+
+/** ⚡ on a queued post. */
+export async function publishNow(cfg: Config, db: Db, postId: number): Promise<string> {
+  if (!(await transition(db, postId, "queued", "publishing"))) return "Esse post não está na fila.";
   return finishPublishing(cfg, db, postId);
+}
+
+/** ↩️ on a queued post: back to a normal preview. */
+export async function unschedulePost(cfg: Config, db: Db, postId: number): Promise<string> {
+  if (!(await transition(db, postId, "queued", "pending"))) return "Esse post não está na fila.";
+  await setSchedule(db, postId, null);
+  const post = (await getPost(db, postId)) as PostRow;
+  await updatePreview(cfg, post, undefined, pendingKeyboard(post));
+  return "Voltou para as prévias.";
+}
+
+/** Worker cron: publishes the queued post whose time has come (one per tick keeps them spaced). */
+export async function publishDue(cfg: Config, db: Db): Promise<number> {
+  let published = 0;
+  for (const id of await dueQueued(db, 1)) {
+    if (await transition(db, id, "queued", "publishing")) {
+      await finishPublishing(cfg, db, id);
+      published++;
+    }
+  }
+  return published;
 }
 
 /** Retry button on a failed/partial post: sends only to the destinations that didn't get it. */

@@ -26,8 +26,10 @@ Small affiliate-deals bot. Full overview and setup in [README.md](./README.md).
 - The AI never writes prices or links; `src/render.ts` adds them.
 - Links the admin sends (`src/manual.ts`) are stored as `affiliate_url`
   byte for byte: never rewrite them, or the affiliate tag can be lost.
-- Approve must stay idempotent: `transition(db, id, "pending", "publishing")`.
-  Retry goes through the same gate from `failed`/`partial` and skips every
+- Approve must stay idempotent: it wins `transition(db, id, "pending", ...)`
+  once (to `publishing`, or to `queued` when the queue is on); a queued post is
+  published only through `transition(db, id, "queued", "publishing")`. Retry
+  goes through the same gate from `failed`/`partial` and skips every
   destination already in `publications` as sent, so nothing is posted twice.
 
 ## Commands

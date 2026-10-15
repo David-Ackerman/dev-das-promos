@@ -1,3 +1,5 @@
+import { parsePostingHours, type QueueSettings } from "./schedule.ts";
+
 /**
  * All settings come from environment variables (GitHub secrets/vars for the
  * cron job, Worker secrets/vars for the Cloudflare Worker, `.env` locally).
@@ -65,6 +67,10 @@ export interface Config {
     /** Skip offers that were cheaper in the last 30 days: the "discount" isn't real. */
     skipFakeDiscounts: boolean;
   };
+  /** Approved posts are spaced out inside a posting window (see schedule.ts). */
+  queue: QueueSettings;
+  /** Previews with at least this discount (and real AI text, no fake discount) are approved automatically. 0 = off. */
+  autoApproveMinDiscountPct: number;
   footer: string;
   githubDispatch?: { token: string; repo: string; workflow: string; ref: string };
 }
@@ -138,6 +144,8 @@ export function loadConfig(env: Env): Config {
       blockedWords: list(env.BLOCKED_WORDS),
       skipFakeDiscounts: bool(env.SKIP_FAKE_DISCOUNTS, true),
     },
+    queue: { intervalMinutes: Math.max(0, int(env.QUEUE_INTERVAL_MINUTES, 40)), ...parsePostingHours(env.POSTING_HOURS) },
+    autoApproveMinDiscountPct: Math.max(0, int(env.AUTO_APPROVE_MIN_DISCOUNT, 0)),
     footer: env.POST_FOOTER?.trim() ?? "#publi · link de afiliado",
   };
 

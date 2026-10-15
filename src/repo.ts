@@ -6,6 +6,7 @@ const POST_SELECT = `
   SELECT p.id, p.product_id, p.ref, p.status, p.price_cents, p.original_price_cents,
          p.discount_pct, p.lowest_seen_cents, p.affiliate_url, p.caption, p.caption_short, p.hashtag, p.ai_model,
          p.preview_chat_id, p.preview_message_id::text AS preview_message_id, p.preview_has_photo,
+         to_char(p.scheduled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS scheduled_at,
          pr.marketplace, pr.title, pr.image_url, pr.product_url
   FROM posts p JOIN products pr ON pr.id = p.product_id`;
 
@@ -210,6 +211,33 @@ export async function listPending(db: Db): Promise<PostRow[]> {
   return db.query<PostRow>(`${POST_SELECT} WHERE p.status = 'pending' ORDER BY p.id`);
 }
 
+export async function listQueued(db: Db): Promise<PostRow[]> {
+  return db.query<PostRow>(`${POST_SELECT} WHERE p.status = 'queued' ORDER BY p.scheduled_at NULLS LAST, p.id`);
+}
+
+/** The last post that went out or is waiting to: the next one is spaced from it. */
+export async function queueTail(db: Db): Promise<Date | null> {
+  const rows = await db.query<{ last: string | null }>(
+    `SELECT to_char(greatest(max(scheduled_at) FILTER (WHERE status = 'queued'), max(published_at))
+                    AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS last
+     FROM posts`,
+  );
+  return rows[0]?.last ? new Date(rows[0].last) : null;
+}
+
+export async function setSchedule(db: Db, postId: number, at: Date | null): Promise<void> {
+  await db.query(`UPDATE posts SET scheduled_at = $2::timestamptz WHERE id = $1`, [postId, at?.toISOString() ?? null]);
+}
+
+/** Queued posts whose time has come, oldest first. */
+export async function dueQueued(db: Db, limit: number): Promise<number[]> {
+  const rows = await db.query<{ id: number }>(
+    `SELECT id FROM posts WHERE status = 'queued' AND scheduled_at <= now() ORDER BY scheduled_at, id LIMIT $1`,
+    [limit],
+  );
+  return rows.map((r) => r.id);
+}
+
 export async function getOrCreateLink(
   db: Db,
   postId: number,
@@ -297,6 +325,8 @@ export interface Stats {
   byTarget: { channel: string; target: string; clicks: number; unique: number }[];
   byMarketplace: { marketplace: string; clicks: number; posts: number }[];
   topPosts: { id: number; title: string; marketplace: string; discount_pct: number; clicks: number }[];
+  /** Hours (Brasília) with the most human clicks: a guide for POSTING_HOURS. */
+  bestHours: { hour: number; clicks: number }[];
 }
 
 export async function getStats(db: Db, days: number): Promise<Stats> {
@@ -341,8 +371,15 @@ export async function getStats(db: Db, days: number): Promise<Stats> {
      ORDER BY clicks DESC LIMIT 10`,
     [days],
   );
+  const bestHours = await db.query<Stats["bestHours"][number]>(
+    `SELECT extract(hour FROM c.clicked_at AT TIME ZONE 'America/Sao_Paulo')::int AS hour, count(*)::int AS clicks
+     FROM clicks c WHERE NOT c.is_bot AND c.clicked_at > ${since}
+     GROUP BY 1 ORDER BY clicks DESC, hour LIMIT 3`,
+    [days],
+  );
   return {
     days,
+    bestHours,
     posts: posts ?? { published: 0, declined: 0, pending: 0 },
     byChannel,
     byTarget,

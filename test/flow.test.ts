@@ -582,6 +582,77 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("queues approved posts, spaces them, and lets the admin publish now or unschedule", async () => {
+    const cfg = testConfig({ QUEUE_INTERVAL_MINUTES: "40", POSTING_HOURS: "0-24", X_MODE: "off", WHATSAPP_MODE: "off" });
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
+    const groupSends = () => f.calls.filter((c) => /sendPhoto|sendMessage/.test(c.url) && String(c.body.chat_id).startsWith("-100")).length;
+    try {
+      // Nothing went out recently (earlier tests' posts are moved back a day).
+      await db.query(`UPDATE posts SET published_at = published_at - interval '1 day' WHERE published_at > now() - interval '1 day'`);
+      await collect(cfg, [offer("qa"), offer("qb", { externalId: `qb-${suffix}` })]);
+      const a = await postFor("qa");
+      const b = await postFor("qb");
+
+      await tap(cfg, `a:${a.id}`);
+      assert.equal((await postFor("qa")).status, "published", "empty queue: goes out right away");
+
+      const sent = groupSends();
+      await tap(cfg, `a:${b.id}`);
+      assert.equal((await postFor("qb")).status, "queued");
+      assert.equal(groupSends(), sent, "not sent yet");
+      const edit = f.to("editMessage").filter((c) => c.body.message_id === Number(b.preview_message_id)).at(-1)!.body;
+      assert.match(edit.caption ?? edit.text, /🕒 <b>#\d+ Agendado para \d\d:\d\d<\/b>/);
+      assert.deepEqual(edit.reply_markup.inline_keyboard[0].map((k: { callback_data: string }) => k.callback_data), [`n:${b.id}`, `u:${b.id}`]);
+      const at = (await db.query<{ gap: number }>(
+        `SELECT extract(epoch FROM (b.scheduled_at - a.published_at))::int AS gap FROM posts a, posts b WHERE a.id = $1 AND b.id = $2`,
+        [a.id, b.id],
+      ))[0]!;
+      assert.ok(Math.abs(at.gap - 40 * 60) < 5, `spaced by 40 min (got ${at.gap}s)`);
+
+      await tap(cfg, `u:${b.id}`);
+      assert.equal((await postFor("qb")).status, "pending", "unscheduled");
+      await tap(cfg, `a:${b.id}`);
+      assert.equal((await postFor("qb")).status, "queued");
+
+      // The Worker's 5-minute cron publishes it once its time has come.
+      const handler = createHandler(() => ({ cfg, db }));
+      const cron = async () => {
+        await handler.scheduled({ cron: "*/5 * * * *" }, {}, ctx);
+        await flush();
+      };
+      await cron();
+      assert.equal((await postFor("qb")).status, "queued", "not due yet");
+      await db.query(`UPDATE posts SET scheduled_at = now() - interval '1 minute' WHERE id = $1`, [b.id]);
+      await cron();
+      assert.equal((await postFor("qb")).status, "published");
+      assert.equal(groupSends(), sent + 2, "one message per group");
+      await tap(cfg, `n:${b.id}`);
+      assert.equal(f.to("answerCallbackQuery").at(-1)!.body.text, "Esse post não está na fila.");
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("auto-approves big real discounts with AI text, and leaves the rest for the admin", async () => {
+    const cfg = testConfig({ AUTO_APPROVE_MIN_DISCOUNT: "40", X_MODE: "off", WHATSAPP_MODE: "off" });
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
+    try {
+      const res = await collect(cfg, [offer("auto-big", { discountPct: 50 }), offer("auto-small", { discountPct: 25, priceCents: 7500 })]);
+      assert.equal(res.autoApproved, 1);
+      assert.equal((await postFor("auto-big")).status, "published");
+      assert.equal((await postFor("auto-small")).status, "pending");
+    } finally {
+      f.restore();
+    }
+    const noAi = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", () => new Response("x", { status: 500 })], ["affiliate.shopee", shortLink]]);
+    try {
+      await collect(cfg, [offer("auto-template", { discountPct: 60 })]);
+      assert.equal((await postFor("auto-template")).status, "pending", "template text is never auto-approved");
+    } finally {
+      noAi.restore();
+    }
+  });
+
   it("expires previews nobody answered", async () => {
     const cfg = testConfig();
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", () => new Response("x", { status: 500 })], ["affiliate.shopee", () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } })]]);

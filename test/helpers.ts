@@ -63,6 +63,7 @@ export function testConfig(overrides: Record<string, string> = {}): Config {
     AI_MODEL: "test/model:free",
     MIN_DISCOUNT_PCT: "20",
     POSTS_PER_RUN: "2",
+    QUEUE_INTERVAL_MINUTES: "0",
     ...overrides,
   });
 }

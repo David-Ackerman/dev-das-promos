@@ -36,6 +36,8 @@ export interface PostRow {
   preview_chat_id: string | null;
   preview_message_id: string | number | null;
   preview_has_photo: boolean;
+  /** ISO time a queued post goes out; null when not queued. */
+  scheduled_at: string | null;
   // joined from products
   marketplace: Marketplace;
   title: string;

@@ -10,6 +10,7 @@ import { renderTelegram, renderWhatsApp, renderX, xLength } from "../src/render.
 import type { Candidate } from "../src/types.ts";
 import { brl, discountPct, toCents } from "../src/util.ts";
 import { createHandler } from "../src/http.ts";
+import { formatSlot, nextSlot, parsePostingHours } from "../src/schedule.ts";
 import { mockFetch, testConfig } from "./helpers.ts";
 
 const cand = (over: Partial<Candidate>): Candidate => ({
@@ -72,6 +73,27 @@ describe("render", () => {
     const noLink = renderX(input, "🔗 Link na bio");
     assert.ok(!noLink.includes("http"));
     assert.ok(xLength(noLink) <= 280);
+  });
+});
+
+describe("publishing queue timing", () => {
+  const q = { intervalMinutes: 40, startHour: 8, endHour: 23 };
+  const brt = (iso: string) => new Date(`${iso}-03:00`);
+  it("spaces posts and keeps them inside the posting window", () => {
+    assert.equal(nextSlot(brt("2026-10-15T14:00:00"), null, q).toISOString(), brt("2026-10-15T14:00:00").toISOString());
+    assert.equal(nextSlot(brt("2026-10-15T14:00:00"), brt("2026-10-15T13:50:00"), q).toISOString(), brt("2026-10-15T14:30:00").toISOString());
+    assert.equal(nextSlot(brt("2026-10-15T06:10:00"), null, q).toISOString(), brt("2026-10-15T08:00:00").toISOString(), "before opening");
+    assert.equal(nextSlot(brt("2026-10-15T22:40:00"), brt("2026-10-15T22:30:00"), q).toISOString(), brt("2026-10-16T08:00:00").toISOString(), "after closing");
+    assert.equal(nextSlot(brt("2026-10-15T23:30:00"), null, q).toISOString(), brt("2026-10-16T08:00:00").toISOString());
+  });
+  it("formats slots and reads POSTING_HOURS", () => {
+    const now = brt("2026-10-15T21:00:00");
+    assert.equal(formatSlot(brt("2026-10-15T22:10:00"), now), "22:10");
+    assert.equal(formatSlot(brt("2026-10-16T08:00:00"), now), "amanhã 08:00");
+    assert.equal(formatSlot(brt("2026-10-18T08:00:00"), now), "18/10 08:00");
+    assert.deepEqual(parsePostingHours("9 - 22"), { startHour: 9, endHour: 22 });
+    assert.deepEqual(parsePostingHours(undefined), { startHour: 8, endHour: 23 });
+    assert.throws(() => parsePostingHours("22-8"), /POSTING_HOURS/);
   });
 });
 
@@ -303,7 +325,7 @@ describe("scheduled search", () => {
     const waits: Promise<unknown>[] = [];
     const f = mockFetch(routes);
     try {
-      await handler.scheduled({}, {}, { waitUntil: (p) => void waits.push(p) });
+      await handler.scheduled({ cron: "7 0,12,15,18,21 * * *" }, {}, { waitUntil: (p) => void waits.push(p) });
       await Promise.all(waits);
       return f;
     } finally {

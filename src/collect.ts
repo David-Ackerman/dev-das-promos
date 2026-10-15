@@ -1,4 +1,5 @@
 import { generateCaption } from "./ai.ts";
+import { approvePost } from "./publish.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { previewHtml, retryKeyboard, sendPreview, statusHeader, updatePreview } from "./preview.ts";
@@ -15,7 +16,7 @@ import {
   upsertProduct,
 } from "./repo.ts";
 import { sendText } from "./telegram.ts";
-import type { Candidate, Marketplace } from "./types.ts";
+import type { Candidate, Marketplace, PostRow } from "./types.ts";
 import { errorMessage, escapeHtml, randomCode } from "./util.ts";
 
 export interface CollectDeps {
@@ -99,9 +100,17 @@ async function affiliateUrlFor(cfg: Config, c: Candidate, ref: string): Promise<
 /** After this long in "publishing" the Worker is certainly gone (it gets ~30s). */
 const STUCK_PUBLISHING_MINUTES = 15;
 
+/** Auto-approve rule: big enough discount, real AI text, and not a fake discount. */
+export function shouldAutoApprove(cfg: Config, post: PostRow): boolean {
+  const min = cfg.autoApproveMinDiscountPct;
+  if (min <= 0 || post.discount_pct < min || post.ai_model === "template") return false;
+  return !isFakeDiscount(post.price_cents, post.lowest_seen_cents ?? undefined);
+}
+
 export interface CollectResult {
   found: number;
   previews: number;
+  autoApproved: number;
   expired: number;
   errors: string[];
 }
@@ -113,7 +122,7 @@ export async function runCollect(
   opts: { dryRun?: boolean } = {},
 ): Promise<CollectResult> {
   const log = deps.log ?? console.log;
-  const result: CollectResult = { found: 0, previews: 0, expired: 0, errors: [] };
+  const result: CollectResult = { found: 0, previews: 0, autoApproved: 0, expired: 0, errors: [] };
 
   if (!opts.dryRun) {
     for (const post of await expireStalePending(db, cfg.selection.pendingTtlHours)) {
@@ -183,7 +192,7 @@ export async function runCollect(
             original_price_cents: c.originalPriceCents ?? null, discount_pct: c.discountPct, lowest_seen_cents: null,
             affiliate_url: c.productUrl, caption: caption.caption, caption_short: caption.short, hashtag: caption.hashtag ?? null,
             ai_model: caption.model, preview_chat_id: null, preview_message_id: null,
-            preview_has_photo: false, marketplace: c.marketplace, title: c.title,
+            preview_has_photo: false, scheduled_at: null, marketplace: c.marketplace, title: c.title,
             image_url: c.imageUrl ?? null, product_url: c.productUrl,
           }),
         );
@@ -211,6 +220,10 @@ export async function runCollect(
         throw error;
       }
       result.previews++;
+      if (shouldAutoApprove(cfg, post)) {
+        log(`Auto-approved #${post.id}: ${await approvePost(cfg, db, post.id, { auto: true })}`);
+        result.autoApproved++;
+      }
     } catch (error) {
       result.errors.push(`${c.marketplace} ${c.externalId}: ${errorMessage(error)}`);
       log(`Failed to prepare ${c.externalId}: ${errorMessage(error)}`);

@@ -53,6 +53,15 @@ export function pendingKeyboard(post: PostRow): Keyboard {
   ];
 }
 
+export function queuedKeyboard(post: PostRow): Keyboard {
+  return [
+    [
+      { text: "⚡ Publicar agora", callback_data: `n:${post.id}` },
+      { text: "↩️ Desagendar", callback_data: `u:${post.id}` },
+    ],
+  ];
+}
+
 export function retryKeyboard(post: PostRow): Keyboard {
   return [[{ text: "🔁 Tentar de novo", callback_data: `t:${post.id}` }]];
 }

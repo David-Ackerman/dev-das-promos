@@ -3,7 +3,8 @@ import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { EDIT_HINT, pendingKeyboard, sendPreview, updatePreview } from "./preview.ts";
 import { buildCandidate, parseSubmission, SUBMIT_HELP, type Submission } from "./manual.ts";
-import { approvePost, declinePost, retryPost } from "./publish.ts";
+import { approvePost, declinePost, publishNow, retryPost, unschedulePost } from "./publish.ts";
+import { formatSlot } from "./schedule.ts";
 import {
   createPost,
   dbNow,
@@ -11,6 +12,7 @@ import {
   getPost,
   getStats,
   listPending,
+  listQueued,
   lowestSeenPrice,
   transition,
   updateCaption,
@@ -40,11 +42,13 @@ export interface TgUpdate {
 
 const HELP = `<b>Comandos</b>
 /pendentes — prévias esperando aprovação
+/fila — posts aprovados esperando o horário
 /stats [dias] — cliques e o que mais funciona (padrão 7 dias)
 /buscar — busca promoções agora
 /id — mostra o id deste chat (útil para configurar grupos)
 
-Nas prévias: ✅ publica, ❌ descarta, 🔄 gera outro texto.\nDepois de aprovar, 🐦 abre o X com o post pronto (se X_MODE=share).
+Nas prévias: ✅ aprova (entra na fila e sai no próximo horário livre), ❌ descarta, 🔄 gera outro texto.
+Na fila: ⚡ publica agora, ↩️ volta para as prévias.\nDepois de aprovar, 🐦 abre o X com o post pronto (se X_MODE=share).
 Se algum canal falhar, 🔁 tenta de novo só onde faltou.
 Para escrever o texto você mesmo, responda à prévia com o texto novo.
 
@@ -100,6 +104,9 @@ export function formatStats(s: Awaited<ReturnType<typeof getStats>>): string {
         )
       : ["• nada publicado"]),
     "",
+    ...(s.bestHours.length
+      ? [`<b>Melhores horários</b>: ${s.bestHours.map((h) => `${h.hour}h (${h.clicks})`).join(" · ")}`, ""]
+      : []),
     "<b>Top produtos</b>",
     ...(s.topPosts.length
       ? s.topPosts.map(
@@ -183,8 +190,15 @@ async function handleCallback(cfg: Config, db: Db, cq: NonNullable<TgUpdate["cal
   if (action === "a") {
     const post = await getPost(db, postId);
     if (!post || post.status !== "pending") return answer("Esse post já foi processado.");
-    await answer("Publicando…");
+    await answer(cfg.queue.intervalMinutes > 0 ? "Aprovado ✅" : "Publicando…");
     await approvePost(cfg, db, postId);
+  } else if (action === "n") {
+    const post = await getPost(db, postId);
+    if (!post || post.status !== "queued") return answer("Esse post não está na fila.");
+    await answer("Publicando…");
+    await publishNow(cfg, db, postId);
+  } else if (action === "u") {
+    await answer(await unschedulePost(cfg, db, postId));
   } else if (action === "t") {
     const post = await getPost(db, postId);
     if (!post || (post.status !== "failed" && post.status !== "partial")) return answer("Nada para reenviar.");
@@ -264,6 +278,20 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
         pending.length
           ? `⏳ <b>${pending.length} pendente(s)</b>\n${pending.map((p) => `#${p.id} ${escapeHtml(truncate(p.title, 60))}`).join("\n")}\n\n${EDIT_HINT}`
           : "Nada pendente 🎉",
+      );
+      return;
+    }
+    case "/fila": {
+      const queued = await listQueued(db);
+      const now = new Date();
+      await sendText(
+        token,
+        chatId,
+        queued.length
+          ? `🕒 <b>${queued.length} na fila</b>\n${queued
+              .map((p) => `${p.scheduled_at ? formatSlot(new Date(p.scheduled_at), now) : "—"} · #${p.id} ${escapeHtml(truncate(p.title, 50))}`)
+              .join("\n")}`
+          : "Fila vazia.",
       );
       return;
     }
