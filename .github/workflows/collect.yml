@@ -1,12 +1,10 @@
 name: Collect deals
 
 # Finds deals and sends previews to your Telegram bot for approval.
-# Times are UTC: 12,15,18,21,00 UTC = 9h, 12h, 15h, 18h, 21h in Brasília.
-# GitHub may start scheduled runs a few minutes late; that's normal.
-# The bot's /buscar command also triggers this workflow.
+# Started on time by the Cloudflare Worker's cron (see wrangler.toml) and by
+# the bot's /buscar command. There's no GitHub `schedule:` here on purpose:
+# GitHub ran it hours late or skipped it. Both need GH_DISPATCH_TOKEN + GH_REPO.
 on:
-  schedule:
-    - cron: "7 0,12,15,18,21 * * *"
   workflow_dispatch: {}
 
 permissions:

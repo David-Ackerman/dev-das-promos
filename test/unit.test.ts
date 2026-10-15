@@ -9,6 +9,7 @@ import { oauthHeader } from "../src/publishers/x.ts";
 import { renderTelegram, renderWhatsApp, renderX, xLength } from "../src/render.ts";
 import type { Candidate } from "../src/types.ts";
 import { brl, discountPct, toCents } from "../src/util.ts";
+import { createHandler } from "../src/http.ts";
 import { mockFetch, testConfig } from "./helpers.ts";
 
 const cand = (over: Partial<Candidate>): Candidate => ({
@@ -168,6 +169,39 @@ describe("x oauth", () => {
     // Same inputs -> same signature (deterministic HMAC).
     const again = await oauthHeader("POST", "https://api.x.com/2/tweets", { apiKey: "ck", apiSecret: "cs", accessToken: "at", accessTokenSecret: "ats" }, "nonce", "1700000000");
     assert.equal(h, again);
+  });
+});
+
+describe("scheduled search", () => {
+  const run = async (overrides: Record<string, string>, routes: Parameters<typeof mockFetch>[0]) => {
+    const cfg = testConfig(overrides);
+    const handler = createHandler(() => ({ cfg, db: { query: async () => [] } }));
+    const waits: Promise<unknown>[] = [];
+    const f = mockFetch(routes);
+    try {
+      await handler.scheduled({}, {}, { waitUntil: (p) => void waits.push(p) });
+      await Promise.all(waits);
+      return f;
+    } finally {
+      f.restore();
+    }
+  };
+  it("starts the Collect workflow through GitHub's API", async () => {
+    const f = await run({ GH_DISPATCH_TOKEN: "ghp_x", GH_REPO: "me/repo" }, [["api.github.com", () => new Response(null, { status: 204 })]]);
+    const call = f.to("api.github.com")[0]!;
+    assert.equal(call.url, "https://api.github.com/repos/me/repo/actions/workflows/collect.yml/dispatches");
+    assert.equal(call.headers.authorization, "Bearer ghp_x");
+    assert.deepEqual(call.body, { ref: "main" });
+    assert.equal(f.to("api.telegram.org").length, 0, "no message when it worked");
+  });
+  it("warns the admin when it can't start the search", async () => {
+    const missing = await run({}, [["api.telegram.org", () => ({ ok: true, result: { message_id: 1 } })]]);
+    assert.match(missing.to("sendMessage")[0]!.body.text, /Busca agendada: Configure GH_DISPATCH_TOKEN/);
+    const denied = await run({ GH_DISPATCH_TOKEN: "bad", GH_REPO: "me/repo" }, [
+      ["api.github.com", () => new Response("{}", { status: 401 })],
+      ["api.telegram.org", () => ({ ok: true, result: { message_id: 1 } })],
+    ]);
+    assert.match(denied.to("sendMessage")[0]!.body.text, /HTTP 401/);
   });
 });
 

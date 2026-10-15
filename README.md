@@ -3,7 +3,7 @@
 Finds Amazon and Shopee deals a few times a day and turns them into posts with your affiliate links and a short, funny AI-written text. It sends each post to **you on Telegram for approval**. When you tap ✅, it publishes to your **Telegram groups**, **WhatsApp** and **X**, and every link goes through our own redirect so we can see **which products, stores and channels get clicks**.
 
 ```
-GitHub Actions (cron, 5x/day)                Cloudflare Worker (always on, free)
+GitHub Actions (started 5x/day by the Worker) Cloudflare Worker (always on, free)
  ├─ fetch Shopee / Amazon deals               ├─ /telegram/webhook  ✅ ❌ 🔄 buttons, /stats …
  ├─ pick the best (discount, sales, no repeats)│     └─ on ✅: Telegram groups, WhatsApp, X
  ├─ affiliate link + AI text                  ├─ /go/<code>  log click → 302 to affiliate link
@@ -11,6 +11,8 @@ GitHub Actions (cron, 5x/day)                Cloudflare Worker (always on, free)
                      \                       /
                       Neon Postgres (free, 1 GB) ← daily backup to GitHub
 ```
+
+The Worker's cron (in `wrangler.toml`) starts the **Collect deals** workflow at the scheduled times. GitHub's own scheduler isn't used because it ran hours late or skipped runs entirely.
 
 Everything runs on free plans: **GitHub Actions**, **Cloudflare Workers** and **Neon Postgres**. There are no servers to look after. To deploy, you push to `main`.
 
@@ -50,16 +52,19 @@ Neon's free plan never deletes your data. If you go over a limit, it pauses inst
 4. The `TELEGRAM_ADMIN_CHAT_ID` and `TELEGRAM_GROUP_IDS` values come from the bot's `/id` command, which only works after the first deploy (step 5). For now you can put a placeholder like `0` in `TELEGRAM_ADMIN_CHAT_ID`, then update both and redeploy.
 
 ### 4. GitHub settings
-In the repo, go to **Settings → Secrets and variables → Actions** and add:
+In the repo, go to **Settings → Environments → production** (create it if it doesn't exist) and add:
 
 | Secrets | Variables |
 | --- | --- |
 | `DATABASE_URL` | `PUBLIC_BASE_URL` (after the first deploy) |
+| `GH_DISPATCH_TOKEN` (see below) | `GH_REPO` = `owner/repo` |
 | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_ADMIN_CHAT_ID`, `TELEGRAM_GROUP_IDS` |
 | `TELEGRAM_WEBHOOK_SECRET` | `SHOPEE_APP_ID`, `SHOPEE_KEYWORDS` |
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | `AMAZON_CLIENT_ID`, `AMAZON_PARTNER_TAG`, `AMAZON_KEYWORDS` |
 | `SHOPEE_APP_SECRET`, `AMAZON_CLIENT_SECRET` | `AI_MODEL`, `WHATSAPP_MODE`, `X_MODE`, `MIN_DISCOUNT_PCT`… |
 | `AI_API_KEY` (and X/WhatsApp keys if used) | |
+
+`GH_DISPATCH_TOKEN` is what lets the Worker start the deal search on schedule and from `/buscar`. Create it at **GitHub → Settings → Developer settings → Fine-grained tokens**: only this repository, permission **Actions: Read and write**. Without it, no search runs on its own, and the bot warns you at each scheduled time.
 
 Every setting is explained in [`.env.example`](.env.example). Any name you add here is picked up automatically, so you never need to edit a workflow.
 

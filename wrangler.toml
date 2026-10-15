@@ -6,5 +6,10 @@ main = "src/worker.ts"
 compatibility_date = "2025-09-01"
 workers_dev = true
 
+# Starts the "Collect deals" workflow (needs GH_DISPATCH_TOKEN + GH_REPO).
+# UTC: 12,15,18,21,00 = 9h, 12h, 15h, 18h, 21h in Brasília.
+[triggers]
+crons = ["7 0,12,15,18,21 * * *"]
+
 [observability]
 enabled = true

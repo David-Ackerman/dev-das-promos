@@ -94,9 +94,10 @@ export function formatStats(s: Awaited<ReturnType<typeof getStats>>): string {
   return lines.join("\n");
 }
 
-async function triggerCollect(cfg: Config): Promise<string> {
+/** Starts the "Collect deals" GitHub workflow. Used by /buscar and by the Worker's cron. */
+export async function triggerCollect(cfg: Config): Promise<{ ok: boolean; message: string }> {
   const gh = cfg.githubDispatch;
-  if (!gh) return "Configure GH_DISPATCH_TOKEN e GH_REPO para usar /buscar.";
+  if (!gh) return { ok: false, message: "Configure GH_DISPATCH_TOKEN e GH_REPO para buscar promoções pelo bot." };
   const res = await fetch(
     `https://api.github.com/repos/${gh.repo}/actions/workflows/${gh.workflow}/dispatches`,
     {
@@ -110,7 +111,9 @@ async function triggerCollect(cfg: Config): Promise<string> {
       body: JSON.stringify({ ref: gh.ref }),
     },
   );
-  return res.ok ? "🔎 Buscando promoções… as prévias chegam em 1–2 minutos." : `GitHub respondeu HTTP ${res.status}`;
+  return res.ok
+    ? { ok: true, message: "🔎 Buscando promoções… as prévias chegam em 1–2 minutos." }
+    : { ok: false, message: `Não consegui iniciar a busca: GitHub respondeu HTTP ${res.status}` };
 }
 
 async function handleCallback(cfg: Config, db: Db, cq: NonNullable<TgUpdate["callback_query"]>) {
@@ -198,7 +201,7 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
       return;
     }
     case "/buscar":
-      await sendText(token, chatId, await triggerCollect(cfg));
+      await sendText(token, chatId, (await triggerCollect(cfg)).message);
       return;
   }
 }

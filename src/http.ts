@@ -1,8 +1,9 @@
-import { handleUpdate, type TgUpdate } from "./bot.ts";
+import { handleUpdate, type TgUpdate, triggerCollect } from "./bot.ts";
 import type { Config, Env } from "./config.ts";
 import type { Db } from "./db.ts";
 import { goUrl } from "./publish.ts";
 import { getPost, recordClick, resolveLink } from "./repo.ts";
+import { sendText } from "./telegram.ts";
 import { whatsappShareUrl, xShareUrl } from "./share.ts";
 import { isValidCode, sha256Hex } from "./util.ts";
 
@@ -13,6 +14,8 @@ import { isValidCode, sha256Hex } from "./util.ts";
  *   GET  /x/:code           opens X with the post text ready to send
  *   POST /telegram/webhook  your bot's buttons and commands
  *   GET  /health
+ * Plus a cron (wrangler.toml) that starts the "Collect deals" workflow on time,
+ * because GitHub's own schedule runs hours late or not at all.
  */
 interface Ctx {
   waitUntil(promise: Promise<unknown>): void;
@@ -83,6 +86,19 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
       }
 
       return new Response("Not found", { status: 404 });
+    },
+
+    async scheduled(_event: unknown, env: Env, ctx: Ctx): Promise<void> {
+      const { cfg } = getDeps(env);
+      ctx.waitUntil(
+        (async () => {
+          const result = await triggerCollect(cfg).catch((e: unknown) => ({ ok: false, message: String(e) }));
+          if (!result.ok) {
+            console.error("scheduled collect failed", result.message);
+            await sendText(cfg.telegram.botToken, cfg.telegram.adminChatId, `⚠️ Busca agendada: ${result.message}`).catch(() => {});
+          }
+        })(),
+      );
     },
   };
 }
