@@ -47,7 +47,8 @@ export interface Config {
     keywords: string[];
     sortType: number;
   };
-  ai: { baseUrl: string; apiKey?: string; model?: string };
+  /** `models` are tried in order: free models are often busy (HTTP 429). */
+  ai: { baseUrl: string; apiKey?: string; models: string[] };
   selection: {
     postsPerRun: number;
     minDiscountPct: number;
@@ -110,7 +111,7 @@ export function loadConfig(env: Env): Config {
     ai: {
       baseUrl: (env.AI_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, ""),
       apiKey: env.AI_API_KEY?.trim() || env.OPENROUTER_API_KEY?.trim() || undefined,
-      model: env.AI_MODEL?.trim() || env.OPENROUTER_MODEL?.trim() || undefined,
+      models: list(env.AI_MODEL || env.OPENROUTER_MODEL),
     },
     selection: {
       postsPerRun: int(env.POSTS_PER_RUN, 2),

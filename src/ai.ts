@@ -1,6 +1,6 @@
 import type { Config } from "./config.ts";
 import type { Candidate } from "./types.ts";
-import { brl, errorMessage, truncate } from "./util.ts";
+import { brl, errorMessage, sleep, truncate } from "./util.ts";
 
 export interface Caption {
   caption: string; // Telegram / WhatsApp
@@ -85,38 +85,68 @@ export function parseAiJson(raw: string): { texto: string; tweet: string } {
   return { texto, tweet };
 }
 
-export async function generateCaption(cfg: Config["ai"], candidate: Candidate, avoid?: string): Promise<Caption> {
-  if (!cfg.apiKey || !cfg.model) return templateCaption(candidate, Date.now(), avoid);
-  try {
-    const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${cfg.apiKey}`,
-        "X-Title": "das-promos",
-      },
-      body: JSON.stringify({
-        model: cfg.model,
-        temperature: 0.9,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: facts(candidate) },
-        ],
-      }),
-      signal: AbortSignal.timeout(25_000),
-    });
-    const body = (await res.json().catch(() => ({}))) as {
-      choices?: { message?: { content?: string } }[];
-      error?: { message?: string };
-    };
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${body.error?.message ?? ""}`);
-    const parsed = parseAiJson(body.choices?.[0]?.message?.content ?? "");
-    const caption = cleanAiText(parsed.texto, 300);
-    const short = cleanAiText(parsed.tweet, 150);
-    if (!caption) throw new Error("AI text empty after cleanup");
-    return { caption, short: short || truncate(caption, 150), model: cfg.model };
-  } catch (error) {
-    console.warn(`AI caption failed, using template: ${errorMessage(error)}`);
-    return { ...templateCaption(candidate, Date.now(), avoid), error: errorMessage(error) };
+/** Whole budget for one caption. The Worker (🔄 button) is cut off ~30s after answering Telegram. */
+const AI_BUDGET_MS = 22_000;
+const RETRY_AFTER_429_MS = 1_500;
+
+/** HTTP 429 = the model is busy right now; worth a short wait, then another model. */
+class BusyError extends Error {}
+
+async function askModel(cfg: Config["ai"], model: string, candidate: Candidate, timeoutMs: number): Promise<Caption> {
+  const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${cfg.apiKey}`,
+      "X-Title": "das-promos",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.9,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: facts(candidate) },
+      ],
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const body = (await res.json().catch(() => ({}))) as {
+    choices?: { message?: { content?: string } }[];
+    error?: { message?: string };
+  };
+  if (!res.ok) {
+    const msg = `${model}: HTTP ${res.status} ${body.error?.message ?? ""}`.trim();
+    throw res.status === 429 ? new BusyError(msg) : new Error(msg);
   }
+  const parsed = parseAiJson(body.choices?.[0]?.message?.content ?? "");
+  const caption = cleanAiText(parsed.texto, 300);
+  const short = cleanAiText(parsed.tweet, 150);
+  if (!caption) throw new Error(`${model}: AI text empty after cleanup`);
+  return { caption, short: short || truncate(caption, 150), model };
+}
+
+/**
+ * Tries each model in AI_MODEL in order (a busy one gets one quick retry), all
+ * inside AI_BUDGET_MS. If none answers, a template line is used and `error` says why.
+ */
+export async function generateCaption(cfg: Config["ai"], candidate: Candidate, avoid?: string): Promise<Caption> {
+  if (!cfg.apiKey || !cfg.models.length) return templateCaption(candidate, Date.now(), avoid);
+  const deadline = Date.now() + AI_BUDGET_MS;
+  const errors: string[] = [];
+  for (const model of cfg.models) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const left = deadline - Date.now();
+      if (left < 2_000) break;
+      try {
+        return await askModel(cfg, model, candidate, Math.min(left, 15_000));
+      } catch (error) {
+        errors.push(errorMessage(error));
+        if (!(error instanceof BusyError) || attempt === 2) break;
+        await sleep(Math.min(RETRY_AFTER_429_MS, Math.max(0, deadline - Date.now() - 2_000)));
+      }
+    }
+  }
+  const error = errors.join(" | ") || "AI time budget exhausted";
+  console.warn(`AI caption failed, using template: ${error}`);
+  return { ...templateCaption(candidate, Date.now(), avoid), error };
 }

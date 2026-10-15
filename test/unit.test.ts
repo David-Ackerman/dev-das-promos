@@ -149,6 +149,40 @@ describe("ai", () => {
   });
 });
 
+describe("ai fallback", () => {
+  const ok = { choices: [{ message: { content: '{"texto":"Oi","tweet":"Oi"}' } }] };
+  it("retries a busy model once, then moves to the next one", async () => {
+    const tried: string[] = [];
+    const f = mockFetch([["chat/completions", (c) => {
+      tried.push(c.body.model);
+      return c.body.model === "busy:free" ? new Response(JSON.stringify({ error: { message: "Provider returned error" } }), { status: 429 }) : ok;
+    }]]);
+    try {
+      const c = await generateCaption(testConfig({ AI_MODEL: "busy:free, spare:free" }).ai, cand({}));
+      assert.equal(c.model, "spare:free");
+      assert.equal(c.error, undefined);
+      assert.deepEqual(tried, ["busy:free", "busy:free", "spare:free"]);
+    } finally {
+      f.restore();
+    }
+  });
+  it("skips a broken model without retrying and reports every failure", async () => {
+    const tried: string[] = [];
+    const f = mockFetch([["chat/completions", (c) => {
+      tried.push(c.body.model);
+      return new Response(JSON.stringify({ error: { message: "nope" } }), { status: 403 });
+    }]]);
+    try {
+      const c = await generateCaption(testConfig({ AI_MODEL: "a:free,b:free" }).ai, cand({}));
+      assert.equal(c.model, "template");
+      assert.deepEqual(tried, ["a:free", "b:free"]);
+      assert.match(c.error!, /a:free: HTTP 403 nope \| b:free: HTTP 403 nope/);
+    } finally {
+      f.restore();
+    }
+  });
+});
+
 describe("templates", () => {
   it("never repeats the text it was asked to avoid", () => {
     const current = templateCaption({ title: "x" }, 0).caption;
