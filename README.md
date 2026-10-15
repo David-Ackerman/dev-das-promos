@@ -22,7 +22,7 @@ Everything runs on free plans: **GitHub Actions**, **Cloudflare Workers** and **
    - **❌ Recusar** discards it. The product won't come back for 14 days.
    - **🔄 Outro texto** asks the AI for a new joke.
    - **Reply to the preview with your own text** and it replaces the AI text.
-3. After you approve, the preview shows a **📲 Enviar no WhatsApp** button. It opens WhatsApp with the post already written, so you just pick the groups (see the WhatsApp section below for why).
+3. After you approve, the ✅ ❌ 🔄 buttons disappear, so a post can't be sent twice. The preview then shows **📲 Enviar no WhatsApp** and **🐦 Postar no X**. Each one opens the app with the post already written and its own tracked link, so you just send it (see the WhatsApp and X sections below for why).
 4. If a channel fails (the bot was removed from a group, X is out of credits…), the preview says which one and shows **🔁 Tentar de novo**. It sends only where it's still missing, so nobody gets the post twice.
 5. If you don't answer a preview within 12h, it expires, because prices change.
 
@@ -85,6 +85,7 @@ The last two are unofficial and WhatsApp can ban numbers that look like spam. If
 
 ## X / Twitter
 X dropped its free API in 2026. It's now pay-per-use, and **posts with a link cost a lot more** than plain text posts.
+- `X_MODE=share` (default) is free. After you approve, tap **🐦 Postar no X**: it opens X with the joke, product, price and tracked link ready, and you post it yourself.
 - `X_MODE=no-link` posts the joke, product and price plus "🔗 Link na bio". This is the cheap option.
 - `X_MODE=link` puts the tracked link in the post. It's more expensive per post.
 - `X_MODE=off` disables X.
@@ -131,7 +132,7 @@ src/
   http.ts           /go, /wa, /telegram/webhook routes; worker.ts wires Neon
   providers/        amazon.ts, shopee.ts
   publishers/       whatsapp.ts, x.ts
-  ai.ts render.ts preview.ts repo.ts telegram.ts config.ts
+  ai.ts render.ts preview.ts share.ts repo.ts telegram.ts config.ts
   jobs/             CLI entry points used by npm scripts and workflows
 migrations/         SQL, applied once each, never rolled back
 .github/workflows/  deploy (push to main), collect (cron), backup (daily), ci (PRs)

@@ -6,6 +6,8 @@ export interface Caption {
   caption: string; // Telegram / WhatsApp
   short: string; // X
   model: string; // "template" when AI wasn't used
+  /** Why the AI wasn't used, when it was configured but failed. */
+  error?: string;
 }
 
 /**
@@ -35,8 +37,14 @@ const TEMPLATES = [
   "Spoiler: seu eu do futuro agradece essa compra ✨",
 ];
 
-export function templateCaption(candidate: Pick<Candidate, "title">, seed = Date.now()): Caption {
-  const line = TEMPLATES[Math.abs(seed) % TEMPLATES.length] as string;
+/** A template line; `avoid` (the current text) is skipped so 🔄 always changes something. */
+export function templateCaption(
+  candidate: Pick<Candidate, "title">,
+  seed = Date.now(),
+  avoid?: string,
+): Caption {
+  const options = TEMPLATES.filter((t) => t !== avoid);
+  const line = options[Math.abs(seed) % options.length] as string;
   return { caption: line, short: line, model: "template" };
 }
 
@@ -77,8 +85,8 @@ export function parseAiJson(raw: string): { texto: string; tweet: string } {
   return { texto, tweet };
 }
 
-export async function generateCaption(cfg: Config["ai"], candidate: Candidate): Promise<Caption> {
-  if (!cfg.apiKey || !cfg.model) return templateCaption(candidate);
+export async function generateCaption(cfg: Config["ai"], candidate: Candidate, avoid?: string): Promise<Caption> {
+  if (!cfg.apiKey || !cfg.model) return templateCaption(candidate, Date.now(), avoid);
   try {
     const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
       method: "POST",
@@ -109,6 +117,6 @@ export async function generateCaption(cfg: Config["ai"], candidate: Candidate): 
     return { caption, short: short || truncate(caption, 150), model: cfg.model };
   } catch (error) {
     console.warn(`AI caption failed, using template: ${errorMessage(error)}`);
-    return templateCaption(candidate);
+    return { ...templateCaption(candidate, Date.now(), avoid), error: errorMessage(error) };
   }
 }

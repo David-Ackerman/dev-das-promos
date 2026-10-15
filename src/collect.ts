@@ -129,10 +129,12 @@ export async function runCollect(
   });
   log(`Picked ${picks.length} of ${candidates.length}`);
 
+  let aiError = "";
   for (const c of picks) {
     try {
       const ref = randomCode(10);
       const caption = await generateCaption(cfg.ai, c);
+      aiError ||= caption.error ?? "";
       if (opts.dryRun) {
         log(`\n--- [dry-run] ${c.marketplace} ${c.externalId} score=${score(c).toFixed(1)} ---`);
         log(
@@ -173,6 +175,8 @@ export async function runCollect(
       log(`Failed to prepare ${c.externalId}: ${errorMessage(error)}`);
     }
   }
+
+  if (aiError) result.errors.push(`IA falhou, usei texto padrão: ${aiError}`);
 
   if (!opts.dryRun && (result.errors.length || result.previews === 0)) {
     const msg = [

@@ -97,7 +97,11 @@ export async function editPost(
       });
     }
   } catch (error) {
-    if (!String((error as Error).message).includes("message is not modified")) throw error;
+    if (String((error as Error).message).includes("message is not modified")) return;
+    // Text edit refused (too long, bad HTML…): still put the right buttons on it, so a
+    // published or declined preview never keeps ✅ / 🔄. Then report the original error.
+    await tg(token, "editMessageReplyMarkup", { chat_id: chatId, message_id: messageId, reply_markup }).catch(() => {});
+    throw error;
   }
 }
 

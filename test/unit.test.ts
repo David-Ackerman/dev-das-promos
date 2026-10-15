@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { cleanAiText, generateCaption, parseAiJson } from "../src/ai.ts";
+import { cleanAiText, generateCaption, parseAiJson, templateCaption } from "../src/ai.ts";
 import { pickCandidates } from "../src/collect.ts";
 import { amazonItemToCandidate, fetchAmazonCandidates } from "../src/providers/amazon.ts";
 import { shopeeNodeToCandidate } from "../src/providers/shopee.ts";
@@ -141,9 +141,17 @@ describe("ai", () => {
       const c = await generateCaption(testConfig().ai, cand({}));
       assert.equal(c.model, "template");
       assert.ok(c.caption.length > 5);
+      assert.match(c.error ?? "", /HTTP 500/);
     } finally {
       f.restore();
     }
+  });
+});
+
+describe("templates", () => {
+  it("never repeats the text it was asked to avoid", () => {
+    const current = templateCaption({ title: "x" }, 0).caption;
+    for (let seed = 0; seed < 20; seed++) assert.notEqual(templateCaption({ title: "x" }, seed, current).caption, current);
   });
 });
 

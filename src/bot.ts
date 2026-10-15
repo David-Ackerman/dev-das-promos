@@ -30,7 +30,7 @@ const HELP = `<b>Comandos</b>
 /buscar — busca promoções agora
 /id — mostra o id deste chat (útil para configurar grupos)
 
-Nas prévias: ✅ publica, ❌ descarta, 🔄 gera outro texto.
+Nas prévias: ✅ publica, ❌ descarta, 🔄 gera outro texto.\nDepois de aprovar, 🐦 abre o X com o post pronto (se X_MODE=share).
 Se algum canal falhar, 🔁 tenta de novo só onde faltou.
 Para escrever o texto você mesmo, responda à prévia com o texto novo.`;
 
@@ -47,10 +47,17 @@ export async function regenerateCaption(cfg: Config, db: Db, post: PostRow): Pro
     priceCents: post.price_cents,
     originalPriceCents: post.original_price_cents ?? undefined,
     discountPct: post.discount_pct,
-  });
+  }, post.caption);
   await updateCaption(db, post.id, caption.caption, caption.short, caption.model);
   const fresh = (await getPost(db, post.id)) as PostRow;
   await updatePreview(cfg, fresh, undefined, pendingKeyboard(fresh));
+  if (caption.error) {
+    await sendText(
+      cfg.telegram.botToken,
+      cfg.telegram.adminChatId,
+      `⚠️ A IA falhou, usei um texto padrão. Confira AI_MODEL / AI_API_KEY.\n<i>${escapeHtml(truncate(caption.error, 300))}</i>`,
+    );
+  }
 }
 
 export function formatStats(s: Awaited<ReturnType<typeof getStats>>): string {

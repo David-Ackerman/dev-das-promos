@@ -6,7 +6,7 @@
 export type Env = Record<string, string | undefined>;
 
 export type WhatsAppMode = "share" | "evolution" | "zapi" | "off";
-export type XMode = "off" | "link" | "no-link";
+export type XMode = "share" | "off" | "link" | "no-link";
 
 export interface Config {
   databaseUrl: string;
@@ -87,9 +87,9 @@ export function loadConfig(env: Env): Config {
   if (!["share", "evolution", "zapi", "off"].includes(waMode)) {
     throw new Error(`WHATSAPP_MODE must be share | evolution | zapi | off (got "${waMode}")`);
   }
-  const xMode = (env.X_MODE?.trim() || "off") as XMode;
-  if (!["off", "link", "no-link"].includes(xMode)) {
-    throw new Error(`X_MODE must be off | link | no-link (got "${xMode}")`);
+  const xMode = (env.X_MODE?.trim() || "share") as XMode;
+  if (!["share", "off", "link", "no-link"].includes(xMode)) {
+    throw new Error(`X_MODE must be share | off | link | no-link (got "${xMode}")`);
   }
 
   const config: Config = {
@@ -153,7 +153,7 @@ export function loadConfig(env: Env): Config {
       clientToken: req(env, "ZAPI_CLIENT_TOKEN"),
     };
   }
-  if (xMode !== "off") {
+  if (xMode === "link" || xMode === "no-link") {
     config.x.credentials = {
       apiKey: req(env, "X_API_KEY"),
       apiSecret: req(env, "X_API_SECRET"),

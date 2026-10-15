@@ -1,17 +1,16 @@
 import { handleUpdate, type TgUpdate } from "./bot.ts";
 import type { Config, Env } from "./config.ts";
 import type { Db } from "./db.ts";
-import { renderInput } from "./preview.ts";
 import { goUrl } from "./publish.ts";
-import { renderWhatsApp } from "./render.ts";
-import { shareUrl } from "./publishers/whatsapp.ts";
 import { getPost, recordClick, resolveLink } from "./repo.ts";
+import { whatsappShareUrl, xShareUrl } from "./share.ts";
 import { isValidCode, sha256Hex } from "./util.ts";
 
 /**
  * Cloudflare Worker (free plan). Routes:
  *   GET  /go/:code          tracked redirect to the affiliate link (logs the click)
  *   GET  /wa/:code          opens WhatsApp with the post text ready to send
+ *   GET  /x/:code           opens X with the post text ready to send
  *   POST /telegram/webhook  your bot's buttons and commands
  *   GET  /health
  */
@@ -56,17 +55,18 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
         return Response.redirect(link.affiliate_url, 302);
       }
 
-      const wa = path.match(/^\/wa\/([^/]+)$/);
-      if (wa && request.method === "GET") {
-        const code = wa[1] as string;
+      const share = path.match(/^\/(wa|x)\/([^/]+)$/);
+      if (share && request.method === "GET") {
+        const channel = share[1] === "wa" ? "whatsapp" : "x";
+        const code = share[2] as string;
         if (!isValidCode(code)) return new Response("Not found", { status: 404 });
         const { db, cfg } = getDeps(env);
         const link = await resolveLink(db, code);
-        if (!link || link.channel !== "whatsapp") return new Response("Not found", { status: 404 });
+        if (!link || link.channel !== channel) return new Response("Not found", { status: 404 });
         const post = await getPost(db, link.post_id);
         if (!post) return new Response("Not found", { status: 404 });
-        const text = renderWhatsApp(renderInput(cfg, post, goUrl(cfg, code)));
-        return Response.redirect(shareUrl(text), 302);
+        const url = channel === "whatsapp" ? whatsappShareUrl(cfg, post, goUrl(cfg, code)) : xShareUrl(cfg, post, goUrl(cfg, code));
+        return Response.redirect(url, 302);
       }
 
       if (path === "/telegram/webhook" && request.method === "POST") {

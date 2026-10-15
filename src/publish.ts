@@ -83,7 +83,14 @@ export async function publishEverywhere(
   }
 
   // X
-  if (cfg.x.mode !== "off" && cfg.x.credentials && done.has("x:")) {
+  if (cfg.x.mode === "share") {
+    // Posting by hand is free; the API charges per post. The button opens X with the post written.
+    const code = await getOrCreateLink(db, post.id, "x");
+    if (!done.has("x:")) {
+      await recordPublication(db, { postId: post.id, channel: "x", target: "", status: "manual" });
+    }
+    result.manual.push([{ text: "🐦 Postar no X", url: `${cfg.publicBaseUrl}/x/${code}` }]);
+  } else if (cfg.x.mode !== "off" && cfg.x.credentials && done.has("x:")) {
     result.ok.push("X");
   } else if (cfg.x.mode !== "off" && cfg.x.credentials) {
     try {
@@ -123,7 +130,10 @@ export async function retryPost(cfg: Config, db: Db, postId: number): Promise<st
 /** The post is already in "publishing" (so nobody else is sending it): send and record the outcome. */
 async function finishPublishing(cfg: Config, db: Db, postId: number): Promise<string> {
   const post = (await getPost(db, postId)) as PostRow;
-  await updatePreview(cfg, post, statusHeader(post, "⏳", "Publicando…"), []);
+  // Buttons come off first so nobody can tap ✅ / 🔄 again; this edit failing must not stop the publish.
+  await updatePreview(cfg, post, statusHeader(post, "⏳", "Publicando…"), []).catch((e) =>
+    console.error("preview edit failed", errorMessage(e)),
+  );
 
   let result: PublishResult;
   try {
@@ -145,7 +155,7 @@ async function finishPublishing(cfg: Config, db: Db, postId: number): Promise<st
 
   const lines = [
     result.ok.length ? `Enviado: ${result.ok.join(", ")}` : "",
-    result.manual.length ? "WhatsApp: toque no botão abaixo e escolha os grupos" : "",
+    result.manual.length ? "Toque nos botões abaixo para postar no WhatsApp / X" : "",
     result.failed.length ? `Falhou: ${result.failed.join(" | ")}` : "",
   ].filter(Boolean);
   const emoji = status === "published" ? "✅" : status === "partial" ? "⚠️" : "❌";

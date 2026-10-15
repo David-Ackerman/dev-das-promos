@@ -237,7 +237,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
   });
 
   it("does not call a post published when no channel is configured", async () => {
-    const cfg = testConfig({ TELEGRAM_GROUP_IDS: "", WHATSAPP_MODE: "off" });
+    const cfg = testConfig({ TELEGRAM_GROUP_IDS: "", WHATSAPP_MODE: "off", X_MODE: "off" });
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
     try {
       await collect(cfg, [offer("nochannel")]);
@@ -350,6 +350,85 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       const stats = f.to("sendMessage").at(-1)!.body.text as string;
       assert.match(stats, /Por grupo/);
       assert.ok(stats.includes(`telegram ${link!.target}: `), stats);
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("gives share buttons for WhatsApp and X after approval, and never ✅ / 🔄 again", async () => {
+    const cfg = testConfig();
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
+    try {
+      await collect(cfg, [offer("share")]);
+      const post = await postFor("share");
+      await tap(cfg, `a:${post.id}`);
+      assert.equal((await postFor("share")).status, "published");
+      const edits = f.to("editMessage").filter((c) => c.body.message_id === Number(post.preview_message_id));
+      assert.deepEqual(edits[0]!.body.reply_markup.inline_keyboard, [], "buttons come off before publishing");
+      const kb = edits.at(-1)!.body.reply_markup.inline_keyboard;
+      assert.deepEqual(kb.map((row: { text: string }[]) => row[0]!.text), ["📲 Enviar no WhatsApp", "🐦 Postar no X"]);
+      assert.equal(f.to("api.x.com").length, 0, "share mode never calls the paid API");
+
+      const handler = createHandler(() => ({ cfg, db }));
+      const xUrl: string = kb[1][0].url;
+      const x = await handler.fetch(new Request(xUrl.replace(cfg.publicBaseUrl, "https://w")), {}, ctx);
+      assert.equal(x.status, 302);
+      const intent = new URL(x.headers.get("location")!);
+      assert.equal(intent.origin + intent.pathname, "https://x.com/intent/post");
+      const text = intent.searchParams.get("text")!;
+      assert.match(text, /Tweet da IA/);
+      assert.match(text, /R\$\s50,00 \(-50%\)/);
+      const code = xUrl.split("/").pop()!;
+      assert.ok(text.includes(`/go/${code}`), "X gets its own tracked link");
+      const waCode = (kb[0][0].url as string).split("/").pop()!;
+      assert.equal((await handler.fetch(new Request(`https://w/x/${waCode}`), {}, ctx)).status, 404);
+
+      await tap(cfg, `r:${post.id}`);
+      assert.equal(f.to("answerCallbackQuery").at(-1)!.body.text, "Esse post já foi processado.");
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("always changes the text on 🔄 and tells the admin when the AI fails", async () => {
+    const cfg = testConfig();
+    const f = mockFetch([
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", () => new Response(JSON.stringify({ error: { message: "model only available on agentic harnesses" } }), { status: 403 })],
+      ["affiliate.shopee", shortLink],
+    ]);
+    try {
+      const res = await collect(cfg, [offer("regen")]);
+      assert.ok(res.errors.some((e) => /IA falhou.*agentic harnesses/.test(e)), "collect reports the AI error");
+      const post = await postFor("regen");
+      const caption = async () => (await db.query<{ caption: string }>(`SELECT caption FROM posts WHERE id = $1`, [post.id]))[0]!.caption;
+      for (let i = 0; i < 8; i++) {
+        const before = await caption();
+        await tap(cfg, `r:${post.id}`);
+        assert.notEqual(await caption(), before, "🔄 never keeps the same text");
+      }
+      assert.match(f.to("sendMessage").at(-1)!.body.text, /A IA falhou.*agentic harnesses/s);
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("still removes the buttons and publishes when Telegram refuses the preview edit", async () => {
+    const cfg = testConfig({ X_MODE: "off", WHATSAPP_MODE: "off" });
+    const f = mockFetch([
+      [/editMessage(Text|Caption)/, () => new Response(JSON.stringify({ ok: false, description: "Bad Request: message caption is too long" }), { status: 400 })],
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", ai],
+      ["affiliate.shopee", shortLink],
+    ]);
+    try {
+      await collect(cfg, [offer("noedit")]);
+      const post = await postFor("noedit");
+      await tap(cfg, `a:${post.id}`);
+      assert.equal((await postFor("noedit")).status, "published");
+      const markups = f.to("editMessageReplyMarkup").filter((c) => c.body.message_id === Number(post.preview_message_id));
+      assert.ok(markups.length >= 1);
+      assert.deepEqual(markups.at(-1)!.body.reply_markup.inline_keyboard, []);
     } finally {
       f.restore();
     }
