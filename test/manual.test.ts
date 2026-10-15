@@ -63,6 +63,24 @@ describe("links sent to the bot", () => {
     });
   });
 
+  it("reads the shared product from a meli.la showcase page, not the other cards", () => {
+    const card = (id: string, track: string, prev: string, cur: string) =>
+      `{"url":"https://x?wid=${id}&sid=recos&c_id=\\u002Fhome\\u002Fcard-featured\\u002Felement","tracks":{"price":{"promotions":[],"price":${track}}},` +
+      `"card_type":"list"},{"type":"price","price":{"previous_price":{"value":${prev},"currency":"BRL"},"current_price":{"value":${cur},"currency":"BRL"}}}`;
+    const html = `<meta property="og:title" content="Smartphone Oppo Reno 14F 5G">
+      <meta property="og:image" content="https://http2.mlstatic.com/D_NQ_NP_881274-O.webp">
+      <script>{"c":"card-featured",${card("MLB6422934840", "2987.72", "3999", "2987")},
+      ${card("MLB5139944859", "2499", "3499", "2499")}}</script>`;
+    assert.deepEqual(parseProductPage("mercadolivre", html), {
+      title: "Smartphone Oppo Reno 14F 5G",
+      imageUrl: "https://http2.mlstatic.com/D_NQ_NP_881274-O.jpg",
+      priceCents: 298772,
+      originalPriceCents: 399900,
+      externalId: "MLB6422934840",
+    });
+    assert.equal(marketplaceOf("https://meli.la/1g5GFcd"), "mercadolivre");
+  });
+
   it("reads a Mercado Livre page through JSON-LD", () => {
     const html = `<meta property="og:image" content="https://http2.mlstatic.com/a.jpg">
       <script type="application/ld+json">{"@context":"https://schema.org","@type":"Product","name":"Air Fryer 4L","offers":{"@type":"Offer","price":299.9}}</script>

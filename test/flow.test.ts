@@ -493,6 +493,34 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("builds a full preview from a bare meli.la link", async () => {
+    const cfg = testConfig();
+    const id = `MLB7${Date.now() % 1e9}`;
+    const link = `https://meli.la/${suffix}`;
+    const page = `<meta property="og:title" content="Smartphone Oppo Reno 14F 5G">
+      <meta property="og:image" content="https://http2.mlstatic.com/D_NQ_NP_1-O.webp">
+      <script>{"a":"card-featured","u":"?wid=${id}&c=1","tracks":{"price":{"price":2987.72}},
+      "price":{"previous_price":{"value":3999},"current_price":{"value":2987}},"n":"?wid=MLB1&x","tracks2":{"price":{"price":10}}}</script>`;
+    const f = mockFetch([
+      ["meli.la", () => new Response(page, { status: 200 })],
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", ai],
+    ]);
+    try {
+      await say(cfg, link);
+      const post = (await postByLink(link))!;
+      assert.equal(post.marketplace, "mercadolivre");
+      assert.equal(post.external_id, id, "showcase pages share one URL, so the id comes from the page");
+      assert.equal(post.title, "Smartphone Oppo Reno 14F 5G");
+      assert.deepEqual([post.price_cents, post.original_price_cents], [298772, 399900]);
+      const preview = f.to("sendPhoto").filter((c) => c.body.chat_id === "111").at(-1)!.body;
+      assert.equal(preview.photo, "https://http2.mlstatic.com/D_NQ_NP_1-O.jpg");
+      assert.match(preview.caption, /Mercado Livre · -25%/);
+    } finally {
+      f.restore();
+    }
+  });
+
   it("uses the typed price and text when the store blocks the page (Mercado Livre)", async () => {
     const cfg = testConfig();
     const link = `https://produto.mercadolivre.com.br/MLB-9${Date.now() % 1e8}-air-fryer-mondial-4l-_JM?matt_tool=123`;

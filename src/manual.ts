@@ -159,6 +159,8 @@ function cleanTitle(title: string | undefined): string | undefined {
 }
 
 export interface PageInfo {
+  /** Item id read from the page, when the URL doesn't carry one (showcase pages). */
+  externalId?: string;
   title?: string;
   imageUrl?: string;
   priceCents?: number;
@@ -189,11 +191,38 @@ export function parseProductPage(marketplace: Marketplace, html: string): PageIn
   } else {
     const before = html.match(/andes-money-amount--previous[^>]*aria-label=["'][^"']*?(\d[\d.]*) reais(?: com (\d{1,2}) centavos)?/i);
     if (before) info.originalPriceCents = Number((before[1] as string).replace(/\./g, "")) * 100 + Number(before[2] ?? 0);
+    Object.assign(info, featuredCard(html));
   }
+  // Telegram doesn't always take .webp as a photo; Mercado Livre serves the same image as .jpg.
+  if (info.imageUrl && /mlstatic\.com\/.+\.webp$/i.test(info.imageUrl)) info.imageUrl = info.imageUrl.replace(/\.webp$/i, ".jpg");
   if (info.originalPriceCents && info.priceCents && info.originalPriceCents <= info.priceCents) {
     info.originalPriceCents = undefined;
   }
   return info;
+}
+
+/**
+ * meli.la affiliate links land on the affiliate's showcase (/social/<name>): the
+ * shared product is the first card after "card-featured", followed by other
+ * products with their own prices, so only that card's numbers are used.
+ */
+function featuredCard(html: string): Partial<PageInfo> {
+  const start = html.indexOf("card-featured");
+  if (start < 0) return {};
+  const id = /wid=(MLB\d+)/.exec(html.slice(start));
+  if (!id) return {};
+  const from = start + id.index;
+  const next = html.indexOf("wid=MLB", from + id[0].length);
+  const card = html.slice(from, next < 0 ? undefined : next);
+  const track = card.match(/"tracks":\{"price":\{.*?"price":([\d.]+)\}/)?.[1];
+  const current = card.match(/"current_price":\{"value":([\d.]+)/)?.[1];
+  const previous = card.match(/"previous_price":\{"value":([\d.]+)/)?.[1];
+  const out: Partial<PageInfo> = { externalId: id[1] };
+  const price = money(track ?? current);
+  if (price) out.priceCents = price;
+  const original = money(previous);
+  if (original) out.originalPriceCents = original;
+  return out;
 }
 
 const BROWSER_HEADERS = {
@@ -237,8 +266,8 @@ e, se quiser, o texto do post nas linhas de baixo.
 
 Ex.: <code>https://amzn.to/abc 129,90 199,90</code>
 Se eu não conseguir ler o nome do produto, eu aviso: aí mande o nome na linha de baixo do link.
-Aceito links da Amazon e do Mercado Livre. Na Amazon eu costumo ler nome, foto e preço sozinho;
-o Mercado Livre bloqueia a leitura, então mande o preço junto com o link.`;
+Aceito links da Amazon e do Mercado Livre (inclusive meli.la). Normalmente eu leio nome, foto e preço
+sozinho; se a loja bloquear a leitura, eu aviso e você manda o preço junto com o link.`;
 
 export type BuildResult =
   | { ok: true; candidate: Candidate; caption?: string }
@@ -274,7 +303,11 @@ export async function buildCandidate(sub: Submission): Promise<BuildResult> {
     ok: true,
     candidate: {
       marketplace,
-      externalId: externalIdFrom(marketplace, finalUrl) ?? externalIdFrom(marketplace, sub.link) ?? finalUrl.split(/[?#]/)[0]!,
+      externalId:
+        externalIdFrom(marketplace, finalUrl) ??
+        page.externalId ??
+        externalIdFrom(marketplace, sub.link) ??
+        finalUrl.split(/[?#]/)[0]!,
       title: title as string,
       imageUrl: page.imageUrl,
       productUrl: finalUrl,

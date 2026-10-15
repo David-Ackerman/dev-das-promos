@@ -87,7 +87,7 @@ https://amzn.to/abc123 129,90 199,90
 Texto do post (optional; without it the AI writes one)
 ```
 
-- The bot opens the link and reads the product name, photo and prices when the store allows it. Amazon usually works. Mercado Livre blocks it, so type the price after the link.
+- The bot opens the link and reads the product name, photo and prices when the store allows it. For Mercado Livre, share the product from the app as an affiliate and send the `meli.la` link as is: it opens your affiliate showcase, and the bot reads the featured product from it. If a store blocks the read, the bot says so and you type the price after the link.
 - The numbers after the link are the price and the old price, in any order. Prices you type win over what the page says.
 - If it can't read the product name, it tells you. Send it again with the name on the line below the link.
 - Your link is kept **exactly as you sent it**, so your affiliate tag is untouched. Clicks still go through the bot's `/go` tracking.
