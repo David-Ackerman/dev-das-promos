@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { cleanAiText, generateCaption, parseAiJson } from "../src/ai.ts";
 import { pickCandidates } from "../src/collect.ts";
-import { amazonItemToCandidate } from "../src/providers/amazon.ts";
+import { amazonItemToCandidate, fetchAmazonCandidates } from "../src/providers/amazon.ts";
 import { shopeeNodeToCandidate } from "../src/providers/shopee.ts";
 import { oauthHeader } from "../src/publishers/x.ts";
 import { renderTelegram, renderWhatsApp, renderX, xLength } from "../src/render.ts";
@@ -111,6 +111,22 @@ describe("providers", () => {
     assert.equal(c?.priceCents, 29990);
     assert.equal(c?.discountPct, 40);
     assert.equal(amazonItemToCandidate(item, "outro-20"), null);
+  });
+  it("asks Amazon only for resources it accepts", async () => {
+    // Subset of the enum the Creators API lists in its 400 error.
+    const accepted = new Set(["images.primary.large", "itemInfo.title", "offersV2.listings.price", "offersV2.listings.availability"]);
+    const f = mockFetch([
+      ["auth/o2/token", () => ({ access_token: "t", expires_in: 3600 })],
+      ["searchItems", () => ({ searchResult: { items: [] } })],
+    ]);
+    try {
+      await fetchAmazonCandidates({ clientId: "c", clientSecret: "s", partnerTag: "meu-20", keywords: ["fone"], tokenUrl: "https://api.amazon.com/auth/o2/token" });
+      const resources: string[] = f.to("searchItems")[0]!.body.resources;
+      for (const r of resources) assert.ok(accepted.has(r), `Amazon rejects resource "${r}"`);
+      assert.equal(f.to("searchItems")[0]!.headers.authorization, "Bearer t");
+    } finally {
+      f.restore();
+    }
   });
 });
 

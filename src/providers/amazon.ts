@@ -13,7 +13,13 @@ import { discountPct, sleep, toCents } from "../util.ts";
  */
 const API_BASE = "https://creatorsapi.amazon/catalog/v1";
 const MARKETPLACE = "www.amazon.com.br";
-const RESOURCES = ["images.primary.large", "itemInfo.title", "offersV2"];
+// Each sub-field must be named; the bare "offersV2" is rejected with HTTP 400.
+const RESOURCES = [
+  "images.primary.large",
+  "itemInfo.title",
+  "offersV2.listings.price",
+  "offersV2.listings.availability",
+];
 
 type AmazonConfig = NonNullable<Config["amazon"]>;
 
