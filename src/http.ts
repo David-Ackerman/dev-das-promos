@@ -6,6 +6,7 @@ import { getPost, recordClick, resolveLink, siteDeals } from "./repo.ts";
 import { sendText } from "./telegram.ts";
 import { whatsappShareUrl, xSharePage, xShareText } from "./share.ts";
 import { ROBOTS_TXT, sitePage } from "./site.ts";
+import { proposeRoundup, roundupWhatsAppUrl } from "./roundup.ts";
 import { isValidCode, sha256Hex } from "./util.ts";
 
 /**
@@ -14,6 +15,7 @@ import { isValidCode, sha256Hex } from "./util.ts";
  *   GET  /go/:code          tracked redirect to the affiliate link (logs the click)
  *   GET  /wa/:code          opens WhatsApp with the post text ready to send
  *   GET  /x/:code           page to copy the X post or open it in the X app
+ *   GET  /wr/:id            opens WhatsApp with the weekly roundup ready to send
  *   POST /telegram/webhook  your bot's buttons and commands
  *   GET  /health
  * Plus crons (wrangler.toml): QUEUE_CRON publishes queued posts when their time
@@ -21,6 +23,8 @@ import { isValidCode, sha256Hex } from "./util.ts";
  * own schedule runs hours late or not at all.
  */
 export const QUEUE_CRON = "*/5 * * * *";
+/** Sundays 21:00 UTC = 18:00 in Brasília: the weekly Top 10 goes to the admin. */
+export const ROUNDUP_CRON = "0 21 * * 0";
 interface Ctx {
   waitUntil(promise: Promise<unknown>): void;
 }
@@ -85,6 +89,13 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
         });
       }
 
+      const wr = path.match(/^\/wr\/(\d{1,9})$/);
+      if (wr && request.method === "GET") {
+        const { db, cfg } = getDeps(env);
+        const url = await roundupWhatsAppUrl(cfg, db, Number(wr[1]));
+        return url ? Response.redirect(url, 302) : new Response("Not found", { status: 404 });
+      }
+
       if (path === "/telegram/webhook" && request.method === "POST") {
         const { db, cfg } = getDeps(env);
         const secret = request.headers.get("x-telegram-bot-api-secret-token") ?? "";
@@ -105,6 +116,10 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
       const { cfg, db } = getDeps(env);
       if (event.cron === QUEUE_CRON) {
         ctx.waitUntil(publishDue(cfg, db).catch((e: unknown) => console.error("queue publish failed", e)));
+        return;
+      }
+      if (event.cron === ROUNDUP_CRON) {
+        ctx.waitUntil(proposeRoundup(cfg, db).catch((e: unknown) => console.error("weekly roundup failed", e)));
         return;
       }
       ctx.waitUntil(

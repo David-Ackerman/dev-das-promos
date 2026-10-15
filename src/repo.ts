@@ -281,6 +281,66 @@ export async function siteDeals(db: Db, days: number, limit: number): Promise<Si
   return out;
 }
 
+/** Live deals of the last `days`, most clicked first (discount breaks ties). */
+export async function topDealsForRoundup(db: Db, days: number, limit: number): Promise<number[]> {
+  const rows = await db.query<{ id: number }>(
+    `SELECT p.id FROM posts p
+     LEFT JOIN links l ON l.post_id = p.id
+     LEFT JOIN clicks c ON c.code = l.code AND NOT c.is_bot
+     WHERE p.status IN ('published', 'partial') AND p.deal_ended_at IS NULL
+       AND p.published_at > now() - make_interval(days => $1::int)
+     GROUP BY p.id, p.discount_pct, p.published_at
+     ORDER BY count(c.id) DESC, p.discount_pct DESC, p.published_at DESC
+     LIMIT $2`,
+    [days, limit],
+  );
+  return rows.map((r) => r.id);
+}
+
+/** Posts in the order of `ids`. */
+export async function getPostsByIds(db: Db, ids: number[]): Promise<PostRow[]> {
+  if (!ids.length) return [];
+  const rows = await db.query<PostRow>(`${POST_SELECT} WHERE p.id = ANY($1::int[])`, [ids]);
+  const byId = new Map(rows.map((r) => [Number(r.id), r]));
+  return ids.map((id) => byId.get(id)).filter((p): p is PostRow => Boolean(p));
+}
+
+export interface RoundupRow {
+  id: number;
+  post_ids: number[];
+  status: string;
+  preview_chat_id: string | null;
+  preview_message_id: string | null;
+}
+
+export async function createRoundup(db: Db, postIds: number[]): Promise<number> {
+  const rows = await db.query<{ id: number }>(`INSERT INTO roundups (post_ids) VALUES ($1::int[]) RETURNING id`, [postIds]);
+  return (rows[0] as { id: number }).id;
+}
+
+export async function getRoundup(db: Db, id: number): Promise<RoundupRow | undefined> {
+  const rows = await db.query<RoundupRow>(
+    `SELECT id, post_ids, status, preview_chat_id, preview_message_id::text AS preview_message_id FROM roundups WHERE id = $1`,
+    [id],
+  );
+  const row = rows[0];
+  return row && { ...row, post_ids: row.post_ids.map(Number) };
+}
+
+export async function setRoundupPreview(db: Db, id: number, chatId: string, messageId: number): Promise<void> {
+  await db.query(`UPDATE roundups SET preview_chat_id = $2, preview_message_id = $3 WHERE id = $1`, [id, chatId, messageId]);
+}
+
+/** Same idea as transition() for posts: only one caller moves it out of `from`. */
+export async function transitionRoundup(db: Db, id: number, from: string, to: string): Promise<boolean> {
+  const rows = await db.query(
+    `UPDATE roundups SET status = $3, sent_at = CASE WHEN $3 = 'sent' THEN now() ELSE sent_at END
+     WHERE id = $1 AND status = $2 RETURNING id`,
+    [id, from, to],
+  );
+  return rows.length > 0;
+}
+
 export async function listQueued(db: Db): Promise<PostRow[]> {
   return db.query<PostRow>(`${POST_SELECT} WHERE p.status = 'queued' ORDER BY p.scheduled_at NULLS LAST, p.id`);
 }

@@ -5,9 +5,11 @@ Finds Amazon and Shopee deals a few times a day and turns them into posts with y
 ```
 GitHub Actions (started 5x/day by the Worker) Cloudflare Worker (always on, free)
  ├─ fetch Shopee / Amazon deals               ├─ /telegram/webhook  ✅ ❌ 🔄 buttons, /stats …
- ├─ pick the best (discount, sales, no repeats)│     └─ on ✅: Telegram groups, WhatsApp, X
- ├─ affiliate link + AI text                  ├─ /go/<code>  log click → 302 to affiliate link
- └─ preview → your Telegram bot               └─ /wa/<code>  open WhatsApp with the post ready
+ ├─ pick the best (discount, commission,      │     └─ on ✅: queue → Telegram groups, WhatsApp, X
+ │  sales, no repeats, no fake discounts)     ├─ every 5 min: publish the next queued post
+ ├─ affiliate link + AI text                  ├─ /  public page with the live deals
+ ├─ preview → your Telegram bot               ├─ /go/<code>  log click → 302 to affiliate link
+ └─ flag deals that sold out in the groups    └─ /wa/<code>  open WhatsApp with the post ready
                      \                       /
                       Neon Postgres (free, 1 GB) ← daily backup to GitHub
 ```
@@ -18,9 +20,9 @@ Everything runs on free plans: **GitHub Actions**, **Cloudflare Workers** and **
 
 ## How it works day to day
 
-1. At 9h, 12h, 15h, 18h and 21h (Brasília time), the bot sends you previews of the best new deals (`POSTS_PER_RUN`, default 2).
+1. At 9h, 12h, 15h, 18h and 21h (Brasília time), the bot sends you previews of the best new deals (`POSTS_PER_RUN`, default 2). It ranks them by discount, what a sale pays you (commission), sales and rating, and skips products that were cheaper in the last 30 days (fake "discounts").
 2. Each preview has these buttons:
-   - **✅ Aprovar** publishes it everywhere.
+   - **✅ Aprovar** puts it in the queue (see below). If nothing went out recently, it's published right away.
    - **❌ Recusar** discards it. The product won't come back for 14 days.
    - **🔄 Outro texto** asks the AI for a new joke.
    - **Reply to the preview with your own text** and it replaces the AI text.
@@ -28,9 +30,21 @@ Everything runs on free plans: **GitHub Actions**, **Cloudflare Workers** and **
 4. If a channel fails (the bot was removed from a group, X is out of credits…), the preview says which one and shows **🔁 Tentar de novo**. It sends only where it's still missing, so nobody gets the post twice.
 5. If you don't answer a preview within 12h, it expires, because prices change.
 
+**Queue.** Approved posts go out one at a time, `QUEUE_INTERVAL_MINUTES` apart (default 40), only inside `POSTING_HOURS` (default `8-23`, Brasília). So you can approve ten posts in the morning and they're spread over the day. A queued preview shows "🕒 Agendado para 14:40" with **⚡ Publicar agora** and **↩️ Desagendar**. `/fila` lists the queue. Set `QUEUE_INTERVAL_MINUTES=0` to publish the moment you approve.
+
+**Auto-approve** (off by default). With `AUTO_APPROVE_MIN_DISCOUNT=40`, previews with at least 40% off, AI-written text and no fake discount are approved for you (they still go through the queue, and you can unschedule them).
+
+**Price check.** Right before a post goes out, the bot reads the current price again. If it went up, the post is held and sent back to you with the new price; if the product is gone, it isn't published; if it dropped, it's published with the better price. Prices you typed yourself are never changed.
+
+**Ended deals.** Each search run re-checks the deals published in the last 3 days. If one sold out or got more than 5% pricier, its message in every Telegram group gets a banner on top ("❌ ESGOTOU" / "⚠️ O preço subiu"). WhatsApp and X messages can't be edited by the bot.
+
+**Weekly Top 10.** Sundays at 18h (Brasília) the bot sends you the week's most-clicked live deals as one message, with **✅ Enviar nos grupos** and **❌ Descartar**. Each group gets its own tracked links, and there's a 📲 button for WhatsApp. `/resumo` makes one any time.
+
+**Public page.** The Worker's main address (your `PUBLIC_BASE_URL`) shows the live deals of the last 7 days, with your affiliate links tracked as the "web" channel. Set `SITE_NAME`, and `SITE_TELEGRAM_URL` / `SITE_WHATSAPP_URL` (group invite links) to show "join" buttons. Share it in your bio.
+
 Each preview also tells you, from our own price history, whether the deal is real: **📉** lowest price we've seen in 30 days, **↔️** same price as before, or **⚠️** it was recently cheaper (with the price). Only you see that line.
 
-Bot commands: `/stats 7` shows clicks per channel, per group, per store and the top products. `/pendentes` lists posts waiting for you. `/buscar` looks for deals right now. `/id` shows the id of the chat it's sent in, which you need when setting up groups.
+Bot commands: `/stats 7` shows clicks per channel, per group, per store, the best hours and the top products. `/pendentes` lists posts waiting for you. `/fila` shows the queue. `/resumo` builds the weekly Top 10. `/buscar` looks for deals right now. `/id` shows the id of the chat it's sent in, which you need when setting up groups.
 
 ## Setup (one time, about 30 minutes)
 
@@ -157,6 +171,8 @@ src/
   providers/        amazon.ts, shopee.ts
   publishers/       whatsapp.ts, x.ts
   manual.ts         links you send to the bot -> product -> preview       (Worker)
+  schedule.ts       publishing queue timing; pricecheck.ts re-reads prices
+  site.ts           public deals page; roundup.ts weekly Top 10           (Worker)
   ai.ts render.ts preview.ts share.ts repo.ts telegram.ts config.ts
   jobs/             CLI entry points used by npm scripts and workflows
 migrations/         SQL, applied once each, never rolled back

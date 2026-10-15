@@ -21,6 +21,8 @@ await tg(token, "setMyCommands", {
   commands: [
     { command: "pendentes", description: "Prévias esperando aprovação" },
     { command: "stats", description: "Cliques e o que mais funciona" },
+    { command: "fila", description: "Posts aprovados esperando o horário" },
+    { command: "resumo", description: "Top 10 da semana para os grupos" },
     { command: "buscar", description: "Buscar promoções agora" },
     { command: "id", description: "Mostrar o id deste chat" },
     { command: "ajuda", description: "Ajuda" },

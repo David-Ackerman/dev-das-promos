@@ -4,6 +4,7 @@ import type { Db } from "./db.ts";
 import { EDIT_HINT, pendingKeyboard, sendPreview, updatePreview } from "./preview.ts";
 import { buildCandidate, parseSubmission, SUBMIT_HELP, type Submission } from "./manual.ts";
 import { approvePost, declinePost, publishNow, retryPost, unschedulePost } from "./publish.ts";
+import { declineRoundup, proposeRoundup, sendRoundup } from "./roundup.ts";
 import { formatSlot } from "./schedule.ts";
 import {
   createPost,
@@ -43,6 +44,7 @@ export interface TgUpdate {
 const HELP = `<b>Comandos</b>
 /pendentes — prévias esperando aprovação
 /fila — posts aprovados esperando o horário
+/resumo — monta o Top 10 da semana para enviar nos grupos
 /stats [dias] — cliques e o que mais funciona (padrão 7 dias)
 /buscar — busca promoções agora
 /id — mostra o id deste chat (útil para configurar grupos)
@@ -188,6 +190,13 @@ async function handleCallback(cfg: Config, db: Db, cq: NonNullable<TgUpdate["cal
   const postId = Number(rawId);
   if (!Number.isInteger(postId)) return answer("?");
 
+  if (action === "w") {
+    await answer("Enviando o resumo…");
+    await sendRoundup(cfg, db, postId);
+    return;
+  }
+  if (action === "wd") return answer(await declineRoundup(cfg, db, postId));
+
   if (action === "a") {
     const post = await getPost(db, postId);
     if (!post || post.status !== "pending") return answer("Esse post já foi processado.");
@@ -296,6 +305,9 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
       );
       return;
     }
+    case "/resumo":
+      await proposeRoundup(cfg, db);
+      return;
     case "/buscar":
       await sendText(token, chatId, (await triggerCollect(cfg)).message);
       return;

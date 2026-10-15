@@ -781,6 +781,43 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("builds the weekly Top 10, sends it to every group with their own links, once", async () => {
+    const cfg = testConfig({ X_MODE: "off" });
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
+    try {
+      await collect(cfg, [offer("top-1"), offer("top-2", { externalId: `top-2-${suffix}` })]);
+      await collect(cfg, [offer("top-3")]);
+      for (const name of ["top-1", "top-2", "top-3"]) await tap(cfg, `a:${(await postFor(name)).id}`);
+
+      const handler = createHandler(() => ({ cfg, db }));
+      await handler.scheduled({ cron: "0 21 * * 0" }, {}, ctx);
+      await flush();
+      const preview = f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body;
+      assert.match(preview.text, /Resumo #\d+<\/b> · prévia/);
+      assert.match(preview.text, /🔥 <b>Top \d+ da semana<\/b>/);
+      assert.match(preview.text, /Produto top-1/);
+      const id = Number(preview.reply_markup.inline_keyboard[0][0].callback_data.split(":")[1]);
+
+      const before = f.to("sendMessage").length;
+      await tap(cfg, `w:${id}`);
+      await tap(cfg, `w:${id}`);
+      const sent = f.to("sendMessage").slice(before).filter((c) => String(c.body.chat_id).startsWith("-100"));
+      assert.deepEqual(sent.map((c) => c.body.chat_id).sort(), ["-1001", "-1002"], "once per group, even if tapped twice");
+      const codesIn = (text: string) => [...text.matchAll(/\/go\/([0-9a-zA-Z]+)/g)].map((m) => m[1]);
+      const [g1, g2] = [sent.find((c) => c.body.chat_id === "-1001")!, sent.find((c) => c.body.chat_id === "-1002")!];
+      assert.ok(codesIn(g1.body.text).length >= 3);
+      assert.ok(codesIn(g1.body.text).every((c) => !codesIn(g2.body.text).includes(c)), "each group has its own links");
+      assert.match(g1.body.text, /#publi/);
+
+      const wa = await handler.fetch(new Request(`https://w/wr/${id}`), {}, ctx);
+      assert.equal(wa.status, 302);
+      assert.match(new URL(wa.headers.get("location")!).searchParams.get("text")!, /^🔥 \*Top \d+ da semana\*/);
+      assert.equal((await handler.fetch(new Request("https://w/wr/999999"), {}, ctx)).status, 404);
+    } finally {
+      f.restore();
+    }
+  });
+
   it("expires previews nobody answered", async () => {
     const cfg = testConfig();
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", () => new Response("x", { status: 500 })], ["affiliate.shopee", () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } })]]);
