@@ -158,7 +158,7 @@ export async function runCollect(
           previewHtml(cfg, {
             id: 0, product_id: 0, ref, status: "pending", price_cents: c.priceCents,
             original_price_cents: c.originalPriceCents ?? null, discount_pct: c.discountPct, lowest_seen_cents: null,
-            affiliate_url: c.productUrl, caption: caption.caption, caption_short: caption.short,
+            affiliate_url: c.productUrl, caption: caption.caption, caption_short: caption.short, hashtag: caption.hashtag ?? null,
             ai_model: caption.model, preview_chat_id: null, preview_message_id: null,
             preview_has_photo: false, marketplace: c.marketplace, title: c.title,
             image_url: c.imageUrl ?? null, product_url: c.productUrl,
@@ -177,6 +177,7 @@ export async function runCollect(
         lowestSeenCents: await lowestSeenPrice(db, productId, startedAt),
         caption: caption.caption,
         captionShort: caption.short,
+        hashtag: caption.hashtag,
         aiModel: caption.model,
       });
       try {

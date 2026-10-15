@@ -7,6 +7,8 @@ export interface Caption {
   caption: string; // Telegram / WhatsApp
   short: string; // X
   model: string; // "template" when AI wasn't used
+  /** Brand/product hashtag for X, without "#" (e.g. "Kindle"). */
+  hashtag?: string;
   /** Why the AI wasn't used, when it was configured but failed. */
   error?: string;
 }
@@ -23,12 +25,13 @@ Objetivo: fazer as pessoas rirem ou se identificarem e quererem clicar.
 Regras:
 - Português do Brasil, tom leve, divertido, bem brasileiro. Pode fazer uma piadinha, um trocadilho ou um comentário engraçado sobre quando/por que alguém usaria o produto.
 - Use SOMENTE as informações dadas. Não invente características, avaliações, frete, estoque, prazo ou urgência ("últimas unidades", "só hoje") que não foram informados.
-- NÃO escreva preço, desconto, link, @menções nem hashtags (o sistema adiciona isso depois).
+- No "texto" e no "tweet", NÃO escreva preço, desconto, link, @menções nem hashtags (o sistema adiciona isso depois).
 - No máximo 1 ou 2 emojis.
 - Se vier "Público do grupo", escreva para essas pessoas: use as referências e o jeito de falar delas.
-- Responda APENAS com JSON: {"texto": "...", "tweet": "..."}
+- Responda APENAS com JSON: {"texto": "...", "tweet": "...", "tag": "..."}
   - "texto": 1 a 3 frases curtas (máx. 280 caracteres).
-  - "tweet": uma frase de efeito (máx. 140 caracteres).`;
+  - "tweet": uma frase de efeito (máx. 140 caracteres).
+  - "tag": a marca ou o nome curto do produto, para virar hashtag (ex.: "Kindle", "JBL", "Xiaomi"), sem # e sem espaços; "" se não houver uma marca clara.`;
 
 const TEMPLATES = [
   "Seu carrinho tava pedindo isso e a gente ouviu 🛒",
@@ -78,14 +81,28 @@ export function cleanAiText(text: string, max: number): string {
   );
 }
 
-export function parseAiJson(raw: string): { texto: string; tweet: string } {
+/** Generic tags reach nobody (and look like spam); only a brand/product name is worth it. */
+const GENERIC_TAGS = new Set([
+  "promo", "promocao", "promocoes", "oferta", "ofertas", "desconto", "descontos", "publi", "achado", "achadinho",
+  "achadinhos", "barato", "shopee", "amazon", "mercadolivre", "tech", "tecnologia", "gadget", "gadgets", "produto",
+]);
+
+/** "#Kindle" / "Echo Dot" -> "Kindle" / "EchoDot"; generic or odd tags -> undefined. */
+export function cleanHashtag(raw: string | undefined): string | undefined {
+  const tag = (raw ?? "").replace(/[^\p{L}\p{N}]+/gu, "");
+  if (tag.length < 2 || tag.length > 24 || /^\d+$/.test(tag)) return undefined;
+  const plain = tag.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return GENERIC_TAGS.has(plain) ? undefined : tag;
+}
+
+export function parseAiJson(raw: string): { texto: string; tweet: string; tag?: string } {
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("AI did not return JSON");
   const obj = JSON.parse(match[0]) as Record<string, unknown>;
   const texto = typeof obj.texto === "string" ? obj.texto : "";
   const tweet = typeof obj.tweet === "string" ? obj.tweet : texto;
   if (!texto.trim()) throw new Error('AI JSON missing "texto"');
-  return { texto, tweet };
+  return { texto, tweet, tag: typeof obj.tag === "string" ? obj.tag : undefined };
 }
 
 /** Whole budget for one caption. The Worker (🔄 button) is cut off ~30s after answering Telegram. */
@@ -101,7 +118,7 @@ class BusyError extends Error {}
  * Reasoning models may wrap their answer in <think>…</think>, and some ignore the
  * JSON instruction and just write the line. A short plain-text reply is used as is.
  */
-export function parseAiReply(raw: string): { texto: string; tweet: string } {
+export function parseAiReply(raw: string): { texto: string; tweet: string; tag?: string } {
   const text = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
   if (!text) throw new Error("empty reply");
   if (text.includes("{")) return parseAiJson(text);
@@ -148,7 +165,7 @@ async function askModel(cfg: Config["ai"], model: string, candidate: Candidate, 
     const caption = cleanAiText(parsed.texto, 300);
     const short = cleanAiText(parsed.tweet, 150);
     if (!caption) throw new Error("AI text empty after cleanup");
-    return { caption, short: short || truncate(caption, 150), model };
+    return { caption, short: short || truncate(caption, 150), model, hashtag: cleanHashtag(parsed.tag) };
   } catch (error) {
     // Every failure names its model, so the admin sees which ones were tried.
     const msg = `${model}: ${errorMessage(error)}`;

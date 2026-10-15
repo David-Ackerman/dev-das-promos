@@ -109,6 +109,7 @@ The last two are unofficial and WhatsApp can ban numbers that look like spam. If
 ## X / Twitter
 X dropped its free API in 2026. It's now pay-per-use, and **posts with a link cost a lot more** than plain text posts.
 - `X_MODE=share` (default) is free. After you approve, tap **🐦 Postar no X**: a page opens with the post (joke, product, price and tracked link) and buttons to **copy it** or **open it in the X app**. You post it yourself.
+- X posts end with `#publi` plus **one brand/product hashtag** suggested by the AI (e.g. `#Kindle`), only when it fits in 280 characters. Generic tags like `#promoção` are never used.
 - `X_MODE=no-link` posts the joke, product and price plus "🔗 Link na bio". This is the cheap option.
 - `X_MODE=link` puts the tracked link in the post. It's more expensive per post.
 - `X_MODE=off` disables X.

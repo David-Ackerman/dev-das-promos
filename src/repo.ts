@@ -4,7 +4,7 @@ import { randomCode } from "./util.ts";
 
 const POST_SELECT = `
   SELECT p.id, p.product_id, p.ref, p.status, p.price_cents, p.original_price_cents,
-         p.discount_pct, p.lowest_seen_cents, p.affiliate_url, p.caption, p.caption_short, p.ai_model,
+         p.discount_pct, p.lowest_seen_cents, p.affiliate_url, p.caption, p.caption_short, p.hashtag, p.ai_model,
          p.preview_chat_id, p.preview_message_id::text AS preview_message_id, p.preview_has_photo,
          pr.marketplace, pr.title, pr.image_url, pr.product_url
   FROM posts p JOIN products pr ON pr.id = p.product_id`;
@@ -65,6 +65,7 @@ export async function createPost(
     candidate: Candidate;
     affiliateUrl: string;
     lowestSeenCents?: number | null;
+    hashtag?: string | null;
     caption: string;
     captionShort: string;
     aiModel: string;
@@ -72,8 +73,8 @@ export async function createPost(
 ): Promise<PostRow> {
   const rows = await db.query<{ id: number }>(
     `INSERT INTO posts (product_id, ref, price_cents, original_price_cents, discount_pct,
-                        commission_rate, affiliate_url, caption, caption_short, ai_model, lowest_seen_cents)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+                        commission_rate, affiliate_url, caption, caption_short, ai_model, lowest_seen_cents, hashtag)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
     [
       input.productId,
       input.ref,
@@ -86,6 +87,7 @@ export async function createPost(
       input.captionShort,
       input.aiModel,
       input.lowestSeenCents ?? null,
+      input.hashtag ?? null,
     ],
   );
   return (await getPost(db, (rows[0] as { id: number }).id)) as PostRow;
@@ -127,10 +129,13 @@ export async function updateCaption(
   caption: string,
   captionShort: string,
   aiModel: string,
+  hashtag?: string,
 ): Promise<void> {
+  // A new hashtag replaces the old one; no hashtag (template, typed text) keeps it.
   await db.query(
-    `UPDATE posts SET caption = $2, caption_short = $3, ai_model = $4 WHERE id = $1 AND status = 'pending'`,
-    [postId, caption, captionShort, aiModel],
+    `UPDATE posts SET caption = $2, caption_short = $3, ai_model = $4, hashtag = COALESCE($5::text, hashtag)
+     WHERE id = $1 AND status = 'pending'`,
+    [postId, caption, captionShort, aiModel, hashtag ?? null],
   );
 }
 

@@ -163,7 +163,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
-  const ai = () => ({ choices: [{ message: { content: '{"texto":"Texto da IA","tweet":"Tweet da IA"}' } }] });
+  const ai = () => ({ choices: [{ message: { content: '{"texto":"Texto da IA","tweet":"Tweet da IA","tag":"#JBL"}' } }] });
   const shortLink = () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } });
   const offer = (id: string, over: Partial<Candidate> = {}): Candidate => ({
     marketplace: "shopee", externalId: `${id}-${suffix}`, title: `Produto ${id}`, productUrl: "https://shopee.com.br/p/7",
@@ -381,6 +381,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       assert.ok(html.includes("<textarea"), "text shown for copying");
       assert.match(text, /Tweet da IA/);
       assert.match(text, /R\$\s50,00 \(-50%\)/);
+      assert.match(text, /\n#publi #JBL$/, "one product hashtag on X");
       const code = xUrl.split("/").pop()!;
       assert.ok(text.includes(`/go/${code}`), "X gets its own tracked link");
       const waCode = (kb[0][0].url as string).split("/").pop()!;

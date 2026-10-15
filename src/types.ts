@@ -30,6 +30,8 @@ export interface PostRow {
   affiliate_url: string;
   caption: string;
   caption_short: string;
+  /** Brand/product hashtag for X, without "#"; null = none. */
+  hashtag: string | null;
   ai_model: string | null;
   preview_chat_id: string | null;
   preview_message_id: string | number | null;

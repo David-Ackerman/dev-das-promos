@@ -11,6 +11,8 @@ export interface RenderInput {
   discountPct: number;
   link: string;
   footer: string;
+  /** X only: brand/product hashtag without "#", shown next to #publi when it fits. */
+  hashtag?: string | null;
 }
 
 export const STORE: Record<Marketplace, string> = { amazon: "Amazon", shopee: "Shopee", mercadolivre: "Mercado Livre" };
@@ -66,12 +68,20 @@ export function xLength(text: string): number {
 /** Plain text for X. `link` undefined means "no-link" mode (cheaper on X's API). */
 export function renderX(p: RenderInput, linkOrNote: string): string {
   const price = p.discountPct > 0 ? `${brl(p.priceCents)} (-${p.discountPct}%)` : brl(p.priceCents);
-  const tag = p.footer ? "#publi" : "";
-  const build = (titleMax: number, short: string) =>
-    [short, "", `${truncate(p.title, titleMax)} por ${price}`, linkOrNote, tag]
+  const tags = (withHashtag: boolean) =>
+    [p.footer ? "#publi" : "", withHashtag && p.hashtag ? `#${p.hashtag}` : ""].filter(Boolean).join(" ");
+  const build = (titleMax: number, short: string, withHashtag = false) =>
+    [short, "", `${truncate(p.title, titleMax)} por ${price}`, linkOrNote, tags(withHashtag)]
       .filter((l, i) => l !== "" || i === 1)
       .join("\n")
       .trim();
+  // The hashtag is the first thing to go: the joke is never cut to make room for it.
+  if (p.hashtag) {
+    for (const titleMax of [70, 40]) {
+      const withTag = build(titleMax, p.captionShort, true);
+      if (xLength(withTag) <= X_LIMIT) return withTag;
+    }
+  }
   let text = build(70, p.captionShort);
   if (xLength(text) > X_LIMIT) text = build(40, p.captionShort);
   if (xLength(text) > X_LIMIT) {

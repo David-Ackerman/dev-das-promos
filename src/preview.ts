@@ -17,6 +17,7 @@ export function renderInput(cfg: Config, post: PostRow, link: string) {
     discountPct: post.discount_pct,
     link,
     footer: cfg.footer,
+    hashtag: post.hashtag,
   };
 }
 

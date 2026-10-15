@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { cleanAiText, generateCaption, parseAiJson, parseAiReply, templateCaption } from "../src/ai.ts";
+import { cleanAiText, cleanHashtag, generateCaption, parseAiJson, parseAiReply, templateCaption } from "../src/ai.ts";
 import { isBlocked, pickCandidates } from "../src/collect.ts";
 import { amazonItemToCandidate, fetchAmazonCandidates } from "../src/providers/amazon.ts";
 import { shopeeNodeToCandidate } from "../src/providers/shopee.ts";
@@ -54,6 +54,16 @@ describe("render", () => {
   });
   it("uses WhatsApp formatting", () => {
     assert.match(renderWhatsApp(input), /~R\$\s299,90~ por \*R\$\s199,90\*/);
+  });
+  it("adds one product hashtag on X only when it fits, never at the joke's expense", () => {
+    const short = { ...input, captionShort: "Leia mais, gaste menos 📚", title: "Kindle 11ª geração" };
+    assert.match(renderX({ ...short, hashtag: "Kindle" }, input.link), /\n#publi #Kindle$/);
+    assert.doesNotMatch(renderTelegram({ ...short, hashtag: "Kindle" }), /#Kindle/, "Telegram stays as it was");
+    const long = { ...input, captionShort: "x".repeat(180), hashtag: "Kindle" };
+    const text = renderX(long, input.link);
+    assert.ok(xLength(text) <= 280, `len ${xLength(text)}`);
+    assert.ok(!text.includes("#Kindle"), "hashtag dropped first");
+    assert.ok(text.includes("x".repeat(180)), "joke kept whole");
   });
   it("keeps X posts within 280 chars, link or not", () => {
     const withLink = renderX(input, input.link);
@@ -182,7 +192,7 @@ describe("ai fallback", () => {
     }
   });
   it("accepts reasoning blocks and plain-text replies, and names the model on every error", async () => {
-    assert.deepEqual(parseAiReply('<think>hmm, JSON...</think>{"texto":"Oi","tweet":"Tchau"}'), { texto: "Oi", tweet: "Tchau" });
+    assert.deepEqual(parseAiReply('<think>hmm, JSON...</think>{"texto":"Oi","tweet":"Tchau"}'), { texto: "Oi", tweet: "Tchau", tag: undefined });
     assert.deepEqual(parseAiReply('"Seu setup pedindo upgrade"'), { texto: "Seu setup pedindo upgrade", tweet: "Seu setup pedindo upgrade" });
     assert.throws(() => parseAiReply("<think>só pensou</think>"), /empty reply/);
     const f = mockFetch([["chat/completions", (c) =>
@@ -231,6 +241,18 @@ describe("niche", () => {
     } finally {
       f.restore();
     }
+  });
+});
+
+describe("hashtags", () => {
+  it("keeps one brand/product word and rejects generic tags", () => {
+    assert.equal(cleanHashtag("#Kindle"), "Kindle");
+    assert.equal(cleanHashtag("Echo Dot"), "EchoDot");
+    assert.equal(cleanHashtag("Promoção"), undefined);
+    assert.equal(cleanHashtag("#publi"), undefined);
+    assert.equal(cleanHashtag("2024"), undefined);
+    assert.equal(cleanHashtag(""), undefined);
+    assert.equal(parseAiJson('{"texto":"Oi","tweet":"Oi","tag":"JBL"}').tag, "JBL");
   });
 });
 

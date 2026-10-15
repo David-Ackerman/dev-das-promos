@@ -64,7 +64,7 @@ export async function regenerateCaption(cfg: Config, db: Db, post: PostRow): Pro
     originalPriceCents: post.original_price_cents ?? undefined,
     discountPct: post.discount_pct,
   }, post.caption);
-  await updateCaption(db, post.id, caption.caption, caption.short, caption.model);
+  await updateCaption(db, post.id, caption.caption, caption.short, caption.model, caption.hashtag);
   const fresh = (await getPost(db, post.id)) as PostRow;
   await updatePreview(cfg, fresh, undefined, pendingKeyboard(fresh));
   if (caption.error) {
@@ -147,7 +147,7 @@ async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: numb
   const productId = await upsertProduct(db, c);
   // Page read + AI must fit in the ~30s the Worker gets after answering Telegram.
   const caption = text
-    ? { caption: truncate(text, 600), short: truncate(text, 150), model: "manual", error: undefined }
+    ? { caption: truncate(text, 600), short: truncate(text, 150), model: "manual", hashtag: undefined, error: undefined }
     : await generateCaption(cfg.ai, c, undefined, 15_000);
   const post = await createPost(db, {
     productId,
@@ -157,6 +157,7 @@ async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: numb
     lowestSeenCents: await lowestSeenPrice(db, productId, startedAt),
     caption: caption.caption,
     captionShort: caption.short,
+    hashtag: caption.hashtag,
     aiModel: caption.model,
   });
   try {
