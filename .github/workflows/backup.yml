@@ -14,6 +14,7 @@ permissions:
 jobs:
   backup:
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - name: Dump
         env:
