@@ -4,14 +4,14 @@ import type { Db } from "./db.ts";
 import { goUrl } from "./publish.ts";
 import { getPost, recordClick, resolveLink } from "./repo.ts";
 import { sendText } from "./telegram.ts";
-import { whatsappShareUrl, xShareUrl } from "./share.ts";
+import { whatsappShareUrl, xSharePage, xShareText } from "./share.ts";
 import { isValidCode, sha256Hex } from "./util.ts";
 
 /**
  * Cloudflare Worker (free plan). Routes:
  *   GET  /go/:code          tracked redirect to the affiliate link (logs the click)
  *   GET  /wa/:code          opens WhatsApp with the post text ready to send
- *   GET  /x/:code           opens X with the post text ready to send
+ *   GET  /x/:code           page to copy the X post or open it in the X app
  *   POST /telegram/webhook  your bot's buttons and commands
  *   GET  /health
  * Plus a cron (wrangler.toml) that starts the "Collect deals" workflow on time,
@@ -68,8 +68,10 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
         if (!link || link.channel !== channel) return new Response("Not found", { status: 404 });
         const post = await getPost(db, link.post_id);
         if (!post) return new Response("Not found", { status: 404 });
-        const url = channel === "whatsapp" ? whatsappShareUrl(cfg, post, goUrl(cfg, code)) : xShareUrl(cfg, post, goUrl(cfg, code));
-        return Response.redirect(url, 302);
+        if (channel === "whatsapp") return Response.redirect(whatsappShareUrl(cfg, post, goUrl(cfg, code)), 302);
+        return new Response(xSharePage(xShareText(cfg, post, goUrl(cfg, code))), {
+          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+        });
       }
 
       if (path === "/telegram/webhook" && request.method === "POST") {

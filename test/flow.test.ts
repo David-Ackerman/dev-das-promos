@@ -372,10 +372,13 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       const handler = createHandler(() => ({ cfg, db }));
       const xUrl: string = kb[1][0].url;
       const x = await handler.fetch(new Request(xUrl.replace(cfg.publicBaseUrl, "https://w")), {}, ctx);
-      assert.equal(x.status, 302);
-      const intent = new URL(x.headers.get("location")!);
-      assert.equal(intent.origin + intent.pathname, "https://x.com/intent/post");
-      const text = intent.searchParams.get("text")!;
+      assert.equal(x.status, 200, "a page, not a redirect into Telegram's logged-out browser");
+      assert.match(x.headers.get("content-type")!, /text\/html/);
+      const html = await x.text();
+      const appLink = decodeURIComponent(html.match(/href="twitter:\/\/post\?message=([^"]+)"/)![1]!);
+      assert.ok(html.includes(`https://x.com/intent/post?text=${encodeURIComponent(appLink)}`), "web fallback has the same text");
+      const text = appLink;
+      assert.ok(html.includes("<textarea"), "text shown for copying");
       assert.match(text, /Tweet da IA/);
       assert.match(text, /R\$\s50,00 \(-50%\)/);
       const code = xUrl.split("/").pop()!;
