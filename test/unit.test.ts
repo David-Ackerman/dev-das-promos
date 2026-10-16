@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { cleanAiText, cleanHashtag, generateCaption, parseAiJson, parseAiReply, resolveModel, templateCaption } from "../src/ai.ts";
+import { cleanAiText, cleanHashtag, generateCaption, parseAiJson, parseAiReply, resolveModel, shortCaption, templateCaption } from "../src/ai.ts";
 import { loadAiConfig } from "../src/config.ts";
 import { commissionCents, isBlocked, isFakeDiscount, pickCandidates, score } from "../src/collect.ts";
 import { amazonItemToCandidate, fetchAmazonCandidates } from "../src/providers/amazon.ts";
@@ -362,6 +362,17 @@ describe("ai providers", () => {
     } finally {
       f.restore();
     }
+  });
+});
+
+describe("short captions", () => {
+  it("keeps two sentences at most, emojis included, and caps the length", () => {
+    assert.equal(
+      shortCaption("Seu setup pedindo socorro? 🎮 Esse fone resolve. O JBL Tune 520BT tem Bluetooth 5.3 e 57h de bateria.", 2, 160),
+      "Seu setup pedindo socorro? 🎮 Esse fone resolve.",
+    );
+    assert.equal(shortCaption("Uma frase só, sem ponto final", 2, 160), "Uma frase só, sem ponto final");
+    assert.ok(shortCaption("a".repeat(300), 2, 160).length <= 160);
   });
 });
 

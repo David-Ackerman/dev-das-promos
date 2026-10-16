@@ -19,18 +19,21 @@ export interface Caption {
  * Price, link and disclosure are added by our code, never by the model, so
  * the AI can't invent a wrong price.
  */
-const SYSTEM_PROMPT = `Você escreve posts curtos para um grupo brasileiro de promoções.
-Objetivo: fazer as pessoas rirem ou se identificarem e quererem clicar.
+const SYSTEM_PROMPT = `Você escreve a chamada de um post num grupo brasileiro de promoções.
+Objetivo: uma piadinha rápida que faça a pessoa rir ou se identificar e queira olhar a oferta.
+O nome do produto, a foto e o preço já aparecem logo abaixo da sua frase.
 
 Regras:
-- Português do Brasil, tom leve, divertido, bem brasileiro. Pode fazer uma piadinha, um trocadilho ou um comentário engraçado sobre quando/por que alguém usaria o produto.
+- Curto: NO MÁXIMO 2 frases curtas. Melhor ainda se for 1.
+- É uma piada, um trocadilho ou uma situação engraçada do dia a dia. NÃO descreva o produto: nada de especificações, recursos, "ideal para", "perfeito para", nem repetir o nome completo do produto.
+- Português do Brasil, tom leve, bem brasileiro, jeito de quem conversa no grupo.
 - Use SOMENTE as informações dadas. Não invente características, avaliações, frete, estoque, prazo ou urgência ("últimas unidades", "só hoje") que não foram informados.
 - No "texto" e no "tweet", NÃO escreva preço, desconto, link, @menções nem hashtags (o sistema adiciona isso depois).
 - No máximo 1 ou 2 emojis.
 - Se vier "Público do grupo", escreva para essas pessoas: use as referências e o jeito de falar delas.
 - Responda APENAS com JSON: {"texto": "...", "tweet": "...", "tag": "..."}
-  - "texto": 1 a 3 frases curtas (máx. 280 caracteres).
-  - "tweet": uma frase de efeito (máx. 140 caracteres).
+  - "texto": a piada, no máximo 2 frases curtas (até 120 caracteres).
+  - "tweet": uma frase de efeito (até 100 caracteres).
   - "tag": a marca ou o nome curto do produto, para virar hashtag (ex.: "Kindle", "JBL", "Xiaomi"), sem # e sem espaços; "" se não houver uma marca clara.`;
 
 const TEMPLATES = [
@@ -69,6 +72,16 @@ function facts(c: Candidate, niche?: string): string {
 
 const LINK_RE = /(https?:\/\/|www\.)\S+|\b[a-z0-9-]+\.(com|br|net|io|ly)(\/\S*)?/gi;
 const PRICE_RE = /R\$\s?\d[\d.,]*/gi;
+
+/**
+ * At most `sentences` sentences and `max` characters: the caption is a quick
+ * joke above the product, even when a model ignores "keep it short".
+ */
+export function shortCaption(text: string, sentences: number, max: number): string {
+  const parts = text.replace(/\s+/g, " ").trim().match(/[^.!?…]+[.!?…]+["”']?(\s*\p{Extended_Pictographic}[\uFE0F\u200D\p{Extended_Pictographic}]*)*|[^.!?…]+$/gu) ?? [];
+  const kept = parts.slice(0, sentences).join("").trim();
+  return truncate(kept || text, max);
+}
 
 export function cleanAiText(text: string, max: number): string {
   return truncate(
@@ -213,8 +226,8 @@ export async function askModel(
       if (!json) throw error;
       parsed = parseAiJson(json);
     }
-    const caption = cleanAiText(parsed.texto, 300);
-    const short = cleanAiText(parsed.tweet, 150);
+    const caption = shortCaption(cleanAiText(parsed.texto, 400), 2, 160);
+    const short = shortCaption(cleanAiText(parsed.tweet, 300), 1, 120);
     // "...", "ok", a lone emoji: not a caption, let the next model try.
     if ((caption.match(/\p{L}/gu) ?? []).length < 8) throw new Error(`reply too short: "${caption}"`);
     return { caption, short: short || truncate(caption, 150), model: entry.label, hashtag: cleanHashtag(parsed.tag) };
