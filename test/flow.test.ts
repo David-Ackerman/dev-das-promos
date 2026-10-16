@@ -601,7 +601,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       assert.equal((await postFor("qb")).status, "queued");
       assert.equal(groupSends(), sent, "not sent yet");
       const edit = f.to("editMessage").filter((c) => c.body.message_id === Number(b.preview_message_id)).at(-1)!.body;
-      assert.match(edit.caption ?? edit.text, /🕒 <b>#\d+ Agendado para \d\d:\d\d<\/b>/);
+      assert.match(edit.caption ?? edit.text, /🕒 <b>#\d+ Agendado para (amanhã |\d\d\/\d\d )?\d\d:\d\d<\/b>/);
       assert.deepEqual(edit.reply_markup.inline_keyboard[0].map((k: { callback_data: string }) => k.callback_data), [`n:${b.id}`, `u:${b.id}`]);
       const at = (await db.query<{ gap: number }>(
         `SELECT extract(epoch FROM (b.scheduled_at - a.published_at))::int AS gap FROM posts a, posts b WHERE a.id = $1 AND b.id = $2`,
