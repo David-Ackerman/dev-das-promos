@@ -72,7 +72,7 @@ export interface Config {
   /** Previews with at least this discount (and real AI text, no fake discount) are approved automatically. 0 = off. */
   autoApproveMinDiscountPct: number;
   /** Public deals page (GET /). */
-  site: { name: string; telegramUrl?: string; whatsappUrl?: string };
+  site: { name: string; telegramUrl?: string; whatsappUrl?: string; xUrl?: string };
   footer: string;
   githubDispatch?: { token: string; repo: string; workflow: string; ref: string };
 }
@@ -158,6 +158,7 @@ export function loadConfig(env: Env): Config {
       name: env.SITE_NAME?.trim() || "Promoções do dia",
       telegramUrl: httpsUrl(env.SITE_TELEGRAM_URL),
       whatsappUrl: httpsUrl(env.SITE_WHATSAPP_URL),
+      xUrl: httpsUrl(env.SITE_X_URL),
     },
     footer: env.POST_FOOTER?.trim() ?? "#publi · link de afiliado",
   };

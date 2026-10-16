@@ -752,7 +752,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
   });
 
   it("serves a public page with the live deals and their own tracked links", async () => {
-    const cfg = testConfig({ X_MODE: "off", WHATSAPP_MODE: "off", SITE_NAME: "Dev das Promos", SITE_TELEGRAM_URL: "https://t.me/+abc" });
+    const cfg = testConfig({ X_MODE: "off", WHATSAPP_MODE: "off", SITE_NAME: "Dev das Promos", SITE_TELEGRAM_URL: "https://t.me/+abc", SITE_X_URL: "https://x.com/devdaspromocoes" });
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
     try {
       await collect(cfg, [offer("site-live", { title: "Fone <b>JBL</b> & Cia" }), offer("site-ended", { title: "Mouse Encerrado" })]);
@@ -767,6 +767,8 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       assert.ok(html.includes("Fone &lt;b&gt;JBL&lt;/b&gt; &amp; Cia"), "titles are escaped");
       assert.ok(!html.includes("Mouse Encerrado"), "ended deals are hidden");
       assert.ok(html.includes('href="https://t.me/+abc"'));
+      assert.ok(html.includes('href="https://x.com/devdaspromocoes"'), "X profile button");
+      assert.ok(!html.includes("Grupo no WhatsApp"), "no WhatsApp button without a link");
       assert.match(html, /#publi/);
       const live = (await postFor("site-live")).id;
       const web = await db.query<{ code: string }>(`SELECT code FROM links WHERE post_id = $1 AND channel = 'web'`, [live]);
