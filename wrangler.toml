@@ -11,7 +11,7 @@ workers_dev = true
 # 2nd: publishes queued posts when their time comes (QUEUE_CRON in src/http.ts).
 # 3rd: Sundays 18h Brasília, sends the weekly Top 10 for approval (ROUNDUP_CRON).
 [triggers]
-crons = ["7 0,12,15,18,21 * * *", "*/5 * * * *", "0 21 * * 0"]
+crons = ["7 0,12,15,18,21 * * *", "*/5 * * * *", "0 21 * * SUN"]
 
 [observability]
 enabled = true

@@ -54,7 +54,11 @@ jobs:
       - name: Deploy Cloudflare Worker
         id: worker
         run: |
+          # pipefail: without it `| tee` hides wrangler's errors (a rejected cron
+          # once left the queue schedule uninstalled while the deploy looked green).
+          set -o pipefail
           npx wrangler deploy | tee wrangler.log
+          if grep -q "ERROR" wrangler.log; then echo "::error::wrangler reported an error, see above"; exit 1; fi
           URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' wrangler.log | head -1 || true)
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           if [ -z "$PUBLIC_BASE_URL" ] && [ -n "$URL" ]; then

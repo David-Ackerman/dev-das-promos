@@ -23,8 +23,12 @@ import { isValidCode, sha256Hex } from "./util.ts";
  * own schedule runs hours late or not at all.
  */
 export const QUEUE_CRON = "*/5 * * * *";
-/** Sundays 21:00 UTC = 18:00 in Brasília: the weekly Top 10 goes to the admin. */
-export const ROUNDUP_CRON = "0 21 * * 0";
+/**
+ * Sundays 21:00 UTC = 18:00 in Brasília: the weekly Top 10 goes to the admin.
+ * Cloudflare numbers weekdays 1-7 (or SUN-SAT): "0" for Sunday is rejected, and a
+ * rejected cron throws out every schedule of the deploy (test/unit.test.ts checks).
+ */
+export const ROUNDUP_CRON = "0 21 * * SUN";
 interface Ctx {
   waitUntil(promise: Promise<unknown>): void;
 }

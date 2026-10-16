@@ -10,6 +10,7 @@ import {
   dueQueued,
   getOrCreateLink,
   getPost,
+  lastPublishedAt,
   queueTail,
   recordPublication,
   markDealEnded,
@@ -161,8 +162,16 @@ export async function unschedulePost(cfg: Config, db: Db, postId: number): Promi
   return "Voltou para as prévias.";
 }
 
-/** Worker cron: publishes the queued post whose time has come (one per tick keeps them spaced). */
+/**
+ * Worker cron: publishes the queued post whose time has come, one per tick.
+ * Overdue posts (the cron was down, the admin approved many) keep the spacing
+ * and wait for POSTING_HOURS instead of going out in a burst. ⚡ skips this.
+ */
 export async function publishDue(cfg: Config, db: Db): Promise<number> {
+  const now = new Date();
+  if (nextSlot(now, null, cfg.queue).getTime() > now.getTime()) return 0; // outside POSTING_HOURS
+  const last = await lastPublishedAt(db);
+  if (last && now.getTime() - last.getTime() < (cfg.queue.intervalMinutes - 1) * 60_000) return 0;
   let published = 0;
   for (const id of await dueQueued(db, 1)) {
     if (await transition(db, id, "queued", "publishing")) {

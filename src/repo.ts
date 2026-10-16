@@ -369,6 +369,14 @@ export async function setSchedule(db: Db, postId: number, at: Date | null): Prom
   await db.query(`UPDATE posts SET scheduled_at = $2::timestamptz WHERE id = $1`, [postId, at?.toISOString() ?? null]);
 }
 
+/** When the last post went out (any channel), or null. */
+export async function lastPublishedAt(db: Db): Promise<Date | null> {
+  const rows = await db.query<{ last: string | null }>(
+    `SELECT to_char(max(published_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS last FROM posts`,
+  );
+  return rows[0]?.last ? new Date(rows[0].last) : null;
+}
+
 /** Queued posts whose time has come, oldest first. */
 export async function dueQueued(db: Db, limit: number): Promise<number[]> {
   const rows = await db.query<{ id: number }>(

@@ -10,7 +10,7 @@ import { oauthHeader } from "../src/publishers/x.ts";
 import { renderTelegram, renderWhatsApp, renderX, xLength } from "../src/render.ts";
 import type { Candidate } from "../src/types.ts";
 import { brl, discountPct, toCents } from "../src/util.ts";
-import { createHandler } from "../src/http.ts";
+import { createHandler, QUEUE_CRON, ROUNDUP_CRON } from "../src/http.ts";
 import { comparePrice } from "../src/pricecheck.ts";
 import { fetchShopeeItem } from "../src/providers/shopee.ts";
 import { formatSlot, nextSlot, parsePostingHours } from "../src/schedule.ts";
@@ -441,6 +441,21 @@ describe("scheduled search", () => {
       ["api.telegram.org", () => ({ ok: true, result: { message_id: 1 } })],
     ]);
     assert.match(denied.to("sendMessage")[0]!.body.text, /HTTP 401/);
+  });
+});
+
+describe("worker crons", () => {
+  it("only uses cron strings Cloudflare accepts, and the Worker handles each of them", () => {
+    const toml = readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8");
+    const crons = JSON.parse(toml.match(/^crons\s*=\s*(\[.*\])/m)![1]!) as string[];
+    const days = /^(\*|([1-7]|SUN|MON|TUE|WED|THU|FRI|SAT)(-([1-7]|SUN|MON|TUE|WED|THU|FRI|SAT))?)(\/\d+)?$/i;
+    for (const cron of crons) {
+      const fields = cron.split(/\s+/);
+      assert.equal(fields.length, 5, cron);
+      for (const part of fields[4]!.split(",")) assert.match(part, days, `weekday must be 1-7 or SUN-SAT in "${cron}"`);
+    }
+    assert.ok(crons.includes(QUEUE_CRON), "queue cron is installed");
+    assert.ok(crons.includes(ROUNDUP_CRON), "roundup cron is installed");
   });
 });
 

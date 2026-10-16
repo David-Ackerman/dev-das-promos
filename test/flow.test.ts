@@ -639,6 +639,9 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       assert.equal((await postFor("qb")).status, "queued", "not due yet");
       await db.query(`UPDATE posts SET scheduled_at = now() - interval '1 minute' WHERE id = $1`, [b.id]);
       await cron();
+      assert.equal((await postFor("qb")).status, "queued", "overdue, but the last post went out minutes ago: keeps the spacing");
+      await db.query(`UPDATE posts SET published_at = now() - interval '1 hour' WHERE published_at > now() - interval '1 hour'`);
+      await cron();
       assert.equal((await postFor("qb")).status, "published");
       assert.equal(groupSends(), sent + 2, "one message per group");
       await tap(cfg, `n:${b.id}`);
@@ -807,7 +810,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       for (const name of ["top-1", "top-2", "top-3"]) await tap(cfg, `a:${(await postFor(name)).id}`);
 
       const handler = createHandler(() => ({ cfg, db }));
-      await handler.scheduled({ cron: "0 21 * * 0" }, {}, ctx);
+      await handler.scheduled({ cron: "0 21 * * SUN" }, {}, ctx);
       await flush();
       const preview = f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body;
       assert.match(preview.text, /Resumo #\d+<\/b> · prévia/);
