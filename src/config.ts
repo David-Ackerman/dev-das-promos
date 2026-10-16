@@ -8,7 +8,7 @@ import { parsePostingHours, type QueueSettings } from "./schedule.ts";
 export type Env = Record<string, string | undefined>;
 
 export type WhatsAppMode = "share" | "evolution" | "zapi" | "off";
-export type XMode = "share" | "off" | "link" | "no-link";
+export type XMode = "share" | "off" | "link" | "no-link" | "thread";
 
 export interface Config {
   databaseUrl: string;
@@ -33,8 +33,17 @@ export interface Config {
   x: {
     mode: XMode;
     credentials?: { apiKey: string; apiSecret: string; accessToken: string; accessTokenSecret: string };
-    /** Shown instead of the link when mode is "no-link". */
+    /** Shown instead of the link when mode is "no-link" (and in "thread" when there's no link reply). */
     noLinkText: string;
+    /** "thread": at most this many X posts a day. */
+    dailyPosts: number;
+    /** "thread": hard cap per calendar month (Brasília), spread evenly over the days. */
+    monthlyBudgetUsd: number;
+    /** X's per-request prices (pay-per-use); update if X changes them. */
+    postCostUsd: number;
+    linkPostCostUsd: number;
+    /** "thread": Shopee products get extra slots only when the title has one of these. */
+    shopeeExtraWords: string[];
   };
   amazon?: {
     clientId: string;
@@ -117,6 +126,11 @@ export function list(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function num(value: string | undefined, fallback: number): number {
+  const n = Number.parseFloat((value ?? "").replace(",", "."));
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function int(value: string | undefined, fallback: number): number {
   const n = Number.parseInt(value ?? "", 10);
   return Number.isFinite(n) ? n : fallback;
@@ -152,8 +166,8 @@ export function loadConfig(env: Env): Config {
     throw new Error(`WHATSAPP_MODE must be share | evolution | zapi | off (got "${waMode}")`);
   }
   const xMode = (env.X_MODE?.trim() || "share") as XMode;
-  if (!["share", "off", "link", "no-link"].includes(xMode)) {
-    throw new Error(`X_MODE must be share | off | link | no-link (got "${xMode}")`);
+  if (!["share", "off", "link", "no-link", "thread"].includes(xMode)) {
+    throw new Error(`X_MODE must be share | off | link | no-link | thread (got "${xMode}")`);
   }
 
   const config: Config = {
@@ -170,6 +184,14 @@ export function loadConfig(env: Env): Config {
     x: {
       mode: xMode,
       noLinkText: env.X_NO_LINK_TEXT?.trim() || "🔗 Link na bio",
+      dailyPosts: Math.max(0, int(env.X_DAILY_POSTS, 3)),
+      monthlyBudgetUsd: Math.max(0, num(env.X_MONTHLY_BUDGET_USD, 10)),
+      postCostUsd: num(env.X_POST_COST_USD, 0.015),
+      linkPostCostUsd: num(env.X_LINK_POST_COST_USD, 0.2),
+      shopeeExtraWords: list(
+        env.X_SHOPEE_EXTRA_WORDS ||
+          "placa de vídeo,placa de video,placa-mãe,placa mae,processador,memória ram,memoria ram,ssd nvme,fonte de alimentação,water cooler",
+      ),
     },
     ai: loadAiConfig(env),
     selection: {
@@ -223,7 +245,7 @@ export function loadConfig(env: Env): Config {
       clientToken: req(env, "ZAPI_CLIENT_TOKEN"),
     };
   }
-  if (xMode === "link" || xMode === "no-link") {
+  if (xMode === "link" || xMode === "no-link" || xMode === "thread") {
     config.x.credentials = {
       apiKey: req(env, "X_API_KEY"),
       apiSecret: req(env, "X_API_SECRET"),

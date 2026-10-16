@@ -58,14 +58,22 @@ export async function oauthHeader(
     .join(", ")}`;
 }
 
-export async function postTweet(creds: XCreds, text: string): Promise<string> {
+export async function postTweet(
+  creds: XCreds,
+  text: string,
+  opts: { mediaIds?: string[]; replyTo?: string } = {},
+): Promise<string> {
   const res = await fetch(TWEETS_URL, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       authorization: await oauthHeader("POST", TWEETS_URL, creds),
     },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({
+      text,
+      ...(opts.mediaIds?.length ? { media: { media_ids: opts.mediaIds } } : {}),
+      ...(opts.replyTo ? { reply: { in_reply_to_tweet_id: opts.replyTo } } : {}),
+    }),
     signal: AbortSignal.timeout(20_000),
   });
   const body = (await res.json().catch(() => ({}))) as {
@@ -79,4 +87,53 @@ export async function postTweet(creds: XCreds, text: string): Promise<string> {
     throw new Error(`X: ${msg ?? `HTTP ${res.status}`}`);
   }
   return body.data.id;
+}
+
+const MEDIA_URL = "https://api.x.com/2/media/upload";
+const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * The biggest version of a store's product photo: Amazon's 1500px variant,
+ * Mercado Livre's original as JPEG, Shopee without the thumbnail suffix.
+ */
+export function bestImageUrl(url: string): string {
+  if (/m\.media-amazon\.com\/images\//.test(url)) return url.replace(/\._[^/.]*_\.(jpe?g|png|webp)$/i, "._AC_SL1500_.$1");
+  if (/mlstatic\.com\//.test(url)) return url.replace(/-[A-Z]\.(webp|jpe?g|png)$/i, "-O.jpg");
+  if (/shopee|susercontent/.test(url)) return url.replace(/_tn$/, "");
+  return url;
+}
+
+async function downloadImage(url: string): Promise<{ bytes: ArrayBuffer; type: string } | undefined> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
+  const type = res?.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (!res?.ok || !IMAGE_TYPES.includes(type)) return undefined;
+  const bytes = await res.arrayBuffer();
+  return bytes.byteLength > 1000 && bytes.byteLength <= MAX_IMAGE_BYTES ? { bytes, type } : undefined;
+}
+
+/** Uploads the product photo (best variant, else the original) and returns its media id; undefined without a usable image. */
+export async function uploadProductImage(creds: XCreds, imageUrl: string | null): Promise<string | undefined> {
+  if (!imageUrl) return undefined;
+  const best = bestImageUrl(imageUrl);
+  const image = (await downloadImage(best)) ?? (best !== imageUrl ? await downloadImage(imageUrl) : undefined);
+  if (!image) return undefined;
+  const form = new FormData();
+  form.append("media", new Blob([image.bytes], { type: image.type }), `product.${image.type.split("/")[1]}`);
+  form.append("media_category", "tweet_image");
+  const res = await fetch(MEDIA_URL, {
+    method: "POST",
+    headers: { authorization: await oauthHeader("POST", MEDIA_URL, creds) },
+    body: form,
+    signal: AbortSignal.timeout(20_000),
+  });
+  const body = (await res.json().catch(() => ({}))) as {
+    data?: { id?: string };
+    media_id_string?: string;
+    detail?: string;
+    errors?: { message?: string }[];
+  };
+  const id = body.data?.id ?? body.media_id_string;
+  if (!res.ok || !id) throw new Error(`X media: ${body.errors?.[0]?.message ?? body.detail ?? `HTTP ${res.status}`}`);
+  return id;
 }

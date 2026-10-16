@@ -2,7 +2,7 @@ import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { pendingKeyboard, queuedKeyboard, renderInput, retryKeyboard, statusHeader, updatePreview } from "./preview.ts";
 import { checkPrice } from "./pricecheck.ts";
-import { postTweet } from "./publishers/x.ts";
+import { postTweet, uploadProductImage } from "./publishers/x.ts";
 import { sendWhatsApp } from "./publishers/whatsapp.ts";
 import { renderTelegram, renderWhatsApp, renderX } from "./render.ts";
 import {
@@ -13,6 +13,9 @@ import {
   lastPublishedAt,
   queueTail,
   recordPublication,
+  recordXUsage,
+  type XUsage,
+  xUsage,
   markDealEnded,
   recentlyPublished,
   sentTelegramMessages,
@@ -23,7 +26,7 @@ import {
 import { formatSlot, nextSlot } from "./schedule.ts";
 import { CAPTION_LIMIT, editAnyMessage, type Keyboard, sendPost, visibleLength } from "./telegram.ts";
 import type { PostRow } from "./types.ts";
-import { brl, discountPct, errorMessage, escapeHtml, truncate } from "./util.ts";
+import { brl, discountPct, errorMessage, escapeHtml, hasAnyWord, truncate } from "./util.ts";
 
 export function goUrl(cfg: Config, code: string): string {
   return `${cfg.publicBaseUrl}/go/${code}`;
@@ -33,6 +36,79 @@ export interface PublishResult {
   ok: string[];
   failed: string[];
   manual: Keyboard;
+  /** Channels deliberately left out this time (e.g. X's daily limit), not failures. */
+  skipped?: string[];
+}
+
+export interface XPlan {
+  post: boolean;
+  /** Also reply with the link (the expensive kind of post). */
+  reply: boolean;
+  reason?: string;
+}
+
+function daysInMonthBrasilia(now = new Date()): number {
+  const local = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth() + 1, 0)).getUTCDate();
+}
+
+/**
+ * X_MODE=thread rules, so X stays inside X_MONTHLY_BUDGET_USD:
+ * - at most X_DAILY_POSTS posts a day;
+ * - each store's first deal of the day gets a slot; extra slots go to Amazon /
+ *   Mercado Livre, and to Shopee only for niche hardware (X_SHOPEE_EXTRA_WORDS);
+ * - spending is capped per day (budget ÷ days in the month) and per month; the
+ *   link reply ($0.20) is added only while it still fits today's share.
+ */
+export function planXPost(cfg: Config, post: PostRow, usage: XUsage, now = new Date()): XPlan {
+  const x = cfg.x;
+  if (usage.postsToday >= x.dailyPosts) return { post: false, reply: false, reason: `limite de ${x.dailyPosts} posts por dia` };
+  const firstOfStore = !usage.byStoreToday[post.marketplace];
+  if (!firstOfStore && post.marketplace === "shopee" && !hasAnyWord(post.title, x.shopeeExtraWords)) {
+    return { post: false, reply: false, reason: "já teve Shopee hoje e este não é hardware do nicho" };
+  }
+  const daily = x.monthlyBudgetUsd / daysInMonthBrasilia(now);
+  const fits = (cost: number) =>
+    usage.spentMonthUsd + cost <= x.monthlyBudgetUsd + 1e-9 && usage.spentTodayUsd + cost <= daily + 1e-9;
+  if (!fits(x.postCostUsd)) return { post: false, reply: false, reason: "orçamento do X para hoje/mês" };
+  return { post: true, reply: fits(x.postCostUsd + x.linkPostCostUsd) };
+}
+
+/** X_MODE=thread: a post without link (cheaper and shown to more people), with the product photo, plus a reply with the link. */
+async function publishXThread(cfg: Config, db: Db, post: PostRow, result: PublishResult): Promise<void> {
+  const creds = cfg.x.credentials!;
+  const plan = planXPost(cfg, post, await xUsage(db));
+  if (!plan.post) {
+    result.skipped!.push(`X (${plan.reason})`);
+    return;
+  }
+  try {
+    const link = goUrl(cfg, await getOrCreateLink(db, post.id, "x"));
+    const tail = plan.reply ? "👇 Link da oferta no primeiro comentário" : cfg.x.noLinkText;
+    const text = renderX(renderInput(cfg, post, link), tail);
+    // A missing or broken photo never blocks the post.
+    const mediaId = await uploadProductImage(creds, post.image_url).catch((e) => {
+      console.warn(`X image for #${post.id}: ${errorMessage(e)}`);
+      return undefined;
+    });
+    const id = await postTweet(creds, text, mediaId ? { mediaIds: [mediaId] } : {});
+    await recordXUsage(db, post.id, "post", cfg.x.postCostUsd);
+    await recordPublication(db, { postId: post.id, channel: "x", target: "", status: "sent", externalId: id });
+    let label = mediaId ? "X (com foto)" : "X";
+    if (plan.reply) {
+      try {
+        await postTweet(creds, `🛒 Link da oferta: ${link}`, { replyTo: id });
+        await recordXUsage(db, post.id, "reply", cfg.x.linkPostCostUsd);
+        label += " + link no comentário";
+      } catch (error) {
+        label += ` (comentário com link falhou: ${errorMessage(error)})`;
+      }
+    }
+    result.ok.push(label);
+  } catch (error) {
+    await recordPublication(db, { postId: post.id, channel: "x", target: "", status: "failed", error: errorMessage(error) });
+    result.failed.push(`X: ${errorMessage(error)}`);
+  }
 }
 
 /** Builds the WhatsApp text for a post using its WhatsApp tracking link. */
@@ -51,7 +127,7 @@ export async function publishEverywhere(
   post: PostRow,
   done: Set<string> = new Set(),
 ): Promise<PublishResult> {
-  const result: PublishResult = { ok: [], failed: [], manual: [] };
+  const result: PublishResult = { ok: [], failed: [], manual: [], skipped: [] };
 
   // Telegram groups: one tracked link per group, so we can compare groups.
   for (const chatId of cfg.telegram.groupChatIds) {
@@ -99,7 +175,10 @@ export async function publishEverywhere(
   }
 
   // X
-  if (cfg.x.mode === "share") {
+  if (cfg.x.mode === "thread" && cfg.x.credentials) {
+    if (done.has("x:")) result.ok.push("X");
+    else await publishXThread(cfg, db, post, result);
+  } else if (cfg.x.mode === "share") {
     // Posting by hand is free; the API charges per post. The button opens X with the post written.
     const code = await getOrCreateLink(db, post.id, "x");
     if (!done.has("x:")) {
@@ -258,6 +337,7 @@ async function finishPublishing(cfg: Config, db: Db, postId: number, opts: { che
     result.ok.length ? `Enviado: ${result.ok.join(", ")}` : "",
     result.manual.length ? "Toque nos botões abaixo para postar no WhatsApp / X" : "",
     result.failed.length ? `Falhou: ${result.failed.join(" | ")}` : "",
+    result.skipped?.length ? `Fora desta vez: ${result.skipped.join(", ")}` : "",
   ].filter(Boolean);
   const emoji = status === "published" ? "✅" : status === "partial" ? "⚠️" : "❌";
   const header = `${statusHeader(post, emoji, status === "failed" ? "Falhou" : "Publicado")}${

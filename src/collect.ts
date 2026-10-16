@@ -20,7 +20,7 @@ import {
 } from "./repo.ts";
 import { sendText } from "./telegram.ts";
 import type { Candidate, Marketplace, PostRow } from "./types.ts";
-import { errorMessage, escapeHtml, randomCode } from "./util.ts";
+import { errorMessage, escapeHtml, hasAnyWord, randomCode } from "./util.ts";
 
 export interface CollectDeps {
   fetchAmazon?: (cfg: NonNullable<Config["amazon"]>) => Promise<Candidate[]>;
@@ -28,17 +28,9 @@ export interface CollectDeps {
   log?: (msg: string) => void;
 }
 
-function normalize(text: string): string {
-  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-}
-
 /** True when the title has a blocked word or phrase. Whole words, accents ignored ("capa" ≠ "capacidade"). */
 export function isBlocked(title: string, blockedWords: string[]): boolean {
-  const t = ` ${normalize(title).replace(/[^a-z0-9]+/g, " ")} `;
-  return blockedWords.some((w) => {
-    const word = normalize(w).replace(/[^a-z0-9]+/g, " ").trim();
-    return word !== "" && t.includes(` ${word} `);
-  });
+  return hasAnyWord(title, blockedWords);
 }
 
 /** What one sale pays us, in cents. Shopee sends the rate as a fraction ("0.08"); some feeds use percent. */

@@ -41,6 +41,19 @@ export function discountPct(priceCents: number, originalCents?: number): number 
   return Math.round(((originalCents - priceCents) / originalCents) * 100);
 }
 
+function normalizeWords(text: string): string {
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** True when `text` has any of `words` as whole words/phrases; accents, case and hyphens ignored. */
+export function hasAnyWord(text: string, words: string[]): boolean {
+  const t = ` ${normalizeWords(text)} `;
+  return words.some((w) => {
+    const word = normalizeWords(w);
+    return word !== "" && t.includes(` ${word} `);
+  });
+}
+
 export function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

@@ -12,6 +12,8 @@ import type { Candidate } from "../src/types.ts";
 import { brl, discountPct, toCents } from "../src/util.ts";
 import { createHandler, QUEUE_CRON, ROUNDUP_CRON } from "../src/http.ts";
 import { comparePrice } from "../src/pricecheck.ts";
+import { planXPost } from "../src/publish.ts";
+import { bestImageUrl } from "../src/publishers/x.ts";
 import { fetchShopeeItem } from "../src/providers/shopee.ts";
 import { formatSlot, nextSlot, parsePostingHours } from "../src/schedule.ts";
 import { mockFetch, testConfig } from "./helpers.ts";
@@ -450,6 +452,36 @@ describe("site assets", () => {
       assert.ok(readFileSync(new URL(`../public/${file}`, import.meta.url)).length > 1000, file);
     }
     assert.match(readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8"), /\[assets\]\s*directory = "\.\/public"/);
+  });
+});
+
+describe("X thread rules", () => {
+  const cfg = testConfig({ X_MODE: "thread", X_API_KEY: "a", X_API_SECRET: "b", X_ACCESS_TOKEN: "c", X_ACCESS_TOKEN_SECRET: "d" });
+  const post = (marketplace: string, title = "Fone Bluetooth") => ({ marketplace, title }) as never;
+  const usage = (over: Partial<import("../src/repo.ts").XUsage> = {}) => ({
+    postsToday: 0, byStoreToday: {}, spentTodayUsd: 0, spentMonthUsd: 0, postsMonth: 0, repliesMonth: 0, ...over,
+  });
+  const oct = new Date("2026-10-16T15:00:00Z"); // 31 days: $10 / 31 ≈ $0.32 a day
+  it("gives the day's first deal the link reply, later ones only the post, within the daily share", () => {
+    assert.deepEqual(planXPost(cfg, post("shopee"), usage(), oct), { post: true, reply: true });
+    const afterFirst = usage({ postsToday: 1, byStoreToday: { shopee: 1 }, spentTodayUsd: 0.215, spentMonthUsd: 0.215 });
+    assert.deepEqual(planXPost(cfg, post("amazon"), afterFirst, oct), { post: true, reply: false });
+  });
+  it("one slot per store, extra slots for Amazon / Mercado Livre, Shopee extras only for hardware", () => {
+    const shopeeDone = usage({ postsToday: 1, byStoreToday: { shopee: 1 }, spentTodayUsd: 0.015 });
+    assert.equal(planXPost(cfg, post("shopee", "Fone Bluetooth"), shopeeDone, oct).post, false);
+    assert.equal(planXPost(cfg, post("shopee", "Placa-Mãe B550 AM4"), shopeeDone, oct).post, true);
+    const amazonDone = usage({ postsToday: 1, byStoreToday: { amazon: 1 }, spentTodayUsd: 0.015 });
+    assert.equal(planXPost(cfg, post("amazon"), amazonDone, oct).post, true);
+  });
+  it("stops at the daily limit and the monthly budget", () => {
+    assert.match(planXPost(cfg, post("amazon"), usage({ postsToday: 3 }), oct).reason!, /limite de 3/);
+    assert.match(planXPost(cfg, post("amazon"), usage({ spentMonthUsd: 9.99 }), oct).reason!, /orçamento/);
+  });
+  it("uses the biggest version of each store's photo", () => {
+    assert.equal(bestImageUrl("https://m.media-amazon.com/images/I/61ev._AC_SX300_SY300_.jpg"), "https://m.media-amazon.com/images/I/61ev._AC_SL1500_.jpg");
+    assert.equal(bestImageUrl("https://http2.mlstatic.com/D_NQ_NP_8812-MLA1-V.webp"), "https://http2.mlstatic.com/D_NQ_NP_8812-MLA1-O.jpg");
+    assert.equal(bestImageUrl("https://down-br.img.susercontent.com/file/abc123_tn"), "https://down-br.img.susercontent.com/file/abc123");
   });
 });
 

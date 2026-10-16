@@ -369,6 +369,48 @@ export async function setSchedule(db: Db, postId: number, at: Date | null): Prom
   await db.query(`UPDATE posts SET scheduled_at = $2::timestamptz WHERE id = $1`, [postId, at?.toISOString() ?? null]);
 }
 
+const BRT_DAY = `(created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`;
+const BRT_MONTH = `date_trunc('month', created_at AT TIME ZONE 'America/Sao_Paulo') = date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')`;
+
+export interface XUsage {
+  /** X posts made today (Brasília), per store of the product. */
+  postsToday: number;
+  byStoreToday: Record<string, number>;
+  spentTodayUsd: number;
+  spentMonthUsd: number;
+  postsMonth: number;
+  repliesMonth: number;
+}
+
+export async function xUsage(db: Db): Promise<XUsage> {
+  const [totals] = await db.query<{ posts_today: number; spent_today: string; spent_month: string; posts_month: number; replies_month: number }>(
+    `SELECT count(*) FILTER (WHERE kind = 'post' AND ${BRT_DAY})::int AS posts_today,
+            coalesce(sum(cost_usd) FILTER (WHERE ${BRT_DAY}), 0)::text AS spent_today,
+            coalesce(sum(cost_usd) FILTER (WHERE ${BRT_MONTH}), 0)::text AS spent_month,
+            count(*) FILTER (WHERE kind = 'post' AND ${BRT_MONTH})::int AS posts_month,
+            count(*) FILTER (WHERE kind = 'reply' AND ${BRT_MONTH})::int AS replies_month
+     FROM x_usage`,
+  );
+  const stores = await db.query<{ marketplace: string; n: number }>(
+    `SELECT pr.marketplace, count(*)::int AS n FROM x_usage u
+     JOIN posts p ON p.id = u.post_id JOIN products pr ON pr.id = p.product_id
+     WHERE u.kind = 'post' AND (u.created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+     GROUP BY pr.marketplace`,
+  );
+  return {
+    postsToday: totals?.posts_today ?? 0,
+    byStoreToday: Object.fromEntries(stores.map((s) => [s.marketplace, s.n])),
+    spentTodayUsd: Number(totals?.spent_today ?? 0),
+    spentMonthUsd: Number(totals?.spent_month ?? 0),
+    postsMonth: totals?.posts_month ?? 0,
+    repliesMonth: totals?.replies_month ?? 0,
+  };
+}
+
+export async function recordXUsage(db: Db, postId: number, kind: "post" | "reply", costUsd: number): Promise<void> {
+  await db.query(`INSERT INTO x_usage (post_id, kind, cost_usd) VALUES ($1, $2, $3)`, [postId, kind, costUsd]);
+}
+
 /** When the last post went out (any channel), or null. */
 export async function lastPublishedAt(db: Db): Promise<Date | null> {
   const rows = await db.query<{ last: string | null }>(
@@ -475,6 +517,8 @@ export interface Stats {
   topPosts: { id: number; title: string; marketplace: string; discount_pct: number; clicks: number }[];
   /** Hours (Brasília) with the most human clicks: a guide for POSTING_HOURS. */
   bestHours: { hour: number; clicks: number }[];
+  /** This calendar month's paid X calls (X_MODE=thread). */
+  x: XUsage;
 }
 
 export async function getStats(db: Db, days: number): Promise<Stats> {
@@ -528,6 +572,7 @@ export async function getStats(db: Db, days: number): Promise<Stats> {
   return {
     days,
     bestHours,
+    x: await xUsage(db),
     posts: posts ?? { published: 0, declined: 0, pending: 0 },
     byChannel,
     byTarget,

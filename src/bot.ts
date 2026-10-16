@@ -82,10 +82,16 @@ export async function regenerateCaption(cfg: Config, db: Db, post: PostRow): Pro
   if (caption.error) await aiBusyFallback(cfg, caption.error);
 }
 
-export function formatStats(s: Awaited<ReturnType<typeof getStats>>): string {
+export function formatStats(s: Awaited<ReturnType<typeof getStats>>, xBudgetUsd?: number): string {
   const lines = [
     `📊 <b>Últimos ${s.days} dias</b>`,
     `Posts: ${s.posts.published} publicados · ${s.posts.declined} recusados · ${s.posts.pending} pendentes`,
+    ...(s.x.postsMonth
+      ? [
+          `🐦 X este mês: ${s.x.postsMonth} posts, ${s.x.repliesMonth} com link · US$ ${s.x.spentMonthUsd.toFixed(2)}` +
+            (xBudgetUsd ? ` de US$ ${xBudgetUsd.toFixed(2)}` : ""),
+        ]
+      : []),
     "",
     "<b>Cliques por canal</b>",
     ...(s.byChannel.length
@@ -279,7 +285,7 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
       return;
     case "/stats": {
       const days = Math.min(Math.max(Number.parseInt(text.split(/\s+/)[1] ?? "7", 10) || 7, 1), 365);
-      await sendText(token, chatId, formatStats(await getStats(db, days)));
+      await sendText(token, chatId, formatStats(await getStats(db, days), cfg.x.mode === "thread" ? cfg.x.monthlyBudgetUsd : undefined));
       return;
     }
     case "/pendentes": {

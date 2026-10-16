@@ -865,6 +865,42 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("posts to X as a thread: photo + no link, then a reply with the link, within the limits", async () => {
+    const cfg = testConfig({ X_MODE: "thread", X_API_KEY: "a", X_API_SECRET: "b", X_ACCESS_TOKEN: "c", X_ACCESS_TOKEN_SECRET: "d", X_DAILY_POSTS: "2", WHATSAPP_MODE: "off" });
+    let tweet = 0;
+    const f = mockFetch([
+      ["img.test", () => new Response(new Uint8Array(5000), { headers: { "content-type": "image/jpeg" } })],
+      ["api.x.com/2/media/upload", () => ({ data: { id: "media-1" } })],
+      ["api.x.com/2/tweets", () => ({ data: { id: `tw-${++tweet}` } })],
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", ai],
+      ["affiliate.shopee", shortLink],
+    ]);
+    try {
+      await collect(cfg, [offer("xt-1", { imageUrl: "https://img.test/a.jpg" }), offer("xt-2", { title: "Fone Bluetooth Comum" })]);
+      await collect(cfg, [offer("xt-3", { title: "Placa de Vídeo RTX 5060 8GB" }), offer("xt-4", { title: "Processador Ryzen 5 9600X" })]);
+      for (const name of ["xt-1", "xt-2", "xt-3", "xt-4"]) await tap(cfg, `a:${(await postFor(name)).id}`);
+
+      const tweets = f.to("api.x.com/2/tweets").map((c) => c.body);
+      assert.equal(tweets.length, 3, "first deal: post + reply; non-hardware Shopee skipped; hardware Shopee: post only; then the daily limit");
+      assert.deepEqual(tweets[0].media, { media_ids: ["media-1"] }, "with the product photo");
+      assert.ok(!tweets[0].text.includes("http"), "main post has no link");
+      assert.match(tweets[0].text, /primeiro comentário/);
+      assert.equal(tweets[1].reply.in_reply_to_tweet_id, "tw-1");
+      assert.match(tweets[1].text, /\/go\/[0-9a-zA-Z]+/);
+      assert.match(tweets[2].text, /Placa de Vídeo/);
+      assert.ok(!tweets[2].reply, "budget left for a post, not for another link reply");
+      assert.match(tweets[2].text, /Link na bio/);
+      const edit = (name: string) => postFor(name).then((p) => f.to("editMessage").filter((c) => c.body.message_id === Number(p.preview_message_id)).at(-1)!.body);
+      assert.match((await edit("xt-2")).text ?? "", /Fora desta vez: X \(já teve Shopee hoje/);
+      assert.match((await edit("xt-4")).text ?? "", /limite de 2 posts por dia/);
+      const spent = await db.query<{ n: number; usd: string }>(`SELECT count(*)::int AS n, sum(cost_usd)::text AS usd FROM x_usage`);
+      assert.deepEqual([spent[0]!.n, Number(spent[0]!.usd)], [3, 0.23]);
+    } finally {
+      f.restore();
+    }
+  });
+
   it("expires previews nobody answered", async () => {
     const cfg = testConfig();
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", () => new Response("x", { status: 500 })], ["affiliate.shopee", () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } })]]);
