@@ -243,6 +243,17 @@ describe("ai fallback", () => {
       f.restore();
     }
   });
+  it("treats an overloaded provider (503) like a busy one", async () => {
+    let calls = 0;
+    const f = mockFetch([["chat/completions", () => (++calls === 1 ? new Response("{}", { status: 503 }) : ok)]]);
+    try {
+      const c = await generateCaption(testConfig({ AI_MODEL: "only:free" }).ai, cand({}), undefined, { budgetMs: 10_000 });
+      assert.equal(c.model, "only:free", "retried after the first round");
+      assert.equal(calls, 2);
+    } finally {
+      f.restore();
+    }
+  });
   it("gives busy models a second go after trying every model once", async () => {
     const tried: string[] = [];
     const f = mockFetch([["chat/completions", (c) => {

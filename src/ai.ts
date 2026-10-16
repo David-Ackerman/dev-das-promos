@@ -118,7 +118,7 @@ export interface CaptionOptions {
 /** GitHub Actions has no 30s limit: the search gives every model time and busy ones extra rounds. */
 export const SEARCH_CAPTION: CaptionOptions = { budgetMs: 90_000, perModelMs: 25_000 };
 
-/** HTTP 429 = the model is busy right now; worth trying again after the other models. */
+/** HTTP 429 / 502 / 503 = the model is busy right now; worth trying again after the other models. */
 class BusyError extends Error {}
 
 /**
@@ -199,7 +199,8 @@ export async function askModel(
     };
     if (!res.ok) {
       const msg = `HTTP ${res.status} ${body.error?.message ?? ""}`.trim();
-      throw res.status === 429 ? new BusyError(msg) : new Error(msg);
+      // 429 = rate limited, 502/503 = overloaded: both pass, so worth another round later.
+      throw [429, 502, 503].includes(res.status) ? new BusyError(msg) : new Error(msg);
     }
     const message = body.choices?.[0]?.message;
     let parsed: { texto: string; tweet: string; tag?: string };
