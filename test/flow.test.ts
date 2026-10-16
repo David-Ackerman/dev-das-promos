@@ -786,6 +786,8 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       assert.ok(!html.includes("Mouse Encerrado"), "ended deals are hidden");
       assert.ok(html.includes('href="https://t.me/+abc"'));
       assert.ok(html.includes('href="https://x.com/devdaspromocoes"'), "X profile button");
+      assert.match(html, /<img class="banner" src="\/banner\.webp"/);
+      assert.ok(html.includes(`content="${cfg.publicBaseUrl}/og.jpg"`), "link previews use the banner");
       assert.ok(!html.includes("Grupo no WhatsApp"), "no WhatsApp button without a link");
       assert.match(html, /#publi/);
       const live = (await postFor("site-live")).id;

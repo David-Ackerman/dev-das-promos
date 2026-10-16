@@ -73,16 +73,22 @@ export function sitePage(cfg: Config, deals: SiteDeal[]): string {
 <meta property="og:title" content="${attr(name)}">
 <meta property="og:description" content="${attr(description)}">
 <meta property="og:type" content="website">
-${deals[0]?.image_url ? `<meta property="og:image" content="${attr(deals[0].image_url)}">` : ""}
+<meta property="og:image" content="${attr(cfg.publicBaseUrl)}/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="556">
+<meta name="twitter:card" content="summary_large_image">
 <style>
   :root { color-scheme: light dark; --bg: #f6f7f9; --card: #fff; --fg: #14171a; --muted: #5b6672; --line: #e3e7ec; --accent: #e8590c; --accent-fg: #fff; --ok: #2b8a3e; }
   @media (prefers-color-scheme: dark) { :root { --bg: #0e1013; --card: #171a1f; --fg: #e9edf1; --muted: #98a2ad; --line: #262b33; --accent: #ff7a33; --accent-fg: #111; --ok: #51cf66; } }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
   header, main, footer { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
-  header { padding-top: 28px; padding-bottom: 8px; }
-  h1 { margin: 0; font-size: 28px; }
-  header p { margin: 6px 0 14px; color: var(--muted); }
+  header { padding-top: 16px; padding-bottom: 8px; }
+  /* The banner's left third is empty (made for an X header): crop toward the logo, more on phones. */
+  .banner { display: block; width: 100%; height: auto; aspect-ratio: 2000 / 667; object-fit: cover; object-position: 75% center; border-radius: 16px; background: #0b1b3d; }
+  @media (max-width: 640px) { .banner { aspect-ratio: 2 / 1; object-position: 80% center; border-radius: 12px; } }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  header p { margin: 12px 0 14px; color: var(--muted); }
   .links { display: flex; flex-wrap: wrap; gap: 8px; }
   .join { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 999px; font-weight: 700; text-decoration: none; }
   .join svg { width: 18px; height: 18px; flex: none; }
@@ -110,7 +116,9 @@ ${deals[0]?.image_url ? `<meta property="og:image" content="${attr(deals[0].imag
 </head>
 <body>
 <header>
-  <h1>${escapeHtml(name)}</h1>
+  <h1 class="sr-only">${escapeHtml(name)}</h1>
+  <img class="banner" src="/banner.webp" srcset="/banner-1000.webp 1000w, /banner.webp 2000w" sizes="(max-width: 1080px) 100vw, 1048px"
+    width="2000" height="667" alt="${attr(name)}: bug no preço, commit no carrinho. Ofertas de tech, gadgets e setup" fetchpriority="high">
   <p>${escapeHtml(description)}</p>
   ${join ? `<nav class="links">${join}</nav>` : ""}
 </header>

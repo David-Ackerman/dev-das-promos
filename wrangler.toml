@@ -13,5 +13,9 @@ workers_dev = true
 [triggers]
 crons = ["7 0,12,15,18,21 * * *", "*/5 * * * *", "0 21 * * SUN"]
 
+# Banner and link-preview images for the public page (served as files, before the Worker).
+[assets]
+directory = "./public"
+
 [observability]
 enabled = true

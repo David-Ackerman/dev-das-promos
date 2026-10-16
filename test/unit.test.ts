@@ -444,6 +444,15 @@ describe("scheduled search", () => {
   });
 });
 
+describe("site assets", () => {
+  it("ships every image the page references", () => {
+    for (const file of ["banner.webp", "banner-1000.webp", "og.jpg"]) {
+      assert.ok(readFileSync(new URL(`../public/${file}`, import.meta.url)).length > 1000, file);
+    }
+    assert.match(readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8"), /\[assets\]\s*directory = "\.\/public"/);
+  });
+});
+
 describe("worker crons", () => {
   it("only uses cron strings Cloudflare accepts, and the Worker handles each of them", () => {
     const toml = readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8");
