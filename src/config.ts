@@ -50,13 +50,7 @@ export interface Config {
     sortType: number;
   };
   /** `models` are tried in order: free models are often busy (HTTP 429). */
-  ai: {
-    baseUrl: string;
-    apiKey?: string;
-    models: string[];
-    /** Who the group is for (NICHE), so the jokes fit the audience. */
-    niche?: string;
-  };
+  ai: AiConfig;
   selection: {
     postsPerRun: number;
     minDiscountPct: number;
@@ -75,6 +69,45 @@ export interface Config {
   site: { name: string; telegramUrl?: string; whatsappUrl?: string; xUrl?: string };
   footer: string;
   githubDispatch?: { token: string; repo: string; workflow: string; ref: string };
+}
+
+/** An OpenAI-compatible chat API. Free tiers are per provider, so several of them don't run out together. */
+export interface AiProvider {
+  baseUrl: string;
+  apiKey?: string;
+}
+
+export interface AiConfig {
+  /** Where unprefixed AI_MODEL entries go (AI_BASE_URL, OpenRouter by default). */
+  baseUrl: string;
+  apiKey?: string;
+  /**
+   * Tried in order. "groq:<model>", "gemini:<model>", "cerebras:<model>" or
+   * "openrouter:<model>" use that provider's key; anything else uses AI_BASE_URL.
+   */
+  models: string[];
+  providers: Record<string, AiProvider>;
+  /** Who the group is for (NICHE), so the jokes fit the audience. */
+  niche?: string;
+}
+
+const OPENROUTER_URL = "https://openrouter.ai/api/v1";
+
+/** Only the AI settings (the AI check job runs with just these). */
+export function loadAiConfig(env: Env): AiConfig {
+  const key = (name: string) => env[name]?.trim() || undefined;
+  return {
+    baseUrl: (key("AI_BASE_URL") || OPENROUTER_URL).replace(/\/+$/, ""),
+    apiKey: key("AI_API_KEY") || key("OPENROUTER_API_KEY"),
+    models: list(env.AI_MODEL || env.OPENROUTER_MODEL),
+    providers: {
+      openrouter: { baseUrl: OPENROUTER_URL, apiKey: key("OPENROUTER_API_KEY") || key("AI_API_KEY") },
+      groq: { baseUrl: "https://api.groq.com/openai/v1", apiKey: key("GROQ_API_KEY") },
+      gemini: { baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", apiKey: key("GEMINI_API_KEY") },
+      cerebras: { baseUrl: "https://api.cerebras.ai/v1", apiKey: key("CEREBRAS_API_KEY") },
+    },
+    niche: key("NICHE"),
+  };
 }
 
 export function list(value: string | undefined): string[] {
@@ -138,12 +171,7 @@ export function loadConfig(env: Env): Config {
       mode: xMode,
       noLinkText: env.X_NO_LINK_TEXT?.trim() || "🔗 Link na bio",
     },
-    ai: {
-      baseUrl: (env.AI_BASE_URL?.trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, ""),
-      apiKey: env.AI_API_KEY?.trim() || env.OPENROUTER_API_KEY?.trim() || undefined,
-      models: list(env.AI_MODEL || env.OPENROUTER_MODEL),
-      niche: env.NICHE?.trim() || undefined,
-    },
+    ai: loadAiConfig(env),
     selection: {
       postsPerRun: int(env.POSTS_PER_RUN, 2),
       minDiscountPct: int(env.MIN_DISCOUNT_PCT, 20),

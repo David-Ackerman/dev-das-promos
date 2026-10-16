@@ -15,7 +15,8 @@
     "worker:dev": "wrangler dev",
     "worker:deploy": "wrangler deploy",
     "test": "node --test --test-concurrency=1 \"test/**/*.test.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "ai:check": "node --env-file-if-exists=.env src/jobs/ai-check.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.0",

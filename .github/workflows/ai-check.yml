@@ -1,0 +1,32 @@
+name: AI check
+
+# Measures how often the AI writes the caption (vs the stock template) with the
+# production keys: Actions > AI check > Run workflow. Uses some AI quota.
+on:
+  workflow_dispatch:
+    inputs:
+      rounds: { description: "Rounds", default: "5" }
+      products: { description: "Products per round", default: "10" }
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package.json
+      - run: npm install --no-audit --no-fund --omit=dev
+      - name: Load settings from repository variables and secrets
+        run: node src/jobs/gh-export-env.ts
+        env:
+          VARS_JSON: ${{ toJSON(vars) }}
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+      - run: node src/jobs/ai-check.ts --rounds "${{ inputs.rounds }}" --products "${{ inputs.products }}"

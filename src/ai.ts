@@ -1,6 +1,6 @@
 import type { Config } from "./config.ts";
 import { STORE } from "./render.ts";
-import type { Candidate } from "./types.ts";
+import type { Candidate, PostRow } from "./types.ts";
 import { brl, errorMessage, sleep, truncate } from "./util.ts";
 
 export interface Caption {
@@ -107,9 +107,16 @@ export function parseAiJson(raw: string): { texto: string; tweet: string; tag?: 
 
 /** Whole budget for one caption. The Worker (🔄 button) is cut off ~30s after answering Telegram. */
 const AI_BUDGET_MS = 22_000;
-/** Per-model wait cap, so one slow model can't eat the whole budget. */
-const PER_MODEL_TIMEOUT_MS = 12_000;
-const BUSY_RETRY_WAIT_MS = 1_000;
+
+export interface CaptionOptions {
+  /** Total time for this caption, across all models and retries. */
+  budgetMs?: number;
+  /** Cap per request, so one slow model can't eat the whole budget. */
+  perModelMs?: number;
+}
+
+/** GitHub Actions has no 30s limit: the search gives every model time and busy ones extra rounds. */
+export const SEARCH_CAPTION: CaptionOptions = { budgetMs: 90_000, perModelMs: 25_000 };
 
 /** HTTP 429 = the model is busy right now; worth trying again after the other models. */
 class BusyError extends Error {}
@@ -134,18 +141,51 @@ function contentText(content: MessageContent): string {
   return content ?? "";
 }
 
-async function askModel(cfg: Config["ai"], model: string, candidate: Candidate, timeoutMs: number): Promise<Caption> {
+export interface ModelEntry {
+  /** As written in AI_MODEL, e.g. "groq:openai/gpt-oss-20b". */
+  label: string;
+  model: string;
+  baseUrl: string;
+  apiKey?: string;
+}
+
+/** "groq:x" -> Groq's x; "google/gemma:free" (no known prefix) -> the AI_BASE_URL provider. */
+export function resolveModel(cfg: Config["ai"], entry: string): ModelEntry {
+  const at = entry.indexOf(":");
+  const prefix = at > 0 ? entry.slice(0, at).toLowerCase() : "";
+  const provider = cfg.providers[prefix];
+  if (provider) return { label: entry, model: entry.slice(at + 1), ...provider };
+  return { label: entry, model: entry, baseUrl: cfg.baseUrl, apiKey: cfg.apiKey };
+}
+
+interface ChatMessage {
+  content?: MessageContent;
+  /** Reasoning models (via OpenRouter, Groq, …) may leave the answer here and `content` empty. */
+  reasoning?: string | null;
+  reasoning_content?: string | null;
+}
+
+/** One chat request. Exported for the AI check job. */
+export async function askModel(
+  cfg: Config["ai"],
+  entry: ModelEntry,
+  candidate: Candidate,
+  timeoutMs: number,
+): Promise<Caption> {
   try {
-    const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+    if (!entry.apiKey) throw new Error("no API key for this provider");
+    const res = await fetch(`${entry.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${cfg.apiKey}`,
+        authorization: `Bearer ${entry.apiKey}`,
         "X-Title": "das-promos",
       },
       body: JSON.stringify({
-        model,
+        model: entry.model,
         temperature: 0.9,
+        // Room for reasoning models to think *and* answer; without it some return an empty reply.
+        max_tokens: 1500,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: facts(candidate, cfg.niche) },
@@ -154,67 +194,96 @@ async function askModel(cfg: Config["ai"], model: string, candidate: Candidate, 
       signal: AbortSignal.timeout(timeoutMs),
     });
     const body = (await res.json().catch(() => ({}))) as {
-      choices?: { message?: { content?: MessageContent } }[];
+      choices?: { message?: ChatMessage }[];
       error?: { message?: string };
     };
     if (!res.ok) {
       const msg = `HTTP ${res.status} ${body.error?.message ?? ""}`.trim();
       throw res.status === 429 ? new BusyError(msg) : new Error(msg);
     }
-    const parsed = parseAiReply(contentText(body.choices?.[0]?.message?.content));
+    const message = body.choices?.[0]?.message;
+    let parsed: { texto: string; tweet: string; tag?: string };
+    try {
+      parsed = parseAiReply(contentText(message?.content));
+    } catch (error) {
+      // Empty answer, but the JSON may sit at the end of the reasoning.
+      const reasoning = message?.reasoning ?? message?.reasoning_content ?? "";
+      const json = reasoning.match(/\{[^{}]*"texto"[^{}]*\}/g)?.at(-1);
+      if (!json) throw error;
+      parsed = parseAiJson(json);
+    }
     const caption = cleanAiText(parsed.texto, 300);
     const short = cleanAiText(parsed.tweet, 150);
-    if (!caption) throw new Error("AI text empty after cleanup");
-    return { caption, short: short || truncate(caption, 150), model, hashtag: cleanHashtag(parsed.tag) };
+    // "...", "ok", a lone emoji: not a caption, let the next model try.
+    if ((caption.match(/\p{L}/gu) ?? []).length < 8) throw new Error(`reply too short: "${caption}"`);
+    return { caption, short: short || truncate(caption, 150), model: entry.label, hashtag: cleanHashtag(parsed.tag) };
   } catch (error) {
     // Every failure names its model, so the admin sees which ones were tried.
-    const msg = `${model}: ${errorMessage(error)}`;
+    const msg = `${entry.label}: ${errorMessage(error)}`;
     throw error instanceof BusyError ? new BusyError(msg) : new Error(msg);
   }
 }
 
 /**
- * Tries every model in AI_MODEL once, in order; then, if time is left, gives the
- * ones that were busy (HTTP 429) one more go. All inside `budgetMs`. If nothing
- * answers, a template line is used and `error` lists what each model said.
+ * Tries every model in AI_MODEL once, in order; then, while time is left,
+ * gives the busy ones (HTTP 429) more rounds, waiting longer each time.
+ * If nothing answers, a template line is used and `error` lists what each model said.
  */
 export async function generateCaption(
   cfg: Config["ai"],
   candidate: Candidate,
   avoid?: string,
-  budgetMs = AI_BUDGET_MS,
+  opts: CaptionOptions = {},
 ): Promise<Caption> {
-  if (!cfg.apiKey || !cfg.models.length) return templateCaption(candidate, Date.now(), avoid);
-  const deadline = Date.now() + budgetMs;
+  const entries = cfg.models.map((m) => resolveModel(cfg, m)).filter((e) => e.apiKey);
+  if (!entries.length) return templateCaption(candidate, Date.now(), avoid);
+  const deadline = Date.now() + (opts.budgetMs ?? AI_BUDGET_MS);
+  const perModel = opts.perModelMs ?? 12_000;
   const errors: string[] = [];
-  const busy: string[] = [];
-  const attempt = async (model: string): Promise<Caption | undefined> => {
+  let busy: ModelEntry[] = [];
+  const attempt = async (entry: ModelEntry): Promise<Caption | undefined> => {
     const left = deadline - Date.now();
     if (left < 2_000) {
-      errors.push(`${model}: not tried (out of time)`);
+      errors.push(`${entry.label}: not tried (out of time)`);
       return undefined;
     }
     try {
-      return await askModel(cfg, model, candidate, Math.min(left, PER_MODEL_TIMEOUT_MS));
+      return await askModel(cfg, entry, candidate, Math.min(left, perModel));
     } catch (error) {
       errors.push(errorMessage(error));
-      if (error instanceof BusyError) busy.push(model);
+      if (error instanceof BusyError) busy.push(entry);
       return undefined;
     }
   };
 
-  for (const model of cfg.models) {
-    const caption = await attempt(model);
+  for (const entry of entries) {
+    const caption = await attempt(entry);
     if (caption) return caption;
   }
-  if (busy.length && deadline - Date.now() > BUSY_RETRY_WAIT_MS + 2_000) {
-    await sleep(BUSY_RETRY_WAIT_MS);
-    for (const model of busy.splice(0)) {
-      const caption = await attempt(model);
+  for (const wait of [2_000, 6_000, 15_000]) {
+    if (!busy.length || deadline - Date.now() < wait + 3_000) break;
+    await sleep(wait);
+    const round = busy;
+    busy = [];
+    for (const entry of round) {
+      const caption = await attempt(entry);
       if (caption) return caption;
     }
   }
   const error = errors.join(" | ");
   console.warn(`AI caption failed, using template: ${error}`);
   return { ...templateCaption(candidate, Date.now(), avoid), error };
+}
+
+/** What the AI needs to know about an existing post (regenerate, healing template texts). */
+export function candidateFromPost(post: Pick<PostRow, "marketplace" | "title" | "product_url" | "price_cents" | "original_price_cents" | "discount_pct">): Candidate {
+  return {
+    marketplace: post.marketplace,
+    externalId: "",
+    title: post.title,
+    productUrl: post.product_url,
+    priceCents: post.price_cents,
+    originalPriceCents: post.original_price_cents ?? undefined,
+    discountPct: post.discount_pct,
+  };
 }

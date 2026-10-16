@@ -1,0 +1,34 @@
+name: AI texts retry
+
+# Started by the Worker when every AI model was busy during its ~30s window
+# (🔄 button, links sent to the bot): previews still on the stock text get an
+# AI one here, where there's time to wait for the models.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: heal
+  cancel-in-progress: false
+
+jobs:
+  heal:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package.json
+      - run: npm install --no-audit --no-fund --omit=dev
+      - name: Load settings from repository variables and secrets
+        run: node src/jobs/gh-export-env.ts
+        env:
+          VARS_JSON: ${{ toJSON(vars) }}
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+      - run: node src/jobs/heal.ts

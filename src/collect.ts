@@ -1,8 +1,8 @@
-import { generateCaption } from "./ai.ts";
+import { candidateFromPost, generateCaption, SEARCH_CAPTION } from "./ai.ts";
 import { approvePost, flagEndedDeals } from "./publish.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
-import { previewHtml, retryKeyboard, sendPreview, statusHeader, updatePreview } from "./preview.ts";
+import { pendingKeyboard, previewHtml, retryKeyboard, sendPreview, statusHeader, updatePreview } from "./preview.ts";
 import { fetchAmazonCandidates } from "./providers/amazon.ts";
 import { fetchShopeeCandidates, shopeeAffiliateLink } from "./providers/shopee.ts";
 import {
@@ -10,9 +10,12 @@ import {
   dbNow,
   expireStalePending,
   failStuckPublishing,
+  getPost,
+  pendingTemplatePosts,
   lowestSeenPrices,
   recentlyUsedProductIds,
   transition,
+  updateCaption,
   upsertProduct,
 } from "./repo.ts";
 import { sendText } from "./telegram.ts";
@@ -107,6 +110,25 @@ export function shouldAutoApprove(cfg: Config, post: PostRow): boolean {
   return !isFakeDiscount(post.price_cents, post.lowest_seen_cents ?? undefined);
 }
 
+/**
+ * Previews still waiting for the admin that fell back to a template (every model
+ * was busy) get another AI try on each search run, so busy hours don't leave
+ * them with a stock line. Edits the preview in place.
+ */
+export async function healTemplateCaptions(cfg: Config, db: Db, log: (msg: string) => void, limit = 4): Promise<number> {
+  let healed = 0;
+  for (const post of await pendingTemplatePosts(db, limit)) {
+    const caption = await generateCaption(cfg.ai, candidateFromPost(post), post.caption, SEARCH_CAPTION);
+    if (caption.model === "template") continue;
+    await updateCaption(db, post.id, caption.caption, caption.short, caption.model, caption.hashtag);
+    const fresh = await getPost(db, post.id);
+    if (fresh?.status === "pending") await updatePreview(cfg, fresh, undefined, pendingKeyboard(fresh)).catch(() => {});
+    log(`Preview #${post.id} got an AI text on retry (${caption.model})`);
+    healed++;
+  }
+  return healed;
+}
+
 export interface CollectResult {
   found: number;
   previews: number;
@@ -114,6 +136,8 @@ export interface CollectResult {
   expired: number;
   /** Published deals found sold out / pricier this run (group messages edited). */
   ended: number;
+  /** Earlier previews that fell back to a template and now got an AI text. */
+  healed: number;
   errors: string[];
 }
 
@@ -124,7 +148,7 @@ export async function runCollect(
   opts: { dryRun?: boolean } = {},
 ): Promise<CollectResult> {
   const log = deps.log ?? console.log;
-  const result: CollectResult = { found: 0, previews: 0, autoApproved: 0, expired: 0, ended: 0, errors: [] };
+  const result: CollectResult = { found: 0, previews: 0, autoApproved: 0, expired: 0, ended: 0, healed: 0, errors: [] };
 
   if (!opts.dryRun) {
     for (const post of await expireStalePending(db, cfg.selection.pendingTtlHours)) {
@@ -134,6 +158,10 @@ export async function runCollect(
     for (const post of await failStuckPublishing(db, STUCK_PUBLISHING_MINUTES)) {
       await updatePreview(cfg, post, statusHeader(post, "⚠️", "Travou ao publicar"), retryKeyboard(post)).catch(() => {});
     }
+    result.healed = await healTemplateCaptions(cfg, db, log).catch((error) => {
+      log(`Retrying template texts failed: ${errorMessage(error)}`);
+      return 0;
+    });
     try {
       result.ended = await flagEndedDeals(cfg, db, log);
     } catch (error) {
@@ -188,8 +216,7 @@ export async function runCollect(
   for (const c of picks) {
     try {
       const ref = randomCode(10);
-      // GitHub Actions has no 30s limit like the Worker: room for every model in AI_MODEL.
-      const caption = await generateCaption(cfg.ai, c, undefined, 60_000);
+      const caption = await generateCaption(cfg.ai, c, undefined, SEARCH_CAPTION);
       aiError ||= caption.error ?? "";
       if (opts.dryRun) {
         log(`\n--- [dry-run] ${c.marketplace} ${c.externalId} score=${score(c).toFixed(1)} ---`);

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { cleanAiText, cleanHashtag, generateCaption, parseAiJson, parseAiReply, templateCaption } from "../src/ai.ts";
+import { cleanAiText, cleanHashtag, generateCaption, parseAiJson, parseAiReply, resolveModel, templateCaption } from "../src/ai.ts";
+import { loadAiConfig } from "../src/config.ts";
 import { commissionCents, isBlocked, isFakeDiscount, pickCandidates, score } from "../src/collect.ts";
 import { amazonItemToCandidate, fetchAmazonCandidates } from "../src/providers/amazon.ts";
 import { shopeeNodeToCandidate } from "../src/providers/shopee.ts";
@@ -226,7 +227,7 @@ describe("ai", () => {
 });
 
 describe("ai fallback", () => {
-  const ok = { choices: [{ message: { content: '{"texto":"Oi","tweet":"Oi"}' } }] };
+  const ok = { choices: [{ message: { content: '{"texto":"Oi, olha essa oferta","tweet":"Oi"}' } }] };
   it("moves on from a busy model at once instead of retrying it first", async () => {
     const tried: string[] = [];
     const f = mockFetch([["chat/completions", (c) => {
@@ -298,12 +299,55 @@ describe("niche", () => {
     assert.ok(!isBlocked("Fone Bluetooth", []));
   });
   it("tells the AI who the group is for", async () => {
-    const f = mockFetch([["chat/completions", () => ({ choices: [{ message: { content: '{"texto":"Oi","tweet":"Oi"}' } }] })]]);
+    const f = mockFetch([["chat/completions", () => ({ choices: [{ message: { content: '{"texto":"Oi, olha essa oferta","tweet":"Oi"}' } }] })]]);
     try {
       await generateCaption(testConfig({ NICHE: "gamers e fãs de tecnologia" }).ai, cand({}));
       const [system, user] = f.to("chat/completions")[0]!.body.messages;
       assert.match(system.content, /Público do grupo/);
       assert.match(user.content, /^Público do grupo: gamers e fãs de tecnologia\nProduto:/);
+    } finally {
+      f.restore();
+    }
+  });
+});
+
+describe("ai providers", () => {
+  it("sends prefixed models to their own provider and key", async () => {
+    const ai = loadAiConfig({ AI_API_KEY: "or-key", GROQ_API_KEY: "gq-key", AI_MODEL: "groq:openai/gpt-oss-20b,google/gemma:free,gemini:gemini-flash" });
+    assert.deepEqual(
+      ai.models.map((m) => resolveModel(ai, m)).map((e) => [e.baseUrl, e.model, e.apiKey]),
+      [
+        ["https://api.groq.com/openai/v1", "openai/gpt-oss-20b", "gq-key"],
+        ["https://openrouter.ai/api/v1", "google/gemma:free", "or-key"],
+        ["https://generativelanguage.googleapis.com/v1beta/openai", "gemini-flash", undefined],
+      ],
+    );
+    const urls: string[] = [];
+    const f = mockFetch([["chat/completions", (c) => {
+      urls.push(`${c.url} ${c.headers.authorization}`);
+      return { choices: [{ message: { content: '{"texto":"Seu setup agradece esse upgrade","tweet":"Upgrade!"}' } }] };
+    }]]);
+    try {
+      const c = await generateCaption(ai, cand({}));
+      assert.equal(c.model, "groq:openai/gpt-oss-20b");
+      assert.deepEqual(urls, ["https://api.groq.com/openai/v1/chat/completions Bearer gq-key"], "gemini skipped: no key");
+    } finally {
+      f.restore();
+    }
+  });
+  it("reads the answer from the reasoning when content is empty, and rejects replies that aren't captions", async () => {
+    const replies = [
+      { content: "", reasoning: 'Vou escrever... {"texto":"Pensei bastante e esse fone é top","tweet":"Top"}' },
+      { content: "..." },
+    ];
+    let i = 0;
+    const f = mockFetch([["chat/completions", () => ({ choices: [{ message: replies[i++] }] })]]);
+    try {
+      const c = await generateCaption(testConfig({ AI_MODEL: "a:free" }).ai, cand({}));
+      assert.equal(c.caption, "Pensei bastante e esse fone é top");
+      const short = await generateCaption(testConfig({ AI_MODEL: "a:free" }).ai, cand({}));
+      assert.equal(short.model, "template");
+      assert.match(short.error!, /reply too short/);
     } finally {
       f.restore();
     }
@@ -318,7 +362,7 @@ describe("hashtags", () => {
     assert.equal(cleanHashtag("#publi"), undefined);
     assert.equal(cleanHashtag("2024"), undefined);
     assert.equal(cleanHashtag(""), undefined);
-    assert.equal(parseAiJson('{"texto":"Oi","tweet":"Oi","tag":"JBL"}').tag, "JBL");
+    assert.equal(parseAiJson('{"texto":"Oi, olha essa oferta","tweet":"Oi","tag":"JBL"}').tag, "JBL");
   });
 });
 

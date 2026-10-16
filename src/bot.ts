@@ -1,4 +1,4 @@
-import { generateCaption } from "./ai.ts";
+import { candidateFromPost, generateCaption } from "./ai.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { EDIT_HINT, pendingKeyboard, sendPreview, updatePreview } from "./preview.ts";
@@ -60,26 +60,26 @@ function isAdmin(cfg: Config, userId: number | undefined): boolean {
   return userId !== undefined && cfg.telegram.adminUserIds.includes(String(userId));
 }
 
+/**
+ * The Worker only has ~30s, often too little for busy free models. When every
+ * model failed in time, GitHub Actions retries with minutes to spare
+ * (heal.yml) and edits the preview; the admin is told it's on the way.
+ */
+async function aiBusyFallback(cfg: Config, error: string): Promise<void> {
+  const gh = cfg.githubDispatch;
+  const started = gh ? (await dispatchWorkflow(gh, "heal.yml").catch(() => undefined))?.ok : false;
+  const text = started
+    ? "⏳ Os modelos de IA estão ocupados agora. Deixei um texto provisório e já pedi de novo em segundo plano: a prévia se atualiza sozinha em 1–2 minutos."
+    : `⚠️ A IA falhou, usei um texto padrão. Toque 🔄 mais tarde ou responda à prévia com o seu texto.\n<i>${escapeHtml(truncate(error, 300))}</i>`;
+  await sendText(cfg.telegram.botToken, cfg.telegram.adminChatId, text);
+}
+
 export async function regenerateCaption(cfg: Config, db: Db, post: PostRow): Promise<void> {
-  const caption = await generateCaption(cfg.ai, {
-    marketplace: post.marketplace,
-    externalId: "",
-    title: post.title,
-    productUrl: post.product_url,
-    priceCents: post.price_cents,
-    originalPriceCents: post.original_price_cents ?? undefined,
-    discountPct: post.discount_pct,
-  }, post.caption);
+  const caption = await generateCaption(cfg.ai, candidateFromPost(post), post.caption);
   await updateCaption(db, post.id, caption.caption, caption.short, caption.model, caption.hashtag);
   const fresh = (await getPost(db, post.id)) as PostRow;
   await updatePreview(cfg, fresh, undefined, pendingKeyboard(fresh));
-  if (caption.error) {
-    await sendText(
-      cfg.telegram.botToken,
-      cfg.telegram.adminChatId,
-      `⚠️ A IA falhou, usei um texto padrão. Confira AI_MODEL / AI_API_KEY.\n<i>${escapeHtml(truncate(caption.error, 300))}</i>`,
-    );
-  }
+  if (caption.error) await aiBusyFallback(cfg, caption.error);
 }
 
 export function formatStats(s: Awaited<ReturnType<typeof getStats>>): string {
@@ -119,12 +119,10 @@ export function formatStats(s: Awaited<ReturnType<typeof getStats>>): string {
   return lines.join("\n");
 }
 
-/** Starts the "Collect deals" GitHub workflow. Used by /buscar and by the Worker's cron. */
-export async function triggerCollect(cfg: Config): Promise<{ ok: boolean; message: string }> {
-  const gh = cfg.githubDispatch;
-  if (!gh) return { ok: false, message: "Configure GH_DISPATCH_TOKEN e GH_REPO para buscar promoções pelo bot." };
-  const res = await fetch(
-    `https://api.github.com/repos/${gh.repo}/actions/workflows/${gh.workflow}/dispatches`,
+/** Starts a GitHub Actions workflow of this repo (needs GH_DISPATCH_TOKEN + GH_REPO). */
+async function dispatchWorkflow(gh: NonNullable<Config["githubDispatch"]>, workflow: string): Promise<Response> {
+  return fetch(
+    `https://api.github.com/repos/${gh.repo}/actions/workflows/${workflow}/dispatches`,
     {
       method: "POST",
       headers: {
@@ -136,6 +134,13 @@ export async function triggerCollect(cfg: Config): Promise<{ ok: boolean; messag
       body: JSON.stringify({ ref: gh.ref }),
     },
   );
+}
+
+/** Starts the "Collect deals" GitHub workflow. Used by /buscar and by the Worker's cron. */
+export async function triggerCollect(cfg: Config): Promise<{ ok: boolean; message: string }> {
+  const gh = cfg.githubDispatch;
+  if (!gh) return { ok: false, message: "Configure GH_DISPATCH_TOKEN e GH_REPO para buscar promoções pelo bot." };
+  const res = await dispatchWorkflow(gh, gh.workflow);
   return res.ok
     ? { ok: true, message: "🔎 Buscando promoções… as prévias chegam em 1–2 minutos." }
     : { ok: false, message: `Não consegui iniciar a busca: GitHub respondeu HTTP ${res.status}` };
@@ -157,7 +162,7 @@ async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: numb
   // Page read + AI must fit in the ~30s the Worker gets after answering Telegram.
   const caption = text
     ? { caption: truncate(text, 600), short: truncate(text, 150), model: "manual", hashtag: undefined, error: undefined }
-    : await generateCaption(cfg.ai, c, undefined, 15_000);
+    : await generateCaption(cfg.ai, c, undefined, { budgetMs: 15_000 });
   const post = await createPost(db, {
     productId,
     ref: randomCode(10),
@@ -176,10 +181,7 @@ async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: numb
     await transition(db, post.id, "pending", "failed");
     throw error;
   }
-  if (caption.error) {
-    await sendText(token, chatId, `⚠️ A IA falhou, usei um texto padrão.
-<i>${escapeHtml(truncate(caption.error, 300))}</i>`);
-  }
+  if (caption.error) await aiBusyFallback(cfg, caption.error);
 }
 
 async function handleCallback(cfg: Config, db: Db, cq: NonNullable<TgUpdate["callback_query"]>) {

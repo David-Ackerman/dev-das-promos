@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
-import { runCollect } from "../src/collect.ts";
+import { healTemplateCaptions, runCollect } from "../src/collect.ts";
 import { createNodeDb } from "../src/db-node.ts";
 import { createHandler } from "../src/http.ts";
 import { migrate } from "../src/migrate.ts";
@@ -428,6 +428,21 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
         assert.notEqual(await caption(), before, "🔄 never keeps the same text");
       }
       assert.match(f.to("sendMessage").at(-1)!.body.text, /A IA falhou.*agentic harnesses/s);
+
+      // With GitHub dispatch configured, the retry is handed to Actions (heal.yml) instead.
+      const withGh = testConfig({ GH_DISPATCH_TOKEN: "ghp_x", GH_REPO: "me/repo" });
+      const gh = mockFetch([
+        ["api.github.com", () => new Response(null, { status: 204 })],
+        ["api.telegram.org", telegramRoute()],
+        ["chat/completions", () => new Response("{}", { status: 429 })],
+      ]);
+      try {
+        await tap(withGh, `r:${post.id}`);
+        assert.equal(gh.to("api.github.com")[0]!.url, "https://api.github.com/repos/me/repo/actions/workflows/heal.yml/dispatches");
+        assert.match(gh.to("sendMessage").at(-1)!.body.text, /pedi de novo em segundo plano/);
+      } finally {
+        gh.restore();
+      }
     } finally {
       f.restore();
     }
@@ -815,6 +830,31 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       assert.equal(wa.status, 302);
       assert.match(new URL(wa.headers.get("location")!).searchParams.get("text")!, /^🔥 \*Top \d+ da semana\*/);
       assert.equal((await handler.fetch(new Request("https://w/wr/999999"), {}, ctx)).status, 404);
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("gives template previews an AI text on a later try", async () => {
+    const cfg = testConfig();
+    let aiUp = false;
+    const f = mockFetch([
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", () => (aiUp ? ai() : new Response("{}", { status: 429 }))],
+      ["affiliate.shopee", shortLink],
+    ]);
+    try {
+      await collect(cfg, [offer("heal")]);
+      const post = await postFor("heal");
+      const model = async () => (await db.query<{ ai_model: string; caption: string }>(`SELECT ai_model, caption FROM posts WHERE id = $1`, [post.id]))[0]!;
+      assert.equal((await model()).ai_model, "template");
+      aiUp = true;
+      const healed = await healTemplateCaptions(cfg, db, () => {}, 50);
+      assert.ok(healed >= 1);
+      assert.equal((await model()).caption, "Texto da IA");
+      const edit = f.to("editMessage").filter((c) => c.body.message_id === Number(post.preview_message_id)).at(-1)!.body;
+      assert.match(edit.caption ?? edit.text, /Texto da IA/);
+      assert.equal(edit.reply_markup.inline_keyboard[0][0].callback_data, `a:${post.id}`, "still a normal preview");
     } finally {
       f.restore();
     }

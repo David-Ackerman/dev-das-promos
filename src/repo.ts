@@ -341,6 +341,16 @@ export async function transitionRoundup(db: Db, id: number, from: string, to: st
   return rows.length > 0;
 }
 
+/** Pending previews from the last 12h whose text is still the stock template. */
+export async function pendingTemplatePosts(db: Db, limit: number): Promise<PostRow[]> {
+  return db.query<PostRow>(
+    `${POST_SELECT} WHERE p.status = 'pending' AND p.ai_model = 'template'
+       AND p.created_at > now() - interval '12 hours'
+     ORDER BY p.id DESC LIMIT $1`,
+    [limit],
+  );
+}
+
 export async function listQueued(db: Db): Promise<PostRow[]> {
   return db.query<PostRow>(`${POST_SELECT} WHERE p.status = 'queued' ORDER BY p.scheduled_at NULLS LAST, p.id`);
 }
