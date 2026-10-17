@@ -84,6 +84,7 @@ const HELP = `<b>Comandos</b>
 /pendentes — prévias esperando aprovação
 /fila — posts aprovados esperando o horário
 /resumo — monta o Top 10 da semana para enviar nos grupos
+/video id — gera um vídeo curto (Reels/TikTok) do post, com a legenda pronta
 /link nome — cria um link de convite com nome em cada grupo (ex.: /link ig-bio), para ver no /stats quem entrou por onde
 /stats [dias] — cliques e o que mais funciona (padrão 7 dias)
 /buscar — busca promoções agora
@@ -185,7 +186,11 @@ export function formatStats(s: Awaited<ReturnType<typeof getStats>>, xBudgetUsd?
 }
 
 /** Starts a GitHub Actions workflow of this repo (needs GH_DISPATCH_TOKEN + GH_REPO). */
-async function dispatchWorkflow(gh: NonNullable<Config["githubDispatch"]>, workflow: string): Promise<Response> {
+async function dispatchWorkflow(
+  gh: NonNullable<Config["githubDispatch"]>,
+  workflow: string,
+  inputs?: Record<string, string>,
+): Promise<Response> {
   return fetch(
     `https://api.github.com/repos/${gh.repo}/actions/workflows/${workflow}/dispatches`,
     {
@@ -196,9 +201,19 @@ async function dispatchWorkflow(gh: NonNullable<Config["githubDispatch"]>, workf
         "user-agent": "das-promos-bot",
         "content-type": "application/json",
       },
-      body: JSON.stringify({ ref: gh.ref }),
+      body: JSON.stringify({ ref: gh.ref, ...(inputs ? { inputs } : {}) }),
     },
   );
+}
+
+/** 🎬 / /video: the video is built in GitHub Actions (ffmpeg) and arrives in the admin chat. */
+async function requestVideo(cfg: Config, db: Db, postId: number): Promise<string> {
+  const gh = cfg.githubDispatch;
+  if (!gh) return "Configure GH_DISPATCH_TOKEN e GH_REPO para gerar vídeos.";
+  const post = await getPost(db, postId);
+  if (!post) return `Não achei o post #${postId}.`;
+  const res = await dispatchWorkflow(gh, "video.yml", { post_id: String(postId) });
+  return res.ok ? `🎬 Gerando o vídeo do #${postId}… chega aqui em 1–2 minutos.` : `GitHub respondeu HTTP ${res.status}`;
 }
 
 /** Starts the "Collect deals" GitHub workflow. Used by /buscar and by the Worker's cron. */
@@ -263,6 +278,8 @@ async function handleCallback(cfg: Config, db: Db, cq: NonNullable<TgUpdate["cal
     return;
   }
   if (action === "wd") return answer(await declineRoundup(cfg, db, postId));
+
+  if (action === "v") return answer(await requestVideo(cfg, db, postId));
 
   if (action === "a") {
     const post = await getPost(db, postId);
@@ -382,6 +399,11 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
               .join("\n")}`
           : "Fila vazia.",
       );
+      return;
+    }
+    case "/video": {
+      const id = Number((text.split(/\s+/)[1] ?? "").replace("#", ""));
+      await sendText(token, chatId, Number.isInteger(id) && id > 0 ? await requestVideo(cfg, db, id) : "Use assim: <code>/video 123</code> (o número do post).");
       return;
     }
     case "/link": {

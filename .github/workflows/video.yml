@@ -1,0 +1,42 @@
+name: Short video
+
+# Started by the Worker when the admin taps 🎬 on a published deal (or /video <id>):
+# builds a 10 s vertical video (Reels / TikTok / Shorts) from the real product photo
+# and sends it to the admin chat with a caption ready to paste.
+on:
+  workflow_dispatch:
+    inputs:
+      post_id:
+        description: "Post id"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: video
+  cancel-in-progress: false
+
+jobs:
+  video:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package.json
+      - run: npm install --no-audit --no-fund --omit=dev
+      - name: Install ffmpeg and fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+      - name: Load settings from repository variables and secrets
+        run: node src/jobs/gh-export-env.ts
+        env:
+          VARS_JSON: ${{ toJSON(vars) }}
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+      - run: node src/jobs/video.ts --post "${{ inputs.post_id }}"

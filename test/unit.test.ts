@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { cleanAiText, cleanHashtag, generateCaption, parseAiJson, parseAiReply, resolveModel, shortCaption, templateCaption } from "../src/ai.ts";
 import { loadAiConfig } from "../src/config.ts";
@@ -13,6 +15,7 @@ import { brl, discountPct, toCents } from "../src/util.ts";
 import { createHandler, QUEUE_CRON, ROUNDUP_CRON } from "../src/http.ts";
 import { comparePrice } from "../src/pricecheck.ts";
 import { siteSource } from "../src/site.ts";
+import { socialCaption, stripEmoji, videoFilter, wrapLines } from "../src/video.ts";
 import { planXPost } from "../src/publish.ts";
 import { bestImageUrl } from "../src/publishers/x.ts";
 import { fetchShopeeItem } from "../src/providers/shopee.ts";
@@ -493,6 +496,32 @@ describe("site sources", () => {
     assert.equal(siteSource(null, "https://www.google.com.br/"), "google");
     assert.equal(siteSource(null, "https://t.co/abc"), "");
     assert.equal(siteSource(null, null), "");
+  });
+});
+
+describe("short video", () => {
+  it("wraps and cleans the text it draws, and keeps the caption honest", () => {
+    assert.equal(stripEmoji("Corre 🏃‍♂️ que acaba 🔥!"), "Corre que acaba !");
+    assert.deepEqual(wrapLines("Seu celular antigo já pode pedir aposentadoria", 20, 3), ["Seu celular antigo", "já pode pedir", "aposentadoria"]);
+    const cut = wrapLines("um dois três quatro cinco seis sete oito nove dez", 10, 2);
+    assert.equal(cut.length, 2);
+    assert.match(cut[1]!, /…$/);
+    const spec = { hook: "Seu setup agradece 🎮", title: "Mouse Gamer G203", marketplace: "shopee" as const, priceCents: 11990, originalPriceCents: 19990, discountPct: 40, brand: "Dev das Promos", imagePath: "/tmp/p.jpg" };
+    const caption = socialCaption(spec, "Logitech");
+    assert.match(caption, /R\$\s119,90 \(-40%\) na Shopee/);
+    assert.match(caption, /Link na bio/);
+    assert.match(caption, /#publi/);
+    assert.match(caption, /#Logitech/);
+    const dir = mkdtempSync(join(tmpdir(), "video-test-"));
+    try {
+      const filter = videoFilter(spec, dir, "/fonts/f.ttf");
+      assert.match(filter, /expansion=none/, "a % in the text can't break ffmpeg");
+      assert.match(filter, /zoompan=/);
+      assert.ok(readdirSync(dir).length >= 8, "one text file per line drawn");
+      assert.ok(!readdirSync(dir).map((f) => readFileSync(join(dir, f), "utf8")).join("").includes("🎮"), "emoji stripped");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

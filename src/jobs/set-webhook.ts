@@ -25,6 +25,7 @@ await tg(token, "setMyCommands", {
     { command: "fila", description: "Posts aprovados esperando o horário" },
     { command: "resumo", description: "Top 10 da semana para os grupos" },
     { command: "link", description: "Criar link de convite com nome (ex.: /link ig-bio)" },
+    { command: "video", description: "Vídeo curto do post para Reels/TikTok (ex.: /video 123)" },
     { command: "buscar", description: "Buscar promoções agora" },
     { command: "id", description: "Mostrar o id deste chat" },
     { command: "ajuda", description: "Ajuda" },

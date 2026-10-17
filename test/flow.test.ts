@@ -1028,6 +1028,30 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("offers 🎬 on published deals and starts the video workflow for that post", async () => {
+    const cfg = testConfig({ GH_DISPATCH_TOKEN: "ghp_x", GH_REPO: "me/repo", X_MODE: "off", WHATSAPP_MODE: "off" });
+    const f = mockFetch([
+      ["api.github.com", () => new Response(null, { status: 204 })],
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", ai],
+      ["affiliate.shopee", shortLink],
+    ]);
+    try {
+      await collect(cfg, [offer("vid")]);
+      const post = await postFor("vid");
+      await tap(cfg, `a:${post.id}`);
+      const kb = f.to("editMessage").filter((c) => c.body.message_id === Number(post.preview_message_id)).at(-1)!.body.reply_markup.inline_keyboard;
+      assert.equal(kb.at(-1)[0].callback_data, `v:${post.id}`, "🎬 on the published preview");
+      await tap(cfg, `v:${post.id}`);
+      const call = f.to("api.github.com").at(-1)!;
+      assert.equal(call.url, "https://api.github.com/repos/me/repo/actions/workflows/video.yml/dispatches");
+      assert.deepEqual(call.body, { ref: "main", inputs: { post_id: String(post.id) } });
+      assert.match(f.to("answerCallbackQuery").at(-1)!.body.text, /Gerando o vídeo/);
+    } finally {
+      f.restore();
+    }
+  });
+
   it("expires previews nobody answered", async () => {
     const cfg = testConfig();
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", () => new Response("x", { status: 500 })], ["affiliate.shopee", () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } })]]);

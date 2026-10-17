@@ -1,6 +1,6 @@
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
-import { pendingKeyboard, queuedKeyboard, renderInput, retryKeyboard, statusHeader, updatePreview } from "./preview.ts";
+import { pendingKeyboard, queuedKeyboard, renderInput, retryKeyboard, statusHeader, updatePreview, videoKeyboard } from "./preview.ts";
 import { checkPrice } from "./pricecheck.ts";
 import { postTweet, uploadProductImage } from "./publishers/x.ts";
 import { sendWhatsApp } from "./publishers/whatsapp.ts";
@@ -343,7 +343,12 @@ async function finishPublishing(cfg: Config, db: Db, postId: number, opts: { che
   const header = `${statusHeader(post, emoji, status === "failed" ? "Falhou" : "Publicado")}${
     lines.length ? `\n<i>${escapeHtml(lines.join("\n"))}</i>` : ""
   }`;
-  await updatePreview(cfg, post, header, result.failed.length ? [...result.manual, ...retryKeyboard(post)] : result.manual);
+  const keyboard = [
+    ...result.manual,
+    ...(result.failed.length ? retryKeyboard(post) : []),
+    ...(cfg.githubDispatch && status !== "failed" ? videoKeyboard(post) : []),
+  ];
+  await updatePreview(cfg, post, header, keyboard);
   return status === "failed" ? "Falhou ao publicar 😕" : "Publicado! 🚀";
 }
 

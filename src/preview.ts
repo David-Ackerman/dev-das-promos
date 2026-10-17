@@ -85,6 +85,11 @@ export function postIdFromOwnTextPrompt(text: string | undefined): number | unde
   return id ? Number(id) : undefined;
 }
 
+/** On published previews: a short video for Reels / TikTok, built in GitHub Actions. */
+export function videoKeyboard(post: PostRow): Keyboard {
+  return [[{ text: "🎬 Vídeo para Reels/TikTok", callback_data: `v:${post.id}` }]];
+}
+
 export function retryKeyboard(post: PostRow): Keyboard {
   return [[{ text: "🔁 Tentar de novo", callback_data: `t:${post.id}` }]];
 }

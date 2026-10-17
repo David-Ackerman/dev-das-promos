@@ -122,6 +122,21 @@ export async function editAnyMessage(token: string, chatId: string, messageId: n
   }
 }
 
+/** Uploads a video file (up to 50 MB) to a chat. */
+export async function sendVideoFile(token: string, chatId: string, bytes: Uint8Array, filename: string, html: string): Promise<void> {
+  const form = new FormData();
+  form.append("chat_id", chatId);
+  form.append("caption", html);
+  form.append("parse_mode", "HTML");
+  form.append("supports_streaming", "true");
+  form.append("width", "1080");
+  form.append("height", "1920");
+  form.append("video", new Blob([bytes], { type: "video/mp4" }), filename);
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendVideo`, { method: "POST", body: form, signal: AbortSignal.timeout(120_000) });
+  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; description?: string };
+  if (!json.ok) throw new TelegramError(`Telegram sendVideo: ${json.description ?? `HTTP ${res.status}`}`);
+}
+
 export async function sendText(token: string, chatId: string, html: string, keyboard?: Keyboard) {
   return tg<{ message_id: number }>(token, "sendMessage", {
     chat_id: chatId,

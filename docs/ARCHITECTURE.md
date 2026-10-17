@@ -83,6 +83,7 @@ publishing queue), and Neon Postgres is the single source of truth both share.
 | | `deploy.yml` | Tests, backup, migrations, Worker deploy, Worker settings, Telegram webhook | see [Deploying](#3-deploying) |
 | | `backup.yml` | Daily `pg_dump`, kept 90 days as an artifact | — |
 | | `ai-check.yml` | Measures how often the AI writes the caption (manual) | `src/jobs/ai-check.ts` |
+| | `video.yml` | 10 s vertical video of a deal for Reels / TikTok / Shorts, sent to the admin | `src/jobs/video.ts` → `src/video.ts` |
 | | `ci.yml` | Typecheck + tests on pull requests (and inside `deploy.yml`) | `test/` |
 | **Neon** | Postgres | Products, price history, posts, links, clicks, deliveries, roundups, X spend | `migrations/`, all SQL in `src/repo.ts` |
 | **Shopee** | Affiliate Open API (GraphQL) | Offer search, affiliate short links (post ref as sub-id), price check by item | `src/providers/shopee.ts` |
@@ -264,6 +265,7 @@ sequenceDiagram
 | Sundays 18h | Worker cron `0 21 * * SUN` | Weekly Top 10 preview for the admin |
 | Daily ~3h | GitHub schedule (`backup.yml`) | `pg_dump` backup |
 | On demand | Worker → `heal.yml` | Rewrite captions that fell back to a template |
+| On demand | Worker → `video.yml` (🎬 / `/video id`) | Build a 10 s vertical video with ffmpeg and send it to the admin chat |
 
 Cloudflare numbers weekdays 1–7 or `SUN`–`SAT`; a rejected cron throws out every
 schedule of the deploy, so `test/unit.test.ts` checks them.
@@ -414,6 +416,7 @@ always integer cents.
 | `/stats [dias]` | Clicks per channel, group and site source (`web x`…), site visits per source, store, best hours, top products, X spend |
 | `/buscar` | Search now (starts `collect.yml`) |
 | `/resumo` | Weekly Top 10 preview |
+| 🎬 / `/video id` | Short vertical video of a published deal (Reels / TikTok / Shorts) + caption, built in Actions (`src/video.ts`) |
 | `/link nome` | Named invite link in each group; joins through it show in `/stats` (retention after 7 days) |
 | `/id` | Chat id (for setting up groups) |
 | Link in the private chat | Preview from an Amazon / Mercado Livre link |
