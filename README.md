@@ -16,7 +16,7 @@ GitHub Actions (started 5x/day by the Worker) Cloudflare Worker (always on, free
 
 The Worker's cron (in `wrangler.toml`) starts the **Collect deals** workflow at the scheduled times. GitHub's own scheduler isn't used because it ran hours late or skipped runs entirely.
 
-Everything runs on free plans: **GitHub Actions**, **Cloudflare Workers** and **Neon Postgres**. There are no servers to look after. To deploy, you push to `main`.
+Everything runs on free plans: **GitHub Actions**, **Cloudflare Workers** and **Neon Postgres**. The full architecture, with diagrams of every flow, is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). There are no servers to look after. To deploy, you push to `main`.
 
 ## How it works day to day
 

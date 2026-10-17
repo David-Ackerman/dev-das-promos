@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-Small affiliate-deals bot. Full overview and setup in [README.md](./README.md).
+Small affiliate-deals bot. Full overview and setup in [README.md](./README.md);
+how the parts fit together in [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) (keep it
+up to date when you add a route, cron, workflow, table or provider).
 
 ## Shape
 - **No build step.** Node 22.18+ runs `.ts` directly (type stripping). Use only
