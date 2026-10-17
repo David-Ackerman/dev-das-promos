@@ -602,8 +602,9 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
     const groupSends = () => f.calls.filter((c) => /sendPhoto|sendMessage/.test(c.url) && String(c.body.chat_id).startsWith("-100")).length;
     try {
-      // Nothing went out recently (earlier tests' posts are moved back a day).
+      // Nothing went out recently and nothing waits in the queue (earlier tests or runs).
       await db.query(`UPDATE posts SET published_at = published_at - interval '1 day' WHERE published_at > now() - interval '1 day'`);
+      await db.query(`UPDATE posts SET status = 'expired' WHERE status = 'queued'`);
       await collect(cfg, [offer("qa"), offer("qb", { externalId: `qb-${suffix}` })]);
       const a = await postFor("qa");
       const b = await postFor("qb");
@@ -799,6 +800,13 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
 
       // Growth: the source of the visit, visit counts, share links, badge, sticky join bar.
       const browser = { "user-agent": "Mozilla/5.0 (iPhone)" };
+      const todayViews = async () =>
+        Object.fromEntries(
+          (await db.query<{ source: string; views: number }>(
+            `SELECT source, views FROM site_views WHERE day = (now() AT TIME ZONE 'America/Sao_Paulo')::date`,
+          )).map((v) => [v.source, v.views]),
+        ) as Record<string, number>;
+      const viewsBefore = await todayViews();
       const fromX = await (await handler.fetch(new Request("https://w/?src=x", { headers: browser }), {}, ctx)).text();
       await handler.fetch(new Request("https://w/?src=junk-123", { headers: browser }), {}, ctx);
       await handler.fetch(new Request("https://w/", { headers: { "user-agent": "TelegramBot (like TwitterBot)" } }), {}, ctx);
@@ -806,8 +814,9 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       const xCode = (await db.query<{ code: string }>(`SELECT code FROM links WHERE post_id = $1 AND channel = 'web' AND target = 'x'`, [live]))[0]!.code;
       assert.ok(fromX.includes(`/go/${xCode}`), "visits from X get their own links");
       assert.equal((await db.query(`SELECT 1 FROM links WHERE post_id = $1 AND channel = 'web' AND target = 'other'`, [live])).length, 1);
-      const views = await db.query<{ source: string; views: number }>(`SELECT source, views FROM site_views WHERE day = (now() AT TIME ZONE 'America/Sao_Paulo')::date ORDER BY source`);
-      assert.deepEqual(views.filter((v) => v.source === "x" || v.source === "other").map((v) => [v.source, v.views]), [["other", 1], ["x", 1]], "robots not counted");
+      const viewsAfter = await todayViews();
+      const added = (src: string) => (viewsAfter[src] ?? 0) - (viewsBefore[src] ?? 0);
+      assert.deepEqual([added("x"), added("other"), added("")], [1, 1, 0], "one visit each; the robot isn't counted");
       assert.ok(fromX.includes(encodeURIComponent("https://promo.example.workers.dev/?src=share#oferta-")), "share links point to the site");
       assert.ok(!/wa\.me\/\?text=[^"]*s\.shopee/.test(fromX), "never the affiliate link");
       assert.match(fromX, /class="sticky"/);
@@ -893,6 +902,8 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       ["affiliate.shopee", shortLink],
     ]);
     try {
+      // Earlier runs' X spend belongs to an earlier month as far as this test is concerned.
+      await db.query(`UPDATE x_usage SET created_at = created_at - interval '40 days'`);
       await collect(cfg, [offer("xt-1", { imageUrl: "https://img.test/a.jpg" }), offer("xt-2", { title: "Fone Bluetooth Comum" })]);
       await collect(cfg, [offer("xt-3", { title: "Placa de Vídeo RTX 5060 8GB" }), offer("xt-4", { title: "Processador Ryzen 5 9600X" })]);
       for (const name of ["xt-1", "xt-2", "xt-3", "xt-4"]) await tap(cfg, `a:${(await postFor(name)).id}`);
@@ -910,7 +921,9 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       const edit = (name: string) => postFor(name).then((p) => f.to("editMessage").filter((c) => c.body.message_id === Number(p.preview_message_id)).at(-1)!.body);
       assert.match((await edit("xt-2")).text ?? "", /Fora desta vez: X \(já teve Shopee hoje/);
       assert.match((await edit("xt-4")).text ?? "", /limite de 2 posts por dia/);
-      const spent = await db.query<{ n: number; usd: string }>(`SELECT count(*)::int AS n, sum(cost_usd)::text AS usd FROM x_usage`);
+      const spent = await db.query<{ n: number; usd: string }>(
+        `SELECT count(*)::int AS n, sum(cost_usd)::text AS usd FROM x_usage WHERE created_at > now() - interval '1 day'`,
+      );
       assert.deepEqual([spent[0]!.n, Number(spent[0]!.usd)], [3, 0.23]);
     } finally {
       f.restore();
