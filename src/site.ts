@@ -19,6 +19,24 @@ export interface SiteDeal {
   caption: string;
   published: string;
   code: string;
+  lowest_seen_cents: number | null;
+}
+
+/** Where a visit came from: ?src= on bio/share links, allow-listed so junk can't create rows. */
+export const SITE_SOURCES = ["x", "ig", "tt", "yt", "tg", "wa", "share", "google"] as const;
+
+export function siteSource(param: string | null, referer: string | null): string {
+  const src = param?.trim().toLowerCase();
+  if (src) return (SITE_SOURCES as readonly string[]).includes(src) ? src : "other";
+  return referer && /(^|\.)google\./.test(safeHost(referer)) ? "google" : "";
+}
+
+function safeHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
 }
 
 // Brand glyphs from Simple Icons (CC0), 24×24; the cart is Lucide (ISC).
@@ -35,18 +53,32 @@ function attr(text: string): string {
   return escapeHtml(text).replace(/"/g, "&quot;");
 }
 
+/** "Send to a friend" links point to the site (?src=share), never to the affiliate link. */
+function shareLinks(cfg: Config, d: SiteDeal): string {
+  const page = `${cfg.publicBaseUrl}/?src=share#oferta-${d.id}`;
+  const text = `Olha essa oferta: ${truncate(d.title, 80)} por ${brl(d.price_cents)}`;
+  const wa = `https://wa.me/?text=${encodeURIComponent(`${text} 👉 ${page}`)}`;
+  const tg = `https://t.me/share/url?url=${encodeURIComponent(page)}&text=${encodeURIComponent(text)}`;
+  return `<p class="share">Enviar pra um amigo:
+      <a href="${attr(wa)}" rel="noopener" target="_blank" aria-label="Enviar no WhatsApp">${ICONS.whatsapp}</a>
+      <a href="${attr(tg)}" rel="noopener" target="_blank" aria-label="Enviar no Telegram">${ICONS.telegram}</a></p>`;
+}
+
 function card(cfg: Config, d: SiteDeal): string {
   const href = `${cfg.publicBaseUrl}/go/${d.code}`;
   const old =
     d.original_price_cents && d.discount_pct > 0 ? `<s>${brl(d.original_price_cents)}</s> ` : "";
-  return `<article class="deal">
+  // Only when our own 30-day history backs it up; never "menor preço do Brasil".
+  const lowest = d.lowest_seen_cents !== null && d.price_cents <= d.lowest_seen_cents;
+  return `<article class="deal" id="oferta-${d.id}">
   ${d.image_url ? `<img src="${attr(d.image_url)}" alt="" loading="lazy" width="320" height="320">` : `<div class="noimg">🛍️</div>`}
   <div class="body">
-    <div class="tags"><span>${STORE[d.marketplace]}</span>${d.discount_pct > 0 ? `<span class="off">-${d.discount_pct}%</span>` : ""}</div>
+    <div class="tags"><span>${STORE[d.marketplace]}</span>${d.discount_pct > 0 ? `<span class="off">-${d.discount_pct}%</span>` : ""}${lowest ? `<span class="low">📉 Menor preço em 30 dias</span>` : ""}</div>
     <h2>${escapeHtml(truncate(d.title, 110))}</h2>
     <p class="joke">${escapeHtml(d.caption)}</p>
     <p class="price">${old}<b>${brl(d.price_cents)}</b></p>
     <a class="go" href="${attr(href)}" rel="nofollow sponsored noopener" target="_blank">${ICONS.cart}Ver oferta</a>
+    ${shareLinks(cfg, d)}
     <p class="when">Publicado ${escapeHtml(d.published)}</p>
   </div>
 </article>`;
@@ -61,6 +93,11 @@ export function sitePage(cfg: Config, deals: SiteDeal[]): string {
     cfg.site.telegramUrl ? `<a class="join tg" href="${attr(cfg.site.telegramUrl)}" rel="noopener">${ICONS.telegram}Grupo no Telegram</a>` : "",
     cfg.site.whatsappUrl ? `<a class="join wa" href="${attr(cfg.site.whatsappUrl)}" rel="noopener">${ICONS.whatsapp}Grupo no WhatsApp</a>` : "",
     cfg.site.xUrl ? `<a class="join x" href="${attr(cfg.site.xUrl)}" rel="noopener">${ICONS.x}Seguir no X</a>` : "",
+  ].join("");
+  // Phones: the join buttons stay at the bottom of the screen while scrolling.
+  const sticky = [
+    cfg.site.telegramUrl ? `<a class="join tg" href="${attr(cfg.site.telegramUrl)}" rel="noopener">${ICONS.telegram}Entrar no Telegram</a>` : "",
+    cfg.site.whatsappUrl ? `<a class="join wa" href="${attr(cfg.site.whatsappUrl)}" rel="noopener">${ICONS.whatsapp}WhatsApp</a>` : "",
   ].join("");
   return `<!doctype html>
 <html lang="pt-BR">
@@ -103,6 +140,18 @@ export function sitePage(cfg: Config, deals: SiteDeal[]): string {
   .tags { display: flex; gap: 6px; font-size: 12px; font-weight: 700; }
   .tags span { padding: 2px 8px; border-radius: 999px; background: var(--line); }
   .tags .off { background: var(--ok); color: #fff; }
+  .tags .low { background: #1971c2; color: #fff; }
+  .trust { margin: 0 0 14px; font-size: 14px; }
+  .share { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--muted); font-size: 12px; }
+  .share a { display: inline-flex; color: var(--muted); }
+  .share svg { width: 18px; height: 18px; }
+  .sticky { display: none; }
+  @media (max-width: 640px) {
+    body.has-sticky { padding-bottom: 72px; }
+    .sticky { display: flex; gap: 8px; justify-content: center; position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); background: var(--card); border-top: 1px solid var(--line); z-index: 10; }
+    .sticky .join { flex: 1; justify-content: center; padding: 10px 12px; white-space: nowrap; font-size: 15px; }
+    .sticky .join + .join { flex: 0 1 auto; }
+  }
   h2 { margin: 0; font-size: 15px; line-height: 1.3; }
   .joke { margin: 0; color: var(--muted); font-size: 14px; }
   .price { margin: auto 0 0; font-size: 18px; }
@@ -114,12 +163,13 @@ export function sitePage(cfg: Config, deals: SiteDeal[]): string {
   footer { padding-bottom: 32px; color: var(--muted); font-size: 13px; }
 </style>
 </head>
-<body>
+<body${sticky ? ' class="has-sticky"' : ""}>
 <header>
   <h1 class="sr-only">${escapeHtml(name)}</h1>
   <img class="banner" src="/banner.webp" srcset="/banner-1000.webp 1000w, /banner.webp 2000w" sizes="(max-width: 1080px) 100vw, 1048px"
     width="2000" height="667" alt="${attr(name)}: bug no preço, commit no carrinho. Ofertas de tech, gadgets e setup" fetchpriority="high">
   <p>${escapeHtml(description)}</p>
+  <p class="trust">✔️ Checamos o histórico de preço antes de postar · oferta esgotada sai daqui · links de afiliado (#publi)</p>
   ${join ? `<nav class="links">${join}</nav>` : ""}
 </header>
 <main>
@@ -129,6 +179,7 @@ ${deals.length ? deals.map((d) => card(cfg, d)).join("\n") : `<p class="empty">N
   <p>#publi · Os links são de afiliado: podemos ganhar uma comissão quando você compra, sem custo a mais para você.
   Preços e estoque podem mudar a qualquer momento; confira na loja antes de comprar.</p>
 </footer>
+${sticky ? `<nav class="sticky" aria-label="Entrar no grupo">${sticky}</nav>` : ""}
 </body>
 </html>`;
 }

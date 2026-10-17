@@ -265,21 +265,34 @@ export async function sentTelegramMessages(db: Db, postId: number): Promise<{ ta
   );
 }
 
-/** Live deals for the public page, each with its "web" link (created on first view). */
-export async function siteDeals(db: Db, days: number, limit: number): Promise<SiteDeal[]> {
+/**
+ * Live deals for the public page, each with its "web" link for the visit's
+ * source (created on first view), so /stats shows "web x", "web ig"…
+ */
+export async function siteDeals(db: Db, days: number, limit: number, source = ""): Promise<SiteDeal[]> {
   const rows = await db.query<Omit<SiteDeal, "code"> & { code: string | null }>(
     `SELECT p.id, pr.title, pr.marketplace, pr.image_url, p.price_cents, p.original_price_cents, p.discount_pct, p.caption,
+            p.lowest_seen_cents,
             to_char(p.published_at AT TIME ZONE 'America/Sao_Paulo', 'DD/MM "às" HH24:MI') AS published, l.code
      FROM posts p JOIN products pr ON pr.id = p.product_id
-     LEFT JOIN links l ON l.post_id = p.id AND l.channel = 'web' AND l.target = ''
+     LEFT JOIN links l ON l.post_id = p.id AND l.channel = 'web' AND l.target = $3
      WHERE p.status IN ('published', 'partial') AND p.deal_ended_at IS NULL
        AND p.published_at > now() - make_interval(days => $1::int)
      ORDER BY p.published_at DESC LIMIT $2`,
-    [days, limit],
+    [days, limit, source],
   );
   const out: SiteDeal[] = [];
-  for (const r of rows) out.push({ ...r, code: r.code ?? (await getOrCreateLink(db, r.id, "web")) });
+  for (const r of rows) out.push({ ...r, code: r.code ?? (await getOrCreateLink(db, r.id, "web", source)) });
   return out;
+}
+
+/** One more visit to the public page today from `source`. */
+export async function recordSiteView(db: Db, source: string): Promise<void> {
+  await db.query(
+    `INSERT INTO site_views (day, source, views) VALUES ((now() AT TIME ZONE 'America/Sao_Paulo')::date, $1, 1)
+     ON CONFLICT (day, source) DO UPDATE SET views = site_views.views + 1`,
+    [source],
+  );
 }
 
 /** Live deals of the last `days`, most clicked first (discount breaks ties). */
@@ -520,6 +533,8 @@ export interface Stats {
   bestHours: { hour: number; clicks: number }[];
   /** This calendar month's paid X calls (X_MODE=thread). */
   x: XUsage;
+  /** Public page visits per source in the period ('' = direct). */
+  siteViews: { source: string; views: number }[];
 }
 
 export async function getStats(db: Db, days: number): Promise<Stats> {
@@ -570,9 +585,16 @@ export async function getStats(db: Db, days: number): Promise<Stats> {
      GROUP BY 1 ORDER BY clicks DESC, hour LIMIT 3`,
     [days],
   );
+  const siteViews = await db.query<Stats["siteViews"][number]>(
+    `SELECT source, sum(views)::int AS views FROM site_views
+     WHERE day > (now() AT TIME ZONE 'America/Sao_Paulo')::date - $1::int
+     GROUP BY source ORDER BY views DESC`,
+    [days],
+  );
   return {
     days,
     bestHours,
+    siteViews,
     x: await xUsage(db),
     posts: posts ?? { published: 0, declined: 0, pending: 0 },
     byChannel,

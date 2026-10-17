@@ -371,6 +371,11 @@ erDiagram
     int_array post_ids
     text status "pending | sent | declined"
   }
+  site_views {
+    date day PK
+    text source PK "x | ig | share | '' = direct"
+    int views
+  }
 ```
 
 **Data safety:** migrations are append-only and never roll back; `DROP`,
@@ -384,7 +389,7 @@ always integer cents.
 
 | Route | Purpose |
 |---|---|
-| `GET /`, `/ofertas` | Public page with the live deals of the last 7 days ("web" links) |
+| `GET /`, `/ofertas` | Public page with the live deals of the last 7 days. `?src=x\|ig\|tt\|yt\|tg\|wa\|share\|google` (bio and share links) gives each source its own "web" links and visit count (`site_views`) |
 | `GET /go/:code` | Tracked redirect to the affiliate link (`HEAD` doesn't count as a click) |
 | `GET /wa/:code` | Opens WhatsApp with the post written |
 | `GET /x/:code` | Page to copy the X post or open it in the X app (share mode) |
@@ -398,7 +403,7 @@ always integer cents.
 | Command / button | Effect |
 |---|---|
 | `/pendentes`, `/fila` | Previews waiting; posts waiting for their slot |
-| `/stats [dias]` | Clicks per channel, group, store, best hours, top products, X spend |
+| `/stats [dias]` | Clicks per channel, group and site source (`web x`…), site visits per source, store, best hours, top products, X spend |
 | `/buscar` | Search now (starts `collect.yml`) |
 | `/resumo` | Weekly Top 10 preview |
 | `/id` | Chat id (for setting up groups) |

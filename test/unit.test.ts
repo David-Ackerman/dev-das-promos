@@ -12,6 +12,7 @@ import type { Candidate } from "../src/types.ts";
 import { brl, discountPct, toCents } from "../src/util.ts";
 import { createHandler, QUEUE_CRON, ROUNDUP_CRON } from "../src/http.ts";
 import { comparePrice } from "../src/pricecheck.ts";
+import { siteSource } from "../src/site.ts";
 import { planXPost } from "../src/publish.ts";
 import { bestImageUrl } from "../src/publishers/x.ts";
 import { fetchShopeeItem } from "../src/providers/shopee.ts";
@@ -482,6 +483,16 @@ describe("X thread rules", () => {
     assert.equal(bestImageUrl("https://m.media-amazon.com/images/I/61ev._AC_SX300_SY300_.jpg"), "https://m.media-amazon.com/images/I/61ev._AC_SL1500_.jpg");
     assert.equal(bestImageUrl("https://http2.mlstatic.com/D_NQ_NP_8812-MLA1-V.webp"), "https://http2.mlstatic.com/D_NQ_NP_8812-MLA1-O.jpg");
     assert.equal(bestImageUrl("https://down-br.img.susercontent.com/file/abc123_tn"), "https://down-br.img.susercontent.com/file/abc123");
+  });
+});
+
+describe("site sources", () => {
+  it("allow-lists ?src= and spots Google visits", () => {
+    assert.equal(siteSource("X", null), "x");
+    assert.equal(siteSource("instagram-bio-promo", null), "other", "junk can't create new rows");
+    assert.equal(siteSource(null, "https://www.google.com.br/"), "google");
+    assert.equal(siteSource(null, "https://t.co/abc"), "");
+    assert.equal(siteSource(null, null), "");
   });
 });
 

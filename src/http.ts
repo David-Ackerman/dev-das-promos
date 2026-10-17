@@ -2,10 +2,10 @@ import { handleUpdate, type TgUpdate, triggerCollect } from "./bot.ts";
 import type { Config, Env } from "./config.ts";
 import type { Db } from "./db.ts";
 import { goUrl, publishDue } from "./publish.ts";
-import { getPost, recordClick, resolveLink, siteDeals } from "./repo.ts";
+import { getPost, recordClick, recordSiteView, resolveLink, siteDeals } from "./repo.ts";
 import { sendText } from "./telegram.ts";
 import { whatsappShareUrl, xSharePage, xShareText } from "./share.ts";
-import { ROBOTS_TXT, sitePage } from "./site.ts";
+import { ROBOTS_TXT, sitePage, siteSource } from "./site.ts";
 import { proposeRoundup, roundupWhatsAppUrl } from "./roundup.ts";
 import { isValidCode, sha256Hex } from "./util.ts";
 
@@ -46,7 +46,12 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
       if (path === "/robots.txt") return new Response(ROBOTS_TXT, { headers: { "content-type": "text/plain; charset=utf-8" } });
       if ((path === "/" || path === "/ofertas") && (request.method === "GET" || request.method === "HEAD")) {
         const { db, cfg } = getDeps(env);
-        return new Response(sitePage(cfg, await siteDeals(db, 7, 60)), {
+        const source = siteSource(url.searchParams.get("src"), request.headers.get("referer"));
+        const ua = request.headers.get("user-agent") ?? "";
+        if (request.method === "GET" && ua && !BOT_UA.test(ua)) {
+          ctx.waitUntil(recordSiteView(db, source).catch((e) => console.error("site view log failed", e)));
+        }
+        return new Response(sitePage(cfg, await siteDeals(db, 7, 60, source)), {
           headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" },
         });
       }

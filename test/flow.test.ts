@@ -796,6 +796,22 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       assert.ok(html.includes(`/go/${web[0]!.code}`));
       await handler.fetch(new Request("https://w/ofertas"), {}, ctx);
       assert.equal((await db.query(`SELECT 1 FROM links WHERE post_id = $1 AND channel = 'web'`, [live])).length, 1, "one link per deal");
+
+      // Growth: the source of the visit, visit counts, share links, badge, sticky join bar.
+      const browser = { "user-agent": "Mozilla/5.0 (iPhone)" };
+      const fromX = await (await handler.fetch(new Request("https://w/?src=x", { headers: browser }), {}, ctx)).text();
+      await handler.fetch(new Request("https://w/?src=junk-123", { headers: browser }), {}, ctx);
+      await handler.fetch(new Request("https://w/", { headers: { "user-agent": "TelegramBot (like TwitterBot)" } }), {}, ctx);
+      await flush();
+      const xCode = (await db.query<{ code: string }>(`SELECT code FROM links WHERE post_id = $1 AND channel = 'web' AND target = 'x'`, [live]))[0]!.code;
+      assert.ok(fromX.includes(`/go/${xCode}`), "visits from X get their own links");
+      assert.equal((await db.query(`SELECT 1 FROM links WHERE post_id = $1 AND channel = 'web' AND target = 'other'`, [live])).length, 1);
+      const views = await db.query<{ source: string; views: number }>(`SELECT source, views FROM site_views WHERE day = (now() AT TIME ZONE 'America/Sao_Paulo')::date ORDER BY source`);
+      assert.deepEqual(views.filter((v) => v.source === "x" || v.source === "other").map((v) => [v.source, v.views]), [["other", 1], ["x", 1]], "robots not counted");
+      assert.ok(fromX.includes(encodeURIComponent("https://promo.example.workers.dev/?src=share#oferta-")), "share links point to the site");
+      assert.ok(!/wa\.me\/\?text=[^"]*s\.shopee/.test(fromX), "never the affiliate link");
+      assert.match(fromX, /class="sticky"/);
+      assert.match(fromX, /Checamos o histórico de preço/);
       assert.match(await (await handler.fetch(new Request("https://w/robots.txt"), {}, ctx)).text(), /Disallow: \/go\//);
       assert.equal(await (await handler.fetch(new Request("https://w/health"), {}, ctx)).text(), "ok");
     } finally {

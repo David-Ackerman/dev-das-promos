@@ -113,6 +113,14 @@ export function formatStats(s: Awaited<ReturnType<typeof getStats>>, xBudgetUsd?
           "",
         ]
       : []),
+    ...(s.siteViews.length
+      ? [
+          `<b>Site</b>: ${s.siteViews.reduce((n, v) => n + v.views, 0)} visitas (` +
+            s.siteViews.map((v) => `${v.source ? escapeHtml(v.source) : "direto"} ${v.views}`).join(" · ") +
+            ")",
+          "",
+        ]
+      : []),
     "<b>Por loja</b>",
     ...(s.byMarketplace.length
       ? s.byMarketplace.map(
