@@ -22,6 +22,8 @@ import {
   getStats,
   listPending,
   listQueued,
+  recordJoin,
+  recordLeave,
   lowestSeenPrice,
   transition,
   updateCaption,
@@ -29,7 +31,7 @@ import {
 } from "./repo.ts";
 import { sendText, tg } from "./telegram.ts";
 import type { PostRow } from "./types.ts";
-import { errorMessage, escapeHtml, randomCode, truncate } from "./util.ts";
+import { errorMessage, escapeHtml, randomCode, sha256Hex, truncate } from "./util.ts";
 
 interface TgUser {
   id: number;
@@ -43,16 +45,46 @@ interface TgMessage {
   caption?: string;
   reply_to_message?: { message_id: number; text?: string };
 }
+interface ChatMember {
+  status: string; // creator | administrator | member | restricted | left | kicked
+  is_member?: boolean;
+  user: TgUser;
+}
+interface ChatMemberUpdated {
+  chat: { id: number };
+  old_chat_member: ChatMember;
+  new_chat_member: ChatMember;
+  /** Present when they joined through an invite link (name = what /link gave it). */
+  invite_link?: { invite_link: string; name?: string };
+}
 export interface TgUpdate {
   update_id: number;
   message?: TgMessage;
   callback_query?: { id: string; from: TgUser; data?: string; message?: TgMessage };
+  chat_member?: ChatMemberUpdated;
+}
+
+function inChat(m: ChatMember): boolean {
+  return ["creator", "administrator", "member"].includes(m.status) || (m.status === "restricted" && m.is_member === true);
+}
+
+/** Joins and leaves in our groups, per invite link, for /stats. Users are kept only as a salted hash. */
+async function handleChatMember(cfg: Config, db: Db, u: ChatMemberUpdated): Promise<void> {
+  const chatId = String(u.chat.id);
+  if (!cfg.telegram.groupChatIds.includes(chatId)) return;
+  const was = inChat(u.old_chat_member);
+  const is = inChat(u.new_chat_member);
+  if (was === is) return; // promotions, restrictions…
+  const userHash = (await sha256Hex(`${u.new_chat_member.user.id}|${cfg.telegram.webhookSecret}`)).slice(0, 16);
+  if (is) await recordJoin(db, chatId, userHash, u.invite_link ? (u.invite_link.name?.trim() || "link sem nome") : "");
+  else await recordLeave(db, chatId, userHash);
 }
 
 const HELP = `<b>Comandos</b>
 /pendentes — prévias esperando aprovação
 /fila — posts aprovados esperando o horário
 /resumo — monta o Top 10 da semana para enviar nos grupos
+/link nome — cria um link de convite com nome em cada grupo (ex.: /link ig-bio), para ver no /stats quem entrou por onde
 /stats [dias] — cliques e o que mais funciona (padrão 7 dias)
 /buscar — busca promoções agora
 /id — mostra o id deste chat (útil para configurar grupos)
@@ -118,6 +150,17 @@ export function formatStats(s: Awaited<ReturnType<typeof getStats>>, xBudgetUsd?
           `<b>Site</b>: ${s.siteViews.reduce((n, v) => n + v.views, 0)} visitas (` +
             s.siteViews.map((v) => `${v.source ? escapeHtml(v.source) : "direto"} ${v.views}`).join(" · ") +
             ")",
+          "",
+        ]
+      : []),
+    ...(s.joins.length
+      ? [
+          "<b>Entradas nos grupos</b>",
+          ...s.joins.map(
+            (j) =>
+              `• ${j.link_name ? escapeHtml(j.link_name) : "link público / adicionados"}: ${j.joins} entraram, ${j.leaves} saíram` +
+              (j.old7 ? `, ${Math.round((j.stayed7 / j.old7) * 100)}% ficaram 7 dias` : ""),
+          ),
           "",
         ]
       : []),
@@ -341,6 +384,26 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
       );
       return;
     }
+    case "/link": {
+      const name = text.split(/\s+/).slice(1).join("-").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
+      if (!name) {
+        await sendText(token, chatId, "Use assim: <code>/link ig-bio</code> (um nome para a origem: ig-bio, tiktok-bio, site, x-bio…)");
+        return;
+      }
+      if (!cfg.telegram.groupChatIds.length) {
+        await sendText(token, chatId, "Nenhum grupo configurado em TELEGRAM_GROUP_IDS.");
+        return;
+      }
+      const lines: string[] = [];
+      for (const group of cfg.telegram.groupChatIds) {
+        const link = await tg<{ invite_link: string }>(token, "createChatInviteLink", { chat_id: group, name }).catch(
+          (e: unknown) => ({ invite_link: `⚠️ ${errorMessage(e)} (o bot precisa ser admin com permissão de convidar)` }),
+        );
+        lines.push(`${group}: ${escapeHtml(link.invite_link)}`);
+      }
+      await sendText(token, chatId, `🔗 Link "<b>${escapeHtml(name)}</b>":\n${lines.join("\n")}\n\nQuem entrar por ele aparece em /stats como "${escapeHtml(name)}".`);
+      return;
+    }
     case "/resumo":
       await proposeRoundup(cfg, db);
       return;
@@ -353,6 +416,7 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
 export async function handleUpdate(cfg: Config, db: Db, update: TgUpdate): Promise<void> {
   try {
     if (update.callback_query) await handleCallback(cfg, db, update.callback_query);
+    else if (update.chat_member) await handleChatMember(cfg, db, update.chat_member);
     else if (update.message) await handleMessage(cfg, db, update.message);
   } catch (error) {
     console.error("bot update failed", errorMessage(error));

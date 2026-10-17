@@ -14,7 +14,8 @@ if (!/^[A-Za-z0-9_-]{16,256}$/.test(secret)) {
 await tg(token, "setWebhook", {
   url: `${base}/telegram/webhook`,
   secret_token: secret,
-  allowed_updates: ["message", "callback_query"],
+  // chat_member: joins/leaves in the groups (the bot must be an admin there), for /stats per invite link.
+  allowed_updates: ["message", "callback_query", "chat_member"],
   drop_pending_updates: false,
 });
 await tg(token, "setMyCommands", {
@@ -23,6 +24,7 @@ await tg(token, "setMyCommands", {
     { command: "stats", description: "Cliques e o que mais funciona" },
     { command: "fila", description: "Posts aprovados esperando o horário" },
     { command: "resumo", description: "Top 10 da semana para os grupos" },
+    { command: "link", description: "Criar link de convite com nome (ex.: /link ig-bio)" },
     { command: "buscar", description: "Buscar promoções agora" },
     { command: "id", description: "Mostrar o id deste chat" },
     { command: "ajuda", description: "Ajuda" },

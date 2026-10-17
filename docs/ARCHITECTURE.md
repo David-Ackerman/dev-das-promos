@@ -371,6 +371,14 @@ erDiagram
     int_array post_ids
     text status "pending | sent | declined"
   }
+  member_joins {
+    bigint id PK
+    text chat_id
+    text user_hash "salted hash, never the raw id"
+    text link_name "invite link name"
+    timestamptz joined_at
+    timestamptz left_at
+  }
   site_views {
     date day PK
     text source PK "x | ig | share | '' = direct"
@@ -394,7 +402,7 @@ always integer cents.
 | `GET /wa/:code` | Opens WhatsApp with the post written |
 | `GET /x/:code` | Page to copy the X post or open it in the X app (share mode) |
 | `GET /wr/:id` | Opens WhatsApp with the weekly Top 10 written |
-| `POST /telegram/webhook` | Bot updates (checked with `TELEGRAM_WEBHOOK_SECRET`) |
+| `POST /telegram/webhook` | Bot updates: messages, buttons, and group joins/leaves (`chat_member`, for per-link join stats); checked with `TELEGRAM_WEBHOOK_SECRET` |
 | `GET /robots.txt`, `/health` | Search engines; deploy smoke test |
 | `/banner*.webp`, `/og.jpg` | Static assets from `public/` |
 
@@ -406,6 +414,7 @@ always integer cents.
 | `/stats [dias]` | Clicks per channel, group and site source (`web x`…), site visits per source, store, best hours, top products, X spend |
 | `/buscar` | Search now (starts `collect.yml`) |
 | `/resumo` | Weekly Top 10 preview |
+| `/link nome` | Named invite link in each group; joins through it show in `/stats` (retention after 7 days) |
 | `/id` | Chat id (for setting up groups) |
 | Link in the private chat | Preview from an Amazon / Mercado Livre link |
 | ✅ ❌ 🔄 ✏️ | Approve, decline, new AI text, write your own text |

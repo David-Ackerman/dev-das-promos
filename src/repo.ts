@@ -425,6 +425,19 @@ export async function recordXUsage(db: Db, postId: number, kind: "post" | "reply
   await db.query(`INSERT INTO x_usage (post_id, kind, cost_usd) VALUES ($1, $2, $3)`, [postId, kind, costUsd]);
 }
 
+export async function recordJoin(db: Db, chatId: string, userHash: string, linkName: string): Promise<void> {
+  await db.query(`INSERT INTO member_joins (chat_id, user_hash, link_name) VALUES ($1, $2, $3)`, [chatId, userHash, linkName]);
+}
+
+/** Closes the member's latest open join in that chat. */
+export async function recordLeave(db: Db, chatId: string, userHash: string): Promise<void> {
+  await db.query(
+    `UPDATE member_joins SET left_at = now()
+     WHERE id = (SELECT id FROM member_joins WHERE chat_id = $1 AND user_hash = $2 AND left_at IS NULL ORDER BY joined_at DESC LIMIT 1)`,
+    [chatId, userHash],
+  );
+}
+
 /** When the last post went out (any channel), or null. */
 export async function lastPublishedAt(db: Db): Promise<Date | null> {
   const rows = await db.query<{ last: string | null }>(
@@ -535,6 +548,11 @@ export interface Stats {
   x: XUsage;
   /** Public page visits per source in the period ('' = direct). */
   siteViews: { source: string; views: number }[];
+  /**
+   * Group joins per invite link name in the period. `stayed7` / `old7`: of the
+   * joins at least 7 days old, how many were still in the group 7 days later.
+   */
+  joins: { link_name: string; joins: number; leaves: number; stayed7: number; old7: number }[];
 }
 
 export async function getStats(db: Db, days: number): Promise<Stats> {
@@ -591,10 +609,22 @@ export async function getStats(db: Db, days: number): Promise<Stats> {
      GROUP BY source ORDER BY views DESC`,
     [days],
   );
+  const joins = await db.query<Stats["joins"][number]>(
+    `SELECT link_name,
+            count(*)::int AS joins,
+            count(*) FILTER (WHERE left_at IS NOT NULL)::int AS leaves,
+            count(*) FILTER (WHERE joined_at <= now() - interval '7 days'
+                               AND (left_at IS NULL OR left_at > joined_at + interval '7 days'))::int AS stayed7,
+            count(*) FILTER (WHERE joined_at <= now() - interval '7 days')::int AS old7
+     FROM member_joins WHERE joined_at > ${since}
+     GROUP BY link_name ORDER BY joins DESC LIMIT 10`,
+    [days],
+  );
   return {
     days,
     bestHours,
     siteViews,
+    joins,
     x: await xUsage(db),
     posts: posts ?? { published: 0, declined: 0, pending: 0 },
     byChannel,

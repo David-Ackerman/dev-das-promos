@@ -972,6 +972,62 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("tracks group joins and leaves per invite link, and creates named links", async () => {
+    const cfg = testConfig();
+    const f = mockFetch([
+      ["createChatInviteLink", (c) => ({ ok: true, result: { invite_link: `https://t.me/+${c.body.chat_id}-${c.body.name}` } })],
+      ["api.telegram.org", telegramRoute()],
+    ]);
+    const handler = createHandler(() => ({ cfg, db }));
+    const send = async (update: unknown) => {
+      await handler.fetch(
+        new Request("https://w/telegram/webhook", { method: "POST", headers: { "x-telegram-bot-api-secret-token": "secret_secret_secret" }, body: JSON.stringify(update) }),
+        {},
+        ctx,
+      );
+      await flush();
+    };
+    const member = (userId: number, from: string, to: string, chat = -1001, link?: string) => ({
+      update_id: 1,
+      chat_member: {
+        chat: { id: chat },
+        old_chat_member: { status: from, user: { id: userId } },
+        new_chat_member: { status: to, user: { id: userId } },
+        ...(link ? { invite_link: { invite_link: "https://t.me/+x", name: link } } : {}),
+      },
+    });
+    const name = `ig-${suffix}`;
+    try {
+      await send({ update_id: 1, message: { message_id: 1, chat: { id: 111, type: "private" }, from: { id: 111 }, text: `/link ${name}` } });
+      assert.deepEqual(f.to("createChatInviteLink").map((c) => c.body.chat_id), ["-1001", "-1002"], "one named link per group");
+      assert.match(f.to("sendMessage").at(-1)!.body.text, new RegExp(`https://t.me/\\+-1001-${name}`));
+
+      await send(member(501, "left", "member", -1001, name));
+      await send(member(502, "left", "member", -1001, name));
+      await send(member(503, "left", "member", -1001));
+      await send(member(502, "member", "left"));
+      await send(member(501, "member", "administrator"));
+      await send(member(900, "left", "member", -5555, name));
+      const rows = await db.query<{ joins: number; leaves: number }>(
+        `SELECT count(*)::int AS joins, count(left_at)::int AS leaves FROM member_joins WHERE link_name = $1`,
+        [name],
+      );
+      assert.deepEqual(rows[0], { joins: 2, leaves: 1 }, "promotion isn't a join; other chats are ignored");
+      const stored = await db.query<{ user_hash: string }>(`SELECT user_hash FROM member_joins WHERE link_name = $1`, [name]);
+      assert.ok(stored.every((r) => !r.user_hash.includes("501")), "no raw user ids");
+
+      // Pretend it all happened 8 days ago (502 left minutes after joining).
+      await db.query(
+        `UPDATE member_joins SET joined_at = joined_at - interval '8 days', left_at = left_at - interval '8 days' WHERE link_name = $1`,
+        [name],
+      );
+      await send({ update_id: 1, message: { message_id: 2, chat: { id: 111, type: "private" }, from: { id: 111 }, text: "/stats 30" } });
+      assert.match(f.to("sendMessage").at(-1)!.body.text, new RegExp(`${name}: 2 entraram, 1 saíram, 50% ficaram 7 dias`));
+    } finally {
+      f.restore();
+    }
+  });
+
   it("expires previews nobody answered", async () => {
     const cfg = testConfig();
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", () => new Response("x", { status: 500 })], ["affiliate.shopee", () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } })]]);
