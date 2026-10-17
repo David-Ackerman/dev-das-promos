@@ -176,9 +176,10 @@ export async function updateCaption(
   hashtag?: string,
 ): Promise<void> {
   // A new hashtag replaces the old one; no hashtag (template, typed text) keeps it.
+  // Queued posts can still get a new text while they wait for their slot.
   await db.query(
     `UPDATE posts SET caption = $2, caption_short = $3, ai_model = $4, hashtag = COALESCE($5::text, hashtag)
-     WHERE id = $1 AND status = 'pending'`,
+     WHERE id = $1 AND status IN ('pending', 'queued')`,
     [postId, caption, captionShort, aiModel, hashtag ?? null],
   );
 }

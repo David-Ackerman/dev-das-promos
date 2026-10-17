@@ -4,6 +4,7 @@ import { renderTelegram, STORE } from "./render.ts";
 import { setPreview } from "./repo.ts";
 import { editPost, type Keyboard, sendPost } from "./telegram.ts";
 import type { PostRow } from "./types.ts";
+import { formatSlot } from "./schedule.ts";
 import { brl, escapeHtml } from "./util.ts";
 
 export function renderInput(cfg: Config, post: PostRow, link: string) {
@@ -48,8 +49,9 @@ export function pendingKeyboard(post: PostRow): Keyboard {
     ],
     [
       { text: "🔄 Outro texto", callback_data: `r:${post.id}` },
-      { text: "🔗 Ver produto", url: post.affiliate_url },
+      { text: "✏️ Meu texto", callback_data: `e:${post.id}` },
     ],
+    [{ text: "🔗 Ver produto", url: post.affiliate_url }],
   ];
 }
 
@@ -59,7 +61,28 @@ export function queuedKeyboard(post: PostRow): Keyboard {
       { text: "⚡ Publicar agora", callback_data: `n:${post.id}` },
       { text: "↩️ Desagendar", callback_data: `u:${post.id}` },
     ],
+    [{ text: "✏️ Meu texto", callback_data: `e:${post.id}` }],
   ];
+}
+
+/** Redraws a preview for its current state (pending, or queued with its slot) after the text changed. */
+export async function refreshPreview(cfg: Config, post: PostRow): Promise<void> {
+  if (post.status === "queued" && post.scheduled_at) {
+    const header = statusHeader(post, "🕒", `Agendado para ${formatSlot(new Date(post.scheduled_at), new Date())}`);
+    await updatePreview(cfg, post, header, queuedKeyboard(post));
+    return;
+  }
+  await updatePreview(cfg, post, undefined, pendingKeyboard(post));
+}
+
+/** Text of the bot's "write your text" prompt; the reply to it is matched by the "#id" in it. */
+export function ownTextPrompt(postId: number): string {
+  return `✏️ Escreva o texto do post #${postId} e envie como resposta a esta mensagem.\nDica: 1 ou 2 frases curtas; nome, foto e preço o bot coloca sozinho.`;
+}
+
+export function postIdFromOwnTextPrompt(text: string | undefined): number | undefined {
+  const id = text?.match(/^✏️ Escreva o texto do post #(\d+)/)?.[1];
+  return id ? Number(id) : undefined;
 }
 
 export function retryKeyboard(post: PostRow): Keyboard {
@@ -67,7 +90,7 @@ export function retryKeyboard(post: PostRow): Keyboard {
 }
 
 export const EDIT_HINT =
-  "💡 Para trocar o texto, responda a esta prévia com o texto novo.";
+  "💡 Para usar o seu próprio texto, toque ✏️ Meu texto na prévia (ou responda à prévia com o texto).";
 
 export async function sendPreview(cfg: Config, db: Db, post: PostRow): Promise<void> {
   const { messageId, hasPhoto } = await sendPost(

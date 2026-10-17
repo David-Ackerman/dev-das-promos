@@ -1,7 +1,15 @@
 import { candidateFromPost, generateCaption } from "./ai.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
-import { EDIT_HINT, pendingKeyboard, sendPreview, updatePreview } from "./preview.ts";
+import {
+  EDIT_HINT,
+  ownTextPrompt,
+  pendingKeyboard,
+  postIdFromOwnTextPrompt,
+  refreshPreview,
+  sendPreview,
+  updatePreview,
+} from "./preview.ts";
 import { buildCandidate, parseSubmission, SUBMIT_HELP, type Submission } from "./manual.ts";
 import { approvePost, declinePost, publishNow, retryPost, unschedulePost } from "./publish.ts";
 import { declineRoundup, proposeRoundup, sendRoundup } from "./roundup.ts";
@@ -33,7 +41,7 @@ interface TgMessage {
   text?: string;
   /** Text under a photo/video; a shared product link can come this way. */
   caption?: string;
-  reply_to_message?: { message_id: number };
+  reply_to_message?: { message_id: number; text?: string };
 }
 export interface TgUpdate {
   update_id: number;
@@ -49,10 +57,10 @@ const HELP = `<b>Comandos</b>
 /buscar — busca promoções agora
 /id — mostra o id deste chat (útil para configurar grupos)
 
-Nas prévias: ✅ aprova (entra na fila e sai no próximo horário livre), ❌ descarta, 🔄 gera outro texto.
+Nas prévias: ✅ aprova (entra na fila e sai no próximo horário livre), ❌ descarta, 🔄 gera outro texto, ✏️ usa o seu texto.
 Na fila: ⚡ publica agora, ↩️ volta para as prévias.\nDepois de aprovar, 🐦 abre o X com o post pronto (se X_MODE=share).
 Se algum canal falhar, 🔁 tenta de novo só onde faltou.
-Para escrever o texto você mesmo, responda à prévia com o texto novo.
+Para escrever o texto você mesmo, toque ✏️ Meu texto (ou responda à prévia). Vale até o post sair da fila.
 
 ${SUBMIT_HELP}`;
 
@@ -224,6 +232,15 @@ async function handleCallback(cfg: Config, db: Db, cq: NonNullable<TgUpdate["cal
     await retryPost(cfg, db, postId);
   } else if (action === "d") {
     await answer(await declinePost(cfg, db, postId));
+  } else if (action === "e") {
+    const post = await getPost(db, postId);
+    if (!post || (post.status !== "pending" && post.status !== "queued")) return answer("Esse post já foi publicado.");
+    await answer("Escreva o seu texto 👇");
+    await tg(cfg.telegram.botToken, "sendMessage", {
+      chat_id: cfg.telegram.adminChatId,
+      text: ownTextPrompt(postId),
+      reply_markup: { force_reply: true, input_field_placeholder: "Seu texto para o post" },
+    });
   } else if (action === "r") {
     const post = await getPost(db, postId);
     if (!post || post.status !== "pending") return answer("Esse post já foi processado.");
@@ -247,19 +264,22 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
   }
   if (!isAdmin(cfg, msg.from?.id)) return;
 
-  // Replying to a preview replaces its text.
+  // Replying to a preview, or to the ✏️ prompt, replaces the post's text.
+  const promptedId = postIdFromOwnTextPrompt(msg.reply_to_message?.text);
   const replyTo = msg.reply_to_message && text && !command
-    ? await findPostByPreview(db, chatId, msg.reply_to_message.message_id)
+    ? promptedId
+      ? await getPost(db, promptedId)
+      : await findPostByPreview(db, chatId, msg.reply_to_message.message_id)
     : undefined;
   if (replyTo) {
     const post = replyTo;
-    if (post.status !== "pending") {
-      await sendText(token, chatId, "Essa prévia já foi processada.");
+    if (post.status !== "pending" && post.status !== "queued") {
+      await sendText(token, chatId, "Esse post já foi publicado, não dá mais para trocar o texto.");
       return;
     }
     await updateCaption(db, post.id, truncate(text, 600), truncate(text, 150), "manual");
     const fresh = (await getPost(db, post.id)) as PostRow;
-    await updatePreview(cfg, fresh, undefined, pendingKeyboard(fresh));
+    await refreshPreview(cfg, fresh);
     await tg(token, "setMessageReaction", {
       chat_id: chatId,
       message_id: msg.message_id,

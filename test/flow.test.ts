@@ -901,6 +901,48 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("lets the admin write the post text with ✏️, also while the post waits in the queue", async () => {
+    const cfg = testConfig({ QUEUE_INTERVAL_MINUTES: "40", POSTING_HOURS: "0-24", X_MODE: "off", WHATSAPP_MODE: "off" });
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
+    const reply = async (text: string, to: { message_id: number; text?: string }) => {
+      await createHandler(() => ({ cfg, db })).fetch(
+        new Request("https://w/telegram/webhook", {
+          method: "POST",
+          headers: { "x-telegram-bot-api-secret-token": "secret_secret_secret" },
+          body: JSON.stringify({ update_id: 1, message: { message_id: 77, chat: { id: 111, type: "private" }, from: { id: 111 }, text, reply_to_message: to } }),
+        }),
+        {},
+        ctx,
+      );
+      await flush();
+    };
+    const caption = async (id: number) => (await db.query<{ caption: string; ai_model: string }>(`SELECT caption, ai_model FROM posts WHERE id = $1`, [id]))[0]!;
+    try {
+      await collect(cfg, [offer("own-1")]);
+      const post = await postFor("own-1");
+      const kb = f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body.reply_markup.inline_keyboard;
+      assert.equal(kb[1][1].callback_data, `e:${post.id}`, "✏️ button on the preview");
+
+      await tap(cfg, `e:${post.id}`);
+      const prompt = f.to("sendMessage").at(-1)!.body;
+      assert.equal(prompt.reply_markup.force_reply, true);
+      await reply("Seu setup agradece 🎮", { message_id: 900, text: prompt.text });
+      assert.deepEqual(await caption(post.id), { caption: "Seu setup agradece 🎮", ai_model: "manual" });
+
+      // Still editable after approval, while it waits for its slot.
+      await db.query(`UPDATE posts SET published_at = now() WHERE id = (SELECT max(id) FROM posts WHERE id <> $1 AND status = 'published')`, [post.id]);
+      await tap(cfg, `a:${post.id}`);
+      assert.equal((await postFor("own-1")).status, "queued");
+      await reply("Agora com outro texto 😎", { message_id: Number(post.preview_message_id) });
+      assert.equal((await caption(post.id)).caption, "Agora com outro texto 😎");
+      const edit = f.to("editMessage").filter((c) => c.body.message_id === Number(post.preview_message_id)).at(-1)!.body;
+      assert.match(edit.caption ?? edit.text, /🕒 <b>#\d+ Agendado para/, "keeps its slot header");
+      assert.equal(edit.reply_markup.inline_keyboard[0][0].callback_data, `n:${post.id}`, "keeps the queue buttons");
+    } finally {
+      f.restore();
+    }
+  });
+
   it("expires previews nobody answered", async () => {
     const cfg = testConfig();
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", () => new Response("x", { status: 500 })], ["affiliate.shopee", () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } })]]);
