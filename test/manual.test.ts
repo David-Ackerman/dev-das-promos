@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   affiliateLinkFor,
+  amazonAskText,
   externalIdFrom,
   marketplaceOf,
   parsePriceToken,
   parseProductPage,
   parseSubmission,
   parseSubmissions,
+  submissionFromAmazonReply,
   titleFromUrl,
   unwrapVerification,
 } from "../src/manual.ts";
@@ -19,6 +21,7 @@ describe("links sent to the bot", () => {
       priceCents: 12990,
       originalPriceCents: 19990,
       caption: undefined,
+      before: undefined,
     });
     const shared = parseSubmission("Olha esse: Fone JBL https://mercadolivre.com/sec/1xY R$ 1.299 R$1.099,90 que preço\nCorre!");
     assert.equal(shared?.link, "https://mercadolivre.com/sec/1xY");
@@ -43,6 +46,22 @@ describe("links sent to the bot", () => {
     assert.equal(affiliateLinkFor(page("https://www.amazon.com.br/dp/B0ABCDEFGH"), "https://a.co/d/x", undefined).generated, false, "no tag configured");
     assert.equal(affiliateLinkFor({ marketplace: "mercadolivre", productUrl: "https://x" }, "https://meli.la/1", "meu-20").url, "https://meli.la/1");
     assert.equal(marketplaceOf("https://amzn.eu/d/abc"), "amazon");
+  });
+
+  it("takes the name from text before the link, and turns a reply into a submission", () => {
+    assert.equal(parseSubmission("Confira este produto: Echo Dot 5ª geração https://link.amazon/B0im0xAJ8")?.before, "Echo Dot 5ª geração");
+    assert.equal(parseSubmission("https://link.amazon/B0im0xAJ8 349,90")?.before, undefined);
+    assert.equal(marketplaceOf("https://link.amazon/B0im0xAJ8"), "amazon");
+    const prompt = amazonAskText("https://link.amazon/B0im0xAJ8");
+    const reply = submissionFromAmazonReply(prompt, "349,90 499,90 Echo Dot 5ª geração\nA Alexa agradece");
+    assert.deepEqual(reply, {
+      link: "https://link.amazon/B0im0xAJ8",
+      priceCents: 34990,
+      originalPriceCents: 49990,
+      caption: "Echo Dot 5ª geração\nA Alexa agradece",
+      before: undefined,
+    });
+    assert.equal(submissionFromAmazonReply("outra mensagem", "349,90 Echo"), undefined);
   });
 
   it("splits a message with several links into one submission each", () => {

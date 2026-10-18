@@ -248,6 +248,10 @@ sequenceDiagram
   Admin->>W: "https://meli.la/… 129,90" (private chat)
   W->>Page: follow the link, read name / photo / price
   Note over W: typed prices win<br/>Mercado Livre showcase: the featured card only
+  opt Amazon blocked the page (common from Cloudflare)
+    W->>Admin: "preço [antigo] Nome" question with the reply box open
+    Admin->>W: one reply, e.g. 349,90 499,90 Echo Dot
+  end
   W->>AI: caption (15 s, the Worker's window)
   alt every model busy
     W->>GH: start "AI texts retry"

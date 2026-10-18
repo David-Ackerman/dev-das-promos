@@ -1077,6 +1077,41 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("asks for price and name in one reply when Amazon blocks the page", async () => {
+    const cfg = testConfig({ AMAZON_PARTNER_TAG: "meu-20" });
+    const link = `https://link.amazon/${suffix}`;
+    const f = mockFetch([
+      ["link.amazon", () => new Response("To discuss automated access to Amazon data please contact…", { status: 503 })],
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", ai],
+    ]);
+    try {
+      await say(cfg, link);
+      const ask = f.to("sendMessage").at(-1)!.body;
+      assert.match(ask.text, /A Amazon bloqueia a leitura/);
+      assert.equal(ask.reply_markup.force_reply, true);
+      assert.equal(await postByLink(link), undefined);
+
+      await createHandler(() => ({ cfg, db })).fetch(
+        new Request("https://w/telegram/webhook", {
+          method: "POST",
+          headers: { "x-telegram-bot-api-secret-token": "secret_secret_secret" },
+          body: JSON.stringify({ update_id: 1, message: { message_id: 60, chat: { id: 111, type: "private" }, from: { id: 111 }, text: "349,90 499,90 Echo Dot 5ª geração", reply_to_message: { message_id: 61, text: ask.text } } }),
+        }),
+        {},
+        ctx,
+      );
+      await flush();
+      const post = (await postByLink(link))!;
+      assert.equal(post.title, "Echo Dot 5ª geração");
+      assert.deepEqual([post.price_cents, post.original_price_cents], [34990, 49990]);
+      assert.equal(post.marketplace, "amazon");
+      assert.match(f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body.text, /Prévia #\d+<\/b> · Amazon · -30%/);
+    } finally {
+      f.restore();
+    }
+  });
+
   it("expires previews nobody answered", async () => {
     const cfg = testConfig();
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", () => new Response("x", { status: 500 })], ["affiliate.shopee", () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } })]]);

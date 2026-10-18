@@ -10,7 +10,14 @@ import {
   sendPreview,
   updatePreview,
 } from "./preview.ts";
-import { affiliateLinkFor, buildCandidate, parseSubmissions, SUBMIT_HELP, type Submission } from "./manual.ts";
+import {
+  affiliateLinkFor,
+  buildCandidate,
+  parseSubmissions,
+  SUBMIT_HELP,
+  type Submission,
+  submissionFromAmazonReply,
+} from "./manual.ts";
 import { approvePost, declinePost, publishNow, retryPost, unschedulePost } from "./publish.ts";
 import { declineRoundup, proposeRoundup, sendRoundup } from "./roundup.ts";
 import { formatSlot } from "./schedule.ts";
@@ -231,6 +238,16 @@ async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: numb
   const token = cfg.telegram.botToken;
   await tg(token, "setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👀" }] }).catch(() => {});
   const built = await buildCandidate(sub);
+  if (!built.ok && built.askAmazon) {
+    // One reply with "price [old] Name" finishes it; the link travels inside the question.
+    await tg(token, "sendMessage", {
+      chat_id: chatId,
+      text: built.reason,
+      link_preview_options: { is_disabled: true },
+      reply_markup: { force_reply: true, input_field_placeholder: "349,90 499,90 Nome do produto" },
+    });
+    return;
+  }
   if (!built.ok) {
     await sendText(token, chatId, built.reason);
     return;
@@ -335,6 +352,13 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
     return;
   }
   if (!isAdmin(cfg, msg.from?.id)) return;
+
+  // Reply to "Amazon blocked the page": price + name for that link.
+  const amazonReply = !command && text ? submissionFromAmazonReply(msg.reply_to_message?.text, text) : undefined;
+  if (amazonReply) {
+    await postFromLink(cfg, db, chatId, msg.message_id, amazonReply);
+    return;
+  }
 
   // Replying to a preview, or to the ✏️ prompt, replaces the post's text.
   const promptedId = postIdFromOwnTextPrompt(msg.reply_to_message?.text);

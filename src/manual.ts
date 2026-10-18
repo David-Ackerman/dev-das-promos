@@ -16,6 +16,8 @@ export interface Submission {
   priceCents?: number;
   originalPriceCents?: number;
   caption?: string;
+  /** Text before the link (the Amazon app shares "Product name https://…"): the name when the page can't be read. */
+  before?: string;
 }
 
 const URL_RE = /https?:\/\/[^\s<>"]+/i;
@@ -45,11 +47,17 @@ export function parseSubmission(text: string): Submission | undefined {
   }
   const [a, b] = prices;
   const caption = [words.join(" "), ...lines.slice(at + 1)].join("\n").trim();
+  const before = [...lines.slice(0, at), line.slice(0, line.indexOf(link))]
+    .join(" ")
+    .replace(/^\s*(confira|olha|veja)[^:]*:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
   return {
     link,
     priceCents: a !== undefined && b !== undefined ? Math.min(a, b) : a,
     originalPriceCents: a !== undefined && b !== undefined && a !== b ? Math.max(a, b) : undefined,
     caption: caption || undefined,
+    before: before.length >= 6 ? before : undefined,
   };
 }
 
@@ -60,7 +68,11 @@ export function marketplaceOf(url: string): Marketplace | undefined {
   } catch {
     return undefined;
   }
-  if (/(^|\.)amazon\.com\.br$/.test(host) || ["amzn.to", "amzn.eu", "amzn.com"].includes(host) || /(^|\.)a\.co$/.test(host)) {
+  if (
+    /(^|\.)amazon\.com\.br$/.test(host) ||
+    ["amzn.to", "amzn.eu", "amzn.com", "link.amazon", "amzlinks.in"].includes(host) ||
+    /(^|\.)a\.co$/.test(host)
+  ) {
     return "amazon";
   }
   if (/(^|\.)mercadolivre\.com(\.br)?$/.test(host) || /(^|\.)mercadolibre\.com$/.test(host) || host === "meli.la") {
@@ -314,7 +326,30 @@ sozinho; se a loja bloquear a leitura, eu aviso e você manda o preço junto com
 
 export type BuildResult =
   | { ok: true; candidate: Candidate; caption?: string }
-  | { ok: false; reason: string };
+  /** `askAmazon`: Amazon blocked the page; ask the admin for price and name in one reply. */
+  | { ok: false; reason: string; askAmazon?: boolean };
+
+/** First line of the bot's question when Amazon blocks the page; the reply is matched by it. */
+export const AMAZON_ASK = "🛒 A Amazon bloqueia a leitura automática da página";
+
+export function amazonAskText(link: string): string {
+  return (
+    `${AMAZON_ASK}, então me diga o preço e o nome do produto.\n` +
+    "Responda esta mensagem assim: preço [preço antigo] Nome do produto\n" +
+    "Ex.: 349,90 499,90 Echo Dot 5ª geração\n" +
+    "(nas linhas de baixo, se quiser, o texto do post)\n\n" +
+    `🔗 ${link}`
+  );
+}
+
+/** The admin's reply to amazonAskText → the same submission as "link price [old]\nName\n[text]". */
+export function submissionFromAmazonReply(promptText: string | undefined, reply: string): Submission | undefined {
+  if (!promptText?.startsWith(AMAZON_ASK)) return undefined;
+  const link = promptText.match(/🔗 (https?:\/\/\S+)/)?.[1];
+  if (!link) return undefined;
+  const [first = "", ...rest] = reply.trim().split("\n");
+  return parseSubmission(`${link} ${first}${rest.length ? `\n${rest.join("\n")}` : ""}`);
+}
 
 /** Turns a submission into a Candidate, preferring what the admin typed over what the page says. */
 export async function buildCandidate(sub: Submission): Promise<BuildResult> {
@@ -325,7 +360,7 @@ export async function buildCandidate(sub: Submission): Promise<BuildResult> {
 
   // When the page can't be read, the first line under the link is the product name.
   let caption = sub.caption;
-  let title = page.title ?? titleFromUrl(finalUrl);
+  let title = page.title ?? titleFromUrl(finalUrl) ?? sub.before;
   if (!title && caption) {
     const [first, ...rest] = caption.split("\n");
     title = first?.trim() || undefined;
@@ -333,6 +368,7 @@ export async function buildCandidate(sub: Submission): Promise<BuildResult> {
   }
   const priceCents = sub.priceCents ?? page.priceCents;
   const missing = [!title && "o nome do produto", !priceCents && "o preço"].filter(Boolean).join(" e ");
+  if (missing && marketplace === "amazon") return { ok: false, reason: amazonAskText(sub.link), askAmazon: true };
   if (missing) {
     return {
       ok: false,
