@@ -10,7 +10,7 @@ import {
   sendPreview,
   updatePreview,
 } from "./preview.ts";
-import { buildCandidate, parseSubmission, SUBMIT_HELP, type Submission } from "./manual.ts";
+import { affiliateLinkFor, buildCandidate, parseSubmissions, SUBMIT_HELP, type Submission } from "./manual.ts";
 import { approvePost, declinePost, publishNow, retryPost, unschedulePost } from "./publish.ts";
 import { declineRoundup, proposeRoundup, sendRoundup } from "./roundup.ts";
 import { formatSlot } from "./schedule.ts";
@@ -237,6 +237,7 @@ async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: numb
   }
   const c = built.candidate;
   const text = built.caption;
+  const link = affiliateLinkFor(c, sub.link, cfg.amazonPartnerTag);
   const startedAt = await dbNow(db);
   const productId = await upsertProduct(db, c);
   // Page read + AI must fit in the ~30s the Worker gets after answering Telegram.
@@ -247,7 +248,7 @@ async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: numb
     productId,
     ref: randomCode(10),
     candidate: c,
-    affiliateUrl: sub.link, // already the affiliate link: never rewritten
+    affiliateUrl: link.url, // the admin's link byte for byte, or the tagged Amazon link built from it
     priceFromAdmin: sub.priceCents !== undefined,
     lowestSeenCents: await lowestSeenPrice(db, productId, startedAt),
     caption: caption.caption,
@@ -260,6 +261,9 @@ async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: numb
   } catch (error) {
     await transition(db, post.id, "pending", "failed");
     throw error;
+  }
+  if (link.generated) {
+    await sendText(token, chatId, `🔗 Esse link não tinha a sua tag da Amazon: o post #${post.id} usa o seu link de afiliado\n<code>${escapeHtml(link.url)}</code>`);
   }
   if (caption.error) await aiBusyFallback(cfg, caption.error);
 }
@@ -358,11 +362,10 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
 
   // A product link sent to the bot in the admin chat becomes a preview.
   if (!command && chatId === cfg.telegram.adminChatId) {
-    const sub = parseSubmission(text || msg.caption?.trim() || "");
-    if (sub) {
-      await postFromLink(cfg, db, chatId, msg.message_id, sub);
-      return;
-    }
+    const subs = parseSubmissions(text || msg.caption?.trim() || "");
+    // One by one: the Worker has ~30s and each link is a page read + AI caption.
+    for (const sub of subs) await postFromLink(cfg, db, chatId, msg.message_id, sub);
+    if (subs.length) return;
   }
 
   switch (command) {

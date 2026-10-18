@@ -1052,6 +1052,31 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("tags Amazon links shared from the app, several per message", async () => {
+    const cfg = testConfig({ AMAZON_PARTNER_TAG: "meu-20" });
+    const asins = [`B1${suffix.toUpperCase().padEnd(8, "Y").slice(0, 8)}`, `B2${suffix.toUpperCase().padEnd(8, "Z").slice(0, 8)}`];
+    const f = mockFetch([
+      ["a.co", (c) => new Response(`<span id="productTitle">Produto ${c.url.slice(-1)}</span><span id="corePrice_feature_div"><span class="a-offscreen">R$ 99,90</span></span>`, { status: 200 })],
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", ai],
+    ]);
+    try {
+      // Mocked fetch has no redirects, so the "app links" carry the ASIN in the path here.
+      const links = asins.map((a, i) => `https://a.co/dp/${a}/${i}`);
+      await say(cfg, links.join("\n"));
+      for (const asin of asins) {
+        const rows = await db.query<{ affiliate_url: string }>(
+          `SELECT p.affiliate_url FROM posts p JOIN products pr ON pr.id = p.product_id WHERE pr.external_id = $1`,
+          [asin],
+        );
+        assert.deepEqual(rows.map((r) => r.affiliate_url), [`https://www.amazon.com.br/dp/${asin}?tag=meu-20`]);
+      }
+      assert.equal(f.to("sendMessage").filter((c) => /não tinha a sua tag/.test(c.body.text ?? "")).length, 2);
+    } finally {
+      f.restore();
+    }
+  });
+
   it("expires previews nobody answered", async () => {
     const cfg = testConfig();
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", () => new Response("x", { status: 500 })], ["affiliate.shopee", () => ({ data: { generateShortLink: { shortLink: "https://s.shopee.com.br/z" } } })]]);

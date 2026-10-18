@@ -14,13 +14,13 @@ export interface QueueSettings {
 const BRT_OFFSET_MS = -3 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** "8-23" -> { startHour: 8, endHour: 23 }. */
+/** "6-23" -> { startHour: 6, endHour: 23 }. */
 export function parsePostingHours(raw: string | undefined): { startHour: number; endHour: number } {
-  const m = (raw?.trim() || "8-23").match(/^(\d{1,2})\s*-\s*(\d{1,2})$/);
+  const m = (raw?.trim() || "6-23").match(/^(\d{1,2})\s*-\s*(\d{1,2})$/);
   const startHour = Number(m?.[1]);
   const endHour = Number(m?.[2]);
   if (!m || startHour < 0 || endHour > 24 || startHour >= endHour) {
-    throw new Error(`POSTING_HOURS must look like 8-23 (got "${raw}")`);
+    throw new Error(`POSTING_HOURS must look like 6-23 (got "${raw}")`);
   }
   return { startHour, endHour };
 }

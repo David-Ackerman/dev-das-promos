@@ -76,6 +76,8 @@ export interface Config {
   autoApproveMinDiscountPct: number;
   /** Public deals page (GET /). */
   site: { name: string; telegramUrl?: string; whatsappUrl?: string; xUrl?: string };
+  /** Your Associates tag: links the admin sends without it get a tagged link (works without the API). */
+  amazonPartnerTag?: string;
   footer: string;
   githubDispatch?: { token: string; repo: string; workflow: string; ref: string };
 }
@@ -210,6 +212,7 @@ export function loadConfig(env: Env): Config {
       whatsappUrl: httpsUrl(env.SITE_WHATSAPP_URL),
       xUrl: httpsUrl(env.SITE_X_URL),
     },
+    amazonPartnerTag: env.AMAZON_PARTNER_TAG?.trim() || undefined,
     footer: env.POST_FOOTER?.trim() ?? "#publi · link de afiliado",
   };
 

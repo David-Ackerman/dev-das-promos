@@ -140,7 +140,7 @@ Actions jobs read settings fresh on every run.
 
 ## 4. Main flows
 
-### 4.1 Deal search (5× a day)
+### 4.1 Deal search (6× a day)
 
 GitHub's own scheduler runs late or skips runs, so a Worker cron starts the
 search on time through the GitHub API.
@@ -148,7 +148,7 @@ search on time through the GitHub API.
 ```mermaid
 sequenceDiagram
   autonumber
-  participant Cron as Worker cron<br/>(9h, 12h, 15h, 18h, 21h)
+  participant Cron as Worker cron<br/>(6h, 9h, 12h, 15h, 18h, 21h)
   participant GH as GitHub Actions<br/>collect.yml
   participant DB as Neon
   participant Shopee
@@ -253,7 +253,8 @@ sequenceDiagram
     W->>GH: start "AI texts retry"
     GH->>W: (via DB + Telegram) preview updated in 1–2 min
   end
-  W->>Admin: preview with ✅ ❌ 🔄 ✏️ — the link is kept byte for byte
+  Note over W: Amazon link without the admin's tag (shared from the app)<br/>becomes amazon.com.br/dp/ASIN?tag=AMAZON_PARTNER_TAG
+  W->>Admin: preview with ✅ ❌ 🔄 ✏️ — otherwise the link is kept byte for byte
 ```
 
 ### 4.5 Scheduled jobs
@@ -261,7 +262,7 @@ sequenceDiagram
 | When (Brasília) | Who | What |
 |---|---|---|
 | Every 5 min | Worker cron `*/5 * * * *` | Publish the next queued post whose time has come |
-| 9h, 12h, 15h, 18h, 21h | Worker cron `7 0,12,15,18,21 * * *` | Start `collect.yml` (deal search) |
+| 6h, 9h, 12h, 15h, 18h, 21h | Worker cron `7 0,9,12,15,18,21 * * *` | Start `collect.yml` (deal search) |
 | Sundays 18h | Worker cron `0 21 * * SUN` | Weekly Top 10 preview for the admin |
 | Daily ~3h | GitHub schedule (`backup.yml`) | `pg_dump` backup |
 | On demand | Worker → `heal.yml` | Rewrite captions that fell back to a template |

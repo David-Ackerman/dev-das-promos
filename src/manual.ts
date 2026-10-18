@@ -60,7 +60,9 @@ export function marketplaceOf(url: string): Marketplace | undefined {
   } catch {
     return undefined;
   }
-  if (/(^|\.)amazon\.com\.br$/.test(host) || host === "amzn.to" || /(^|\.)a\.co$/.test(host)) return "amazon";
+  if (/(^|\.)amazon\.com\.br$/.test(host) || ["amzn.to", "amzn.eu", "amzn.com"].includes(host) || /(^|\.)a\.co$/.test(host)) {
+    return "amazon";
+  }
   if (/(^|\.)mercadolivre\.com(\.br)?$/.test(host) || /(^|\.)mercadolibre\.com$/.test(host) || host === "meli.la") {
     return "mercadolivre";
   }
@@ -260,11 +262,52 @@ export async function fetchProductPage(link: string): Promise<{ finalUrl: string
   }
 }
 
+function tagOf(url: string): string | null {
+  try {
+    return new URL(url).searchParams.get("tag");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The link the post will carry. Kept byte for byte when it's already your
+ * affiliate link. Amazon links shared from the app (a.co/d/…, amzn.eu/…) or
+ * plain product pages don't carry your tag: then the bot builds the standard
+ * tagged link, amazon.com.br/dp/<ASIN>?tag=<AMAZON_PARTNER_TAG>, the same
+ * format Amazon's own SiteStripe gives you.
+ */
+export function affiliateLinkFor(
+  candidate: Pick<Candidate, "marketplace" | "productUrl">,
+  sentLink: string,
+  amazonTag: string | undefined,
+): { url: string; generated: boolean } {
+  if (candidate.marketplace !== "amazon" || !amazonTag) return { url: sentLink, generated: false };
+  if (tagOf(sentLink) === amazonTag || tagOf(candidate.productUrl) === amazonTag) return { url: sentLink, generated: false };
+  const asin = externalIdFrom("amazon", candidate.productUrl) ?? externalIdFrom("amazon", sentLink);
+  if (!asin) return { url: sentLink, generated: false };
+  return { url: `https://www.amazon.com.br/dp/${asin}?tag=${encodeURIComponent(amazonTag)}`, generated: true };
+}
+
+/** Several links in one message (one per line, with their prices): one preview each. */
+export function parseSubmissions(text: string, max = 5): Submission[] {
+  const urlLines = text.split("\n").filter((l) => URL_RE.test(l));
+  if (urlLines.length <= 1) {
+    const one = parseSubmission(text);
+    return one ? [one] : [];
+  }
+  return urlLines
+    .slice(0, max)
+    .map((line) => parseSubmission(line))
+    .filter((s): s is Submission => Boolean(s));
+}
+
 export const SUBMIT_HELP = `Para criar um post a partir de um link, me mande:
 <code>link [preço] [preço antigo]</code>
 e, se quiser, o texto do post nas linhas de baixo.
 
 Ex.: <code>https://amzn.to/abc 129,90 199,90</code>
+Até 5 links de uma vez, um por linha. Links da Amazon sem a sua tag (ex.: compartilhados do app) ganham a sua tag automaticamente.
 Se eu não conseguir ler o nome do produto, eu aviso: aí mande o nome na linha de baixo do link.
 Aceito links da Amazon e do Mercado Livre (inclusive meli.la). Normalmente eu leio nome, foto e preço
 sozinho; se a loja bloquear a leitura, eu aviso e você manda o preço junto com o link.`;

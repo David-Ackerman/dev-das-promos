@@ -7,11 +7,11 @@ compatibility_date = "2025-09-01"
 workers_dev = true
 
 # 1st: starts the "Collect deals" workflow (needs GH_DISPATCH_TOKEN + GH_REPO).
-#      UTC: 12,15,18,21,00 = 9h, 12h, 15h, 18h, 21h in Brasília.
+#      UTC: 9,12,15,18,21,00 = 6h, 9h, 12h, 15h, 18h, 21h in Brasília.
 # 2nd: publishes queued posts when their time comes (QUEUE_CRON in src/http.ts).
 # 3rd: Sundays 18h Brasília, sends the weekly Top 10 for approval (ROUNDUP_CRON).
 [triggers]
-crons = ["7 0,12,15,18,21 * * *", "*/5 * * * *", "0 21 * * SUN"]
+crons = ["7 0,9,12,15,18,21 * * *", "*/5 * * * *", "0 21 * * SUN"]
 
 # Banner and link-preview images for the public page (served as files, before the Worker).
 [assets]

@@ -101,7 +101,7 @@ describe("publishing queue timing", () => {
     assert.equal(formatSlot(brt("2026-10-16T08:00:00"), now), "amanhã 08:00");
     assert.equal(formatSlot(brt("2026-10-18T08:00:00"), now), "18/10 08:00");
     assert.deepEqual(parsePostingHours("9 - 22"), { startHour: 9, endHour: 22 });
-    assert.deepEqual(parsePostingHours(undefined), { startHour: 8, endHour: 23 });
+    assert.deepEqual(parsePostingHours(undefined), { startHour: 6, endHour: 23 });
     assert.throws(() => parsePostingHours("22-8"), /POSTING_HOURS/);
   });
 });
@@ -424,7 +424,7 @@ describe("scheduled search", () => {
     const waits: Promise<unknown>[] = [];
     const f = mockFetch(routes);
     try {
-      await handler.scheduled({ cron: "7 0,12,15,18,21 * * *" }, {}, { waitUntil: (p) => void waits.push(p) });
+      await handler.scheduled({ cron: "7 0,9,12,15,18,21 * * *" }, {}, { waitUntil: (p) => void waits.push(p) });
       await Promise.all(waits);
       return f;
     } finally {

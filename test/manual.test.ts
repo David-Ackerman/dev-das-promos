@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  affiliateLinkFor,
   externalIdFrom,
   marketplaceOf,
   parsePriceToken,
   parseProductPage,
   parseSubmission,
+  parseSubmissions,
   titleFromUrl,
   unwrapVerification,
 } from "../src/manual.ts";
@@ -27,6 +29,27 @@ describe("links sent to the bot", () => {
     assert.equal(parseSubmission("sem link aqui"), undefined);
     assert.equal(parsePriceToken("129.90"), 12990);
     assert.equal(parsePriceToken("abc"), undefined);
+  });
+
+  it("adds the admin's Amazon tag only when the link doesn't have it", () => {
+    const page = (url: string) => ({ marketplace: "amazon" as const, productUrl: url });
+    assert.deepEqual(affiliateLinkFor(page("https://www.amazon.com.br/Fone/dp/B0ABCDEFGH?psc=1"), "https://a.co/d/xyz", "meu-20"), {
+      url: "https://www.amazon.com.br/dp/B0ABCDEFGH?tag=meu-20",
+      generated: true,
+    });
+    const tagged = "https://amzn.to/3abc";
+    assert.deepEqual(affiliateLinkFor(page("https://www.amazon.com.br/dp/B0ABCDEFGH?tag=meu-20&linkCode=ll1"), tagged, "meu-20"), { url: tagged, generated: false }, "own tag: untouched");
+    assert.equal(affiliateLinkFor(page("https://www.amazon.com.br/dp/B0ABCDEFGH?tag=outro-20"), "https://amzn.to/x", "meu-20").url, "https://www.amazon.com.br/dp/B0ABCDEFGH?tag=meu-20", "someone else's tag is replaced");
+    assert.equal(affiliateLinkFor(page("https://www.amazon.com.br/dp/B0ABCDEFGH"), "https://a.co/d/x", undefined).generated, false, "no tag configured");
+    assert.equal(affiliateLinkFor({ marketplace: "mercadolivre", productUrl: "https://x" }, "https://meli.la/1", "meu-20").url, "https://meli.la/1");
+    assert.equal(marketplaceOf("https://amzn.eu/d/abc"), "amazon");
+  });
+
+  it("splits a message with several links into one submission each", () => {
+    const subs = parseSubmissions("https://a.co/d/one 99,90\nhttps://meli.la/two 199 299\nhttps://a.co/d/three");
+    assert.deepEqual(subs.map((s) => [s.link, s.priceCents ?? null]), [["https://a.co/d/one", 9990], ["https://meli.la/two", 19900], ["https://a.co/d/three", null]]);
+    assert.equal(parseSubmissions("https://a.co/d/one 99,90\nTexto do post").length, 1, "one link + text stays one post");
+    assert.equal(parseSubmissions(Array.from({ length: 8 }, (_, i) => `https://a.co/d/${i}`).join("\n")).length, 5, "at most 5");
   });
 
   it("recognises stores, product ids and names in URLs", () => {

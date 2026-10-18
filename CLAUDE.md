@@ -27,7 +27,11 @@ up to date when you add a route, cron, workflow, table or provider).
 - Money is integer cents.
 - The AI never writes prices or links; `src/render.ts` adds them.
 - Links the admin sends (`src/manual.ts`) are stored as `affiliate_url`
-  byte for byte: never rewrite them, or the affiliate tag can be lost.
+  byte for byte: never rewrite them, or the affiliate tag can be lost. The one
+  exception is an Amazon link without the admin's `AMAZON_PARTNER_TAG`
+  (`affiliateLinkFor`): it becomes `amazon.com.br/dp/<ASIN>?tag=<tag>`.
+- Amazon product data comes only from links the admin sends or the official
+  API: no automated crawling of Amazon (it breaks the Associates agreement).
 - Approve must stay idempotent: it wins `transition(db, id, "pending", ...)`
   once (to `publishing`, or to `queued` when the queue is on); a queued post is
   published only through `transition(db, id, "queued", "publishing")`. Retry

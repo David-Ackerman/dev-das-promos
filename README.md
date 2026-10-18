@@ -20,7 +20,7 @@ Everything runs on free plans: **GitHub Actions**, **Cloudflare Workers** and **
 
 ## How it works day to day
 
-1. At 9h, 12h, 15h, 18h and 21h (Brasília time), the bot sends you previews of the best new deals (`POSTS_PER_RUN`, default 2). It ranks them by discount, what a sale pays you (commission), sales and rating, and skips products that were cheaper in the last 30 days (fake "discounts").
+1. At 6h, 9h, 12h, 15h, 18h and 21h (Brasília time), the bot sends you previews of the best new deals (`POSTS_PER_RUN`, default 2). It ranks them by discount, what a sale pays you (commission), sales and rating, and skips products that were cheaper in the last 30 days (fake "discounts").
 2. Each preview has these buttons:
    - **✅ Aprovar** puts it in the queue (see below). If nothing went out recently, it's published right away.
    - **❌ Recusar** discards it. The product won't come back for 14 days.
@@ -30,7 +30,7 @@ Everything runs on free plans: **GitHub Actions**, **Cloudflare Workers** and **
 4. If a channel fails (the bot was removed from a group, X is out of credits…), the preview says which one and shows **🔁 Tentar de novo**. It sends only where it's still missing, so nobody gets the post twice.
 5. If you don't answer a preview within 12h, it expires, because prices change.
 
-**Queue.** Approved posts go out one at a time, `QUEUE_INTERVAL_MINUTES` apart (default 40), only inside `POSTING_HOURS` (default `8-23`, Brasília). So you can approve ten posts in the morning and they're spread over the day. A queued preview shows "🕒 Agendado para 14:40" with **⚡ Publicar agora** and **↩️ Desagendar**. `/fila` lists the queue. Set `QUEUE_INTERVAL_MINUTES=0` to publish the moment you approve.
+**Queue.** Approved posts go out one at a time, `QUEUE_INTERVAL_MINUTES` apart (default 40), only inside `POSTING_HOURS` (default `6-23`, Brasília). So you can approve ten posts in the morning and they're spread over the day. A queued preview shows "🕒 Agendado para 14:40" with **⚡ Publicar agora** and **↩️ Desagendar**. `/fila` lists the queue. Set `QUEUE_INTERVAL_MINUTES=0` to publish the moment you approve.
 
 **Auto-approve** (off by default). With `AUTO_APPROVE_MIN_DISCOUNT=40`, previews with at least 40% off, AI-written text and no fake discount are approved for you (they still go through the queue, and you can unschedule them).
 
