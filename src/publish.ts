@@ -237,7 +237,7 @@ export async function unschedulePost(cfg: Config, db: Db, postId: number): Promi
   if (!(await transition(db, postId, "queued", "pending"))) return "Esse post não está na fila.";
   await setSchedule(db, postId, null);
   const post = (await getPost(db, postId)) as PostRow;
-  await updatePreview(cfg, post, undefined, pendingKeyboard(post));
+  await updatePreview(cfg, post, undefined, pendingKeyboard(post, cfg));
   return "Voltou para as prévias.";
 }
 
@@ -296,7 +296,7 @@ async function holdIfPriceChanged(cfg: Config, db: Db, post: PostRow): Promise<s
     const header =
       `💸 <b>#${post.id} O preço subiu: ${brl(post.price_cents)} → ${brl(check.priceCents)}</b>\n` +
       "Não publiquei. Toque ✅ para publicar com o preço novo.";
-    await updatePreview(cfg, fresh, header, pendingKeyboard(fresh));
+    await updatePreview(cfg, fresh, header, pendingKeyboard(fresh, cfg));
     return "O preço subiu: não publiquei.";
   }
   return undefined;

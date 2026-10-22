@@ -1,0 +1,43 @@
+name: Product image
+
+# Started by the Worker when the admin taps 🖼️ Nova imagem on a preview (mode
+# force), or sends a product link to the bot (mode auto: only white-background
+# or text-heavy store photos are replaced). Puts the product in an AI scene and
+# swaps the preview's photo. Needs IMAGE_MODEL (see .env.example).
+on:
+  workflow_dispatch:
+    inputs:
+      post_id:
+        description: "Post id"
+        required: true
+      mode:
+        description: "force (always a new scene) or auto"
+        required: false
+        default: force
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-${{ inputs.post_id }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package.json
+      - run: npm install --no-audit --no-fund --omit=dev
+      - name: Load settings from repository variables and secrets
+        run: node src/jobs/gh-export-env.ts
+        env:
+          VARS_JSON: ${{ toJSON(vars) }}
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+      - run: node src/jobs/image.ts --post "${{ inputs.post_id }}" --mode "${{ inputs.mode || 'force' }}"

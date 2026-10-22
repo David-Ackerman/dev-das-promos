@@ -44,6 +44,13 @@ export interface PostRow {
   marketplace: Marketplace;
   external_id: string;
   title: string;
+  /** The post's own photo (/img/<id>) when it has one, else the store photo. */
   image_url: string | null;
+  /** Always the store's photo (products.image_url). */
+  store_image_url?: string | null;
+  /** "generated" = AI scene; null = store photo. */
+  image_source?: string | null;
+  /** Why the photo is what it is (shown to the admin in the preview). */
+  image_note?: string | null;
   product_url: string;
 }

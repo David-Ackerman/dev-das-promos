@@ -1,3 +1,4 @@
+import type { AmazonScrapeConfig } from "./providers/amazon-scrape.ts";
 import { parsePostingHours, type QueueSettings } from "./schedule.ts";
 
 /**
@@ -52,6 +53,8 @@ export interface Config {
     keywords: string[];
     tokenUrl: string;
   };
+  /** Opt-in reading of public Amazon search pages (AMAZON_SCRAPE=on), see providers/amazon-scrape.ts. */
+  amazonScrape?: AmazonScrapeConfig;
   shopee?: {
     appId: string;
     appSecret: string;
@@ -76,10 +79,21 @@ export interface Config {
   autoApproveMinDiscountPct: number;
   /** Public deals page (GET /). */
   site: { name: string; telegramUrl?: string; whatsappUrl?: string; xUrl?: string };
+  /** Product photos: AI scenes instead of white backgrounds / text-heavy store photos (src/images.ts). */
+  images: ImageConfig;
   /** Your Associates tag: links the admin sends without it get a tagged link (works without the API). */
   amazonPartnerTag?: string;
   footer: string;
   githubDispatch?: { token: string; repo: string; workflow: string; ref: string };
+}
+
+export interface ImageConfig {
+  /** Image model that makes the scene: "gemini:<model>" or "openrouter:<model>". Empty = never generate. */
+  model?: string;
+  /** Vision model that looks at the store photo (white background? lots of text?), any AI_MODEL-style entry. */
+  checkModel?: string;
+  /** At most this many AI images a day (they cost money). */
+  dailyLimit: number;
 }
 
 /** An OpenAI-compatible chat API. Free tiers are per provider, so several of them don't run out together. */
@@ -98,7 +112,7 @@ export interface AiConfig {
    */
   models: string[];
   providers: Record<string, AiProvider>;
-  /** Who the group is for (NICHE), so the jokes fit the audience. */
+  /** Who the group is for (NICHE): only the public page uses it; captions are about the product. */
   niche?: string;
 }
 
@@ -212,6 +226,14 @@ export function loadConfig(env: Env): Config {
       whatsappUrl: httpsUrl(env.SITE_WHATSAPP_URL),
       xUrl: httpsUrl(env.SITE_X_URL),
     },
+    images: {
+      model: env.IMAGE_MODEL?.trim() || undefined,
+      // Gemini's free tier reads images well; without a Gemini key, the first AI_MODEL entry is tried.
+      checkModel:
+        env.IMAGE_CHECK_MODEL?.trim() ||
+        (env.GEMINI_API_KEY?.trim() ? "gemini:gemini-flash-latest" : list(env.AI_MODEL || env.OPENROUTER_MODEL)[0]),
+      dailyLimit: Math.max(0, int(env.IMAGE_DAILY_LIMIT, 20)),
+    },
     amazonPartnerTag: env.AMAZON_PARTNER_TAG?.trim() || undefined,
     footer: env.POST_FOOTER?.trim() ?? "#publi · link de afiliado",
   };
@@ -223,6 +245,15 @@ export function loadConfig(env: Env): Config {
       partnerTag: req(env, "AMAZON_PARTNER_TAG"),
       keywords: list(env.AMAZON_KEYWORDS || DEFAULT_KEYWORDS),
       tokenUrl: env.AMAZON_TOKEN_URL?.trim() || "https://api.amazon.com/auth/o2/token",
+    };
+  }
+  if (bool(env.AMAZON_SCRAPE, false)) {
+    config.amazonScrape = {
+      partnerTag: req(env, "AMAZON_PARTNER_TAG"),
+      queries: list(env.AMAZON_SCRAPE_QUERIES || env.AMAZON_KEYWORDS || DEFAULT_KEYWORDS),
+      minDiscountPct: Math.max(0, int(env.AMAZON_SCRAPE_MIN_DISCOUNT, 0)),
+      maxPages: Math.min(3, Math.max(1, int(env.AMAZON_SCRAPE_MAX_PAGES, 1))),
+      delayMs: Math.max(500, int(env.AMAZON_SCRAPE_DELAY_MS, 2000)),
     };
   }
   if (env.SHOPEE_APP_ID && env.SHOPEE_APP_SECRET) {

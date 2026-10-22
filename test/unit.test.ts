@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { cleanAiText, cleanHashtag, generateCaption, parseAiJson, parseAiReply, resolveModel, shortCaption, templateCaption } from "../src/ai.ts";
+import { cleanAiText, cleanHashtag, generateCaption, parseAiJson, parseAiReply, resolveModel, shortCaption, shortProductName, templateCaption } from "../src/ai.ts";
 import { loadAiConfig } from "../src/config.ts";
 import { commissionCents, isBlocked, isFakeDiscount, pickCandidates, score } from "../src/collect.ts";
 import { amazonItemToCandidate, fetchAmazonCandidates } from "../src/providers/amazon.ts";
@@ -315,16 +315,23 @@ describe("niche", () => {
     assert.ok(!isBlocked("Power Bank 20000mAh Alta Capacidade", blocked), "capa is not capacidade");
     assert.ok(!isBlocked("Fone Bluetooth", []));
   });
-  it("tells the AI who the group is for", async () => {
-    const f = mockFetch([["chat/completions", () => ({ choices: [{ message: { content: '{"texto":"Oi, olha essa oferta","tweet":"Oi"}' } }] })]]);
+  it("keeps the niche out of the caption: texts talk about the product", async () => {
+    const f = mockFetch([["chat/completions", () => ({ choices: [{ message: { content: '{"texto":"Esse teclado vai melhorar sua gameplay","tweet":"Oi"}' } }] })]]);
     try {
-      await generateCaption(testConfig({ NICHE: "gamers e fãs de tecnologia" }).ai, cand({}));
+      const c = await generateCaption(testConfig({ NICHE: "devs e programadores" }).ai, cand({ title: "Teclado Mecânico Redragon Kumara" }));
       const [system, user] = f.to("chat/completions")[0]!.body.messages;
-      assert.match(system.content, /Público do grupo/);
-      assert.match(user.content, /^Público do grupo: gamers e fãs de tecnologia\nProduto:/);
+      assert.doesNotMatch(user.content, /devs|Público/);
+      assert.match(user.content, /^Produto: Teclado Mecânico Redragon Kumara/);
+      assert.match(system.content, /Nike Air Max pra você pisar fofo/);
+      assert.equal(c.caption, "Esse teclado vai melhorar sua gameplay");
     } finally {
       f.restore();
     }
+  });
+  it("template lines name the product", () => {
+    assert.equal(shortProductName("Fone Bluetooth JBL Tune 520BT, Preto"), "Fone Bluetooth JBL Tune");
+    assert.equal(shortProductName("Air Fryer Mondial (4L) - Preta"), "Air Fryer Mondial");
+    for (let seed = 0; seed < 6; seed++) assert.match(templateCaption({ title: "Air Fryer Mondial 4L" }, seed).caption, /Air Fryer Mondial 4L/);
   });
 });
 

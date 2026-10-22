@@ -146,3 +146,83 @@ export async function sendText(token: string, chatId: string, html: string, keyb
     reply_markup: keyboard ? { inline_keyboard: keyboard } : undefined,
   });
 }
+
+interface PhotoSize {
+  file_id: string;
+  width: number;
+}
+interface PhotoMessage {
+  message_id: number;
+  photo?: PhotoSize[];
+}
+
+async function multipart<T>(token: string, method: string, form: FormData): Promise<T> {
+  const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: "POST", body: form, signal: AbortSignal.timeout(60_000) });
+  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; result?: T; description?: string };
+  if (!json.ok) throw new TelegramError(`Telegram ${method}: ${json.description ?? `HTTP ${res.status}`}`);
+  return json.result as T;
+}
+
+/** file_id of the biggest size Telegram made of an uploaded photo. */
+function largestFileId(msg: PhotoMessage | true): string {
+  const sizes = msg === true ? [] : (msg.photo ?? []);
+  const best = [...sizes].sort((a, b) => b.width - a.width)[0];
+  if (!best) throw new TelegramError("Telegram returned no photo");
+  return best.file_id;
+}
+
+export interface UploadedImage {
+  bytes: Uint8Array;
+  mime: string;
+}
+
+function imageBlob(image: UploadedImage): Blob {
+  return new Blob([image.bytes as Uint8Array<ArrayBuffer>], { type: image.mime });
+}
+
+/** Uploads a photo we made (not a URL). Returns the message and the photo's file_id, reusable in any chat. */
+export async function sendPhotoFile(
+  token: string,
+  chatId: string,
+  image: UploadedImage,
+  html: string,
+  keyboard?: Keyboard,
+): Promise<{ messageId: number; fileId: string }> {
+  const form = new FormData();
+  form.append("chat_id", chatId);
+  form.append("caption", html);
+  form.append("parse_mode", "HTML");
+  if (keyboard) form.append("reply_markup", JSON.stringify({ inline_keyboard: keyboard }));
+  form.append("photo", imageBlob(image), `foto.${image.mime.includes("png") ? "png" : "jpg"}`);
+  const msg = await multipart<PhotoMessage>(token, "sendPhoto", form);
+  return { messageId: msg.message_id, fileId: largestFileId(msg) };
+}
+
+/**
+ * Swaps the photo of a message we sent (a preview), keeping the caption and
+ * buttons. `photo` is an upload or a URL/file_id. Returns the new file_id.
+ */
+export async function editPhoto(
+  token: string,
+  chatId: string,
+  messageId: number,
+  photo: UploadedImage | string,
+  html: string,
+  keyboard?: Keyboard,
+): Promise<string> {
+  const form = new FormData();
+  form.append("chat_id", chatId);
+  form.append("message_id", String(messageId));
+  const media = { type: "photo", media: typeof photo === "string" ? photo : "attach://photo", caption: html, parse_mode: "HTML" };
+  form.append("media", JSON.stringify(media));
+  if (typeof photo !== "string") form.append("photo", imageBlob(photo), `foto.${photo.mime.includes("png") ? "png" : "jpg"}`);
+  form.append("reply_markup", JSON.stringify({ inline_keyboard: keyboard ?? [] }));
+  return largestFileId(await multipart<PhotoMessage | true>(token, "editMessageMedia", form));
+}
+
+/** Download link for a file Telegram stores (valid ~1 hour). Contains the bot token: never show it to anyone. */
+export async function telegramFileUrl(token: string, fileId: string): Promise<string> {
+  const file = await tg<{ file_path?: string }>(token, "getFile", { file_id: fileId });
+  if (!file.file_path) throw new TelegramError("Telegram getFile: no file_path");
+  return `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+}

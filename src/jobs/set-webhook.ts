@@ -14,8 +14,9 @@ if (!/^[A-Za-z0-9_-]{16,256}$/.test(secret)) {
 await tg(token, "setWebhook", {
   url: `${base}/telegram/webhook`,
   secret_token: secret,
+  // channel_post: so "/id" works inside channels too.
   // chat_member: joins/leaves in the groups (the bot must be an admin there), for /stats per invite link.
-  allowed_updates: ["message", "callback_query", "chat_member"],
+  allowed_updates: ["message", "callback_query", "chat_member", "channel_post"],
   drop_pending_updates: false,
 });
 await tg(token, "setMyCommands", {

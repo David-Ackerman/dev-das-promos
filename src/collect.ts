@@ -3,13 +3,16 @@ import { approvePost, flagEndedDeals } from "./publish.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { pendingKeyboard, previewHtml, retryKeyboard, sendPreview, statusHeader, updatePreview } from "./preview.ts";
+import { decideImage } from "./images.ts";
 import { fetchAmazonCandidates } from "./providers/amazon.ts";
+import { fetchAmazonScrapedCandidates } from "./providers/amazon-scrape.ts";
 import { fetchShopeeCandidates, shopeeAffiliateLink } from "./providers/shopee.ts";
 import {
   createPost,
   dbNow,
   expireStalePending,
   failStuckPublishing,
+  generatedImagesToday,
   getPost,
   pendingTemplatePosts,
   lowestSeenPrices,
@@ -25,6 +28,7 @@ import { errorMessage, escapeHtml, hasAnyWord, randomCode } from "./util.ts";
 export interface CollectDeps {
   fetchAmazon?: (cfg: NonNullable<Config["amazon"]>) => Promise<Candidate[]>;
   fetchShopee?: (cfg: NonNullable<Config["shopee"]>) => Promise<Candidate[]>;
+  fetchAmazonScrape?: typeof fetchAmazonScrapedCandidates;
   log?: (msg: string) => void;
 }
 
@@ -87,7 +91,7 @@ export function pickCandidates(
 }
 
 async function affiliateUrlFor(cfg: Config, c: Candidate, ref: string): Promise<string> {
-  if (c.marketplace !== "shopee") return c.productUrl; // Amazon vends it already tagged
+  if (c.marketplace !== "shopee") return c.productUrl; // Amazon: the API vends it tagged; the search reader builds dp/<ASIN>?tag=
   if (!cfg.shopee) throw new Error("Shopee not configured");
   return shopeeAffiliateLink(cfg.shopee, c.productUrl, ref);
 }
@@ -114,7 +118,7 @@ export async function healTemplateCaptions(cfg: Config, db: Db, log: (msg: strin
     if (caption.model === "template") continue;
     await updateCaption(db, post.id, caption.caption, caption.short, caption.model, caption.hashtag);
     const fresh = await getPost(db, post.id);
-    if (fresh?.status === "pending") await updatePreview(cfg, fresh, undefined, pendingKeyboard(fresh)).catch(() => {});
+    if (fresh?.status === "pending") await updatePreview(cfg, fresh, undefined, pendingKeyboard(fresh, cfg)).catch(() => {});
     log(`Preview #${post.id} got an AI text on retry (${caption.model})`);
     healed++;
   }
@@ -164,8 +168,12 @@ export async function runCollect(
   const candidates: Candidate[] = [];
   const sources: [string, () => Promise<Candidate[]>][] = [];
   if (cfg.amazon) sources.push(["Amazon", () => (deps.fetchAmazon ?? fetchAmazonCandidates)(cfg.amazon!)]);
+  if (cfg.amazonScrape) {
+    const scrape = cfg.amazonScrape;
+    sources.push(["Amazon (busca)", () => (deps.fetchAmazonScrape ?? fetchAmazonScrapedCandidates)(scrape, { log })]);
+  }
   if (cfg.shopee) sources.push(["Shopee", () => (deps.fetchShopee ?? fetchShopeeCandidates)(cfg.shopee!)]);
-  if (!sources.length) throw new Error("No marketplace configured: set the AMAZON_* and/or SHOPEE_* settings.");
+  if (!sources.length) throw new Error("No marketplace configured: set the AMAZON_* (API, or AMAZON_SCRAPE=on) and/or SHOPEE_* settings.");
 
   for (const [name, fetchFn] of sources) {
     try {
@@ -210,7 +218,15 @@ export async function runCollect(
       const ref = randomCode(10);
       const caption = await generateCaption(cfg.ai, c, undefined, SEARCH_CAPTION);
       aiError ||= caption.error ?? "";
+      const image = await decideImage(
+        cfg.ai,
+        cfg.images,
+        { title: c.title, imageUrl: c.imageUrl, marketplace: c.marketplace },
+        { generatedToday: () => (opts.dryRun ? Promise.resolve(0) : generatedImagesToday(db)), log },
+        { dryRun: opts.dryRun },
+      );
       if (opts.dryRun) {
+        if (image.kind === "store" && image.note) log(`[image] ${image.note}`);
         log(`\n--- [dry-run] ${c.marketplace} ${c.externalId} score=${score(c).toFixed(1)} ---`);
         log(
           previewHtml(cfg, {
@@ -239,15 +255,16 @@ export async function runCollect(
         hashtag: caption.hashtag,
         aiModel: caption.model,
       });
+      let shown: PostRow;
       try {
-        await sendPreview(cfg, db, post);
+        shown = await sendPreview(cfg, db, post, image);
       } catch (error) {
         // Nobody can approve a preview that never arrived; don't leave it pending.
         await transition(db, post.id, "pending", "failed");
         throw error;
       }
       result.previews++;
-      if (shouldAutoApprove(cfg, post)) {
+      if (shouldAutoApprove(cfg, shown)) {
         log(`Auto-approved #${post.id}: ${await approvePost(cfg, db, post.id, { auto: true })}`);
         result.autoApproved++;
       }

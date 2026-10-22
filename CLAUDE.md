@@ -30,8 +30,15 @@ up to date when you add a route, cron, workflow, table or provider).
   byte for byte: never rewrite them, or the affiliate tag can be lost. The one
   exception is an Amazon link without the admin's `AMAZON_PARTNER_TAG`
   (`affiliateLinkFor`): it becomes `amazon.com.br/dp/<ASIN>?tag=<tag>`.
-- Amazon product data comes only from links the admin sends or the official
-  API: no automated crawling of Amazon (it breaks the Associates agreement).
+- Amazon product data comes from links the admin sends, the official API, or
+  the opt-in search-page reader (`src/providers/amazon-scrape.ts`, only with
+  `AMAZON_SCRAPE=on`, which the owner chose knowing it can conflict with the
+  Associates agreement). Keep it off by default and polite (few requests,
+  pauses, stop at the first captcha); never crawl Amazon anywhere else.
+- Photos: a post's own photo (AI scene) lives in Telegram (`posts.image_file_id`)
+  and is served at `/img/<id>.jpg`; `posts.image_url` points there and
+  `POST_SELECT` returns it as `image_url` (else the store photo). The image
+  model must keep the product identical and add no text (`src/images.ts`).
 - Approve must stay idempotent: it wins `transition(db, id, "pending", ...)`
   once (to `publishing`, or to `queued` when the queue is on); a queued post is
   published only through `transition(db, id, "queued", "publishing")`. Retry

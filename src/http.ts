@@ -2,8 +2,8 @@ import { handleUpdate, type TgUpdate, triggerCollect } from "./bot.ts";
 import type { Config, Env } from "./config.ts";
 import type { Db } from "./db.ts";
 import { goUrl, publishDue } from "./publish.ts";
-import { getPost, recordClick, recordSiteView, resolveLink, siteDeals } from "./repo.ts";
-import { sendText } from "./telegram.ts";
+import { getPost, postImageFileId, recordClick, recordSiteView, resolveLink, siteDeals } from "./repo.ts";
+import { sendText, telegramFileUrl } from "./telegram.ts";
 import { whatsappShareUrl, xSharePage, xShareText } from "./share.ts";
 import { ROBOTS_TXT, sitePage, siteSource } from "./site.ts";
 import { proposeRoundup, roundupWhatsAppUrl } from "./roundup.ts";
@@ -16,6 +16,7 @@ import { isValidCode, sha256Hex } from "./util.ts";
  *   GET  /wa/:code          opens WhatsApp with the post text ready to send
  *   GET  /x/:code           page to copy the X post or open it in the X app
  *   GET  /wr/:id            opens WhatsApp with the weekly roundup ready to send
+ *   GET  /img/:id.jpg       a post's own photo (AI scene), streamed from Telegram
  *   POST /telegram/webhook  your bot's buttons and commands
  *   GET  /health
  * Plus crons (wrangler.toml): QUEUE_CRON publishes queued posts when their time
@@ -53,6 +54,20 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
         }
         return new Response(sitePage(cfg, await siteDeals(db, 7, 60, source)), {
           headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" },
+        });
+      }
+
+      const img = path.match(/^\/img\/(\d{1,9})(?:\.jpg)?$/);
+      if (img && (request.method === "GET" || request.method === "HEAD")) {
+        const { db, cfg } = getDeps(env);
+        const fileId = await postImageFileId(db, Number(img[1]));
+        if (!fileId) return new Response("Not found", { status: 404 });
+        // The download URL carries the bot token: fetched here, never sent to the client.
+        const file = await fetch(await telegramFileUrl(cfg.telegram.botToken, fileId));
+        if (!file.ok || !file.body) return new Response("Not found", { status: 404 });
+        return new Response(request.method === "HEAD" ? null : file.body, {
+          // Telegram stores every photo as JPEG, but its file server may label it octet-stream.
+          headers: { "content-type": "image/jpeg", "cache-control": "public, max-age=604800, immutable" },
         });
       }
 

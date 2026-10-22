@@ -161,11 +161,17 @@ sequenceDiagram
   GH->>Shopee: re-check deals of the last 3 days
   GH->>TG: sold out / pricier → banner on the group messages
   GH->>Shopee: search each keyword (SHOPEE_KEYWORDS)
+  opt AMAZON_SCRAPE=on
+    GH->>GH: read Amazon search pages (stops at a captcha)
+  end
   GH->>DB: save products + price snapshot
   Note over GH: rank by discount + commission + sales + rating<br/>skip cooldown, BLOCKED_WORDS, fake discounts
   loop each pick (POSTS_PER_RUN)
     GH->>Shopee: affiliate short link (sub-id = post ref)
-    GH->>AI: one-joke caption + hashtag (90 s budget)
+    GH->>AI: one-line caption about the product + hashtag (90 s budget)
+    opt IMAGE_MODEL
+      GH->>AI: photo check (white background? text?) → AI scene of the same product
+    end
     GH->>DB: create post (pending)
     GH->>TG: preview with ✅ ❌ 🔄 ✏️
     TG->>Admin: preview
@@ -409,7 +415,8 @@ always integer cents.
 | `GET /wa/:code` | Opens WhatsApp with the post written |
 | `GET /x/:code` | Page to copy the X post or open it in the X app (share mode) |
 | `GET /wr/:id` | Opens WhatsApp with the weekly Top 10 written |
-| `POST /telegram/webhook` | Bot updates: messages, buttons, and group joins/leaves (`chat_member`, for per-link join stats); checked with `TELEGRAM_WEBHOOK_SECRET` |
+| `GET /img/:id.jpg` | A post's own photo (AI scene), streamed from Telegram's file storage (the bot token never leaves the Worker) |
+| `POST /telegram/webhook` | Bot updates: messages, buttons, channel posts (`/id`) and group joins/leaves (`chat_member`, for per-link join stats); checked with `TELEGRAM_WEBHOOK_SECRET` |
 | `GET /robots.txt`, `/health` | Search engines; deploy smoke test |
 | `/banner*.webp`, `/og.jpg` | Static assets from `public/` |
 
@@ -423,7 +430,8 @@ always integer cents.
 | `/resumo` | Weekly Top 10 preview |
 | 🎬 / `/video id` | Short vertical video of a published deal (Reels / TikTok / Shorts) + caption, built in Actions (`src/video.ts`) |
 | `/link nome` | Named invite link in each group; joins through it show in `/stats` (retention after 7 days) |
-| `/id` | Chat id (for setting up groups) |
+| `/id` | Chat id (for setting up groups); also answered in channels (`channel_post`) |
+| 🖼️ / ↩️ | New AI photo for a preview (starts `image.yml`); back to the store photo |
 | Link in the private chat | Preview from an Amazon / Mercado Livre link |
 | ✅ ❌ 🔄 ✏️ | Approve, decline, new AI text, write your own text |
 | ⚡ ↩️ | Publish a queued post now; back to preview |
@@ -438,6 +446,8 @@ always integer cents.
 | `src/bot.ts` | Telegram commands and buttons, links sent by the admin |
 | `src/http.ts` | Worker routes and cron dispatch |
 | `src/ai.ts` | Prompt, model fallback across providers, reply parsing |
+| `src/images.ts` | Photo check (white background / too much text) and AI scene (Gemini / OpenRouter image models) |
+| `src/providers/amazon-scrape.ts` | Opt-in reader of public Amazon search pages (`AMAZON_SCRAPE=on`) |
 | `src/manual.ts` | Reading store pages for links the admin sends |
 | `src/pricecheck.ts` | Current price (Shopee API / store page) |
 | `src/schedule.ts` | Queue slots and posting window |

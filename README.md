@@ -62,7 +62,7 @@ Neon's free plan never deletes your data. If you go over a limit, it pauses inst
 ### 3. Telegram
 1. You already have the bot. Its token from @BotFather is `TELEGRAM_BOT_TOKEN`.
 2. Make up a random secret (`openssl rand -hex 24`, or any 32+ letters and numbers). That's `TELEGRAM_WEBHOOK_SECRET`.
-3. Add the bot as an **admin** in each promo group.
+3. Add the bot as an **admin** in each promo group or channel (in a channel it needs "Post messages").
 4. The `TELEGRAM_ADMIN_CHAT_ID` and `TELEGRAM_GROUP_IDS` values come from the bot's `/id` command, which only works after the first deploy (step 5). For now you can put a placeholder like `0` in `TELEGRAM_ADMIN_CHAT_ID`, then update both and redeploy.
 
 ### 4. GitHub settings
@@ -110,6 +110,29 @@ Texto do post (optional; without it the AI writes one)
 - From there it's the normal flow: preview, ✅ ❌ 🔄, publish.
 
 Links sent inside groups are ignored. Only your private chat with the bot counts.
+
+## Telegram: channel or group?
+For posting deals, a **channel** works better than a group: only you post, so offers aren't buried under chat or spam; there's no member limit; members can't see or DM each other; and every post shows how many people saw it. Want comments too? Link a **discussion group** to the channel (channel settings → Discussion) and people can reply under each post.
+
+The bot treats channels like groups: make it an admin with permission to post, send `/id` in the channel (the bot answers with the channel id, then you can delete both messages), and add that id to `TELEGRAM_GROUP_IDS`. Public channels can also be written as `@channelname`.
+
+## Post texts
+The AI writes **one short line about what the product does for you**, in the tone of a friend in the group: "Nike Air Max pra você pisar fofo", "Esse teclado vai melhorar sua gameplay", "Placa de vídeo com RGB dá mais FPS". No jokes unrelated to the product and no salesy words like "imperdível" or "corre". The name, photo and price come right below it, added by the bot. Without AI (or when every model is busy) a simple line with the product name is used. The examples the AI learns from are in `src/ai.ts` (`SYSTEM_PROMPT`); add your own there.
+
+## Product photos
+Store photos on a plain white background (every Amazon main photo) look flat in the feed, and some Shopee photos are covered in text. With `IMAGE_MODEL` set, the search checks each photo and swaps those for an **AI image of the same product in the place it's used** (kitchen, desk, gamer setup…), filling the whole frame, with no text.
+- A free vision model (Gemini's free tier) does the check; only the swap itself costs money (a few US cents per image, at most `IMAGE_DAILY_LIMIT` a day).
+- The preview shows which photo it uses and why. **🖼️ Nova imagem** makes another one (in GitHub Actions, about a minute), **↩️ Foto da loja** goes back to the original.
+- Links you send to the bot get the same treatment right after the preview arrives.
+- AI images are kept in Telegram and served at `/img/<id>.jpg`, so the groups, WhatsApp, X and the site all use the same picture.
+
+## Amazon without the API (optional, off by default)
+`AMAZON_SCRAPE=on` makes the search read public Amazon search pages for your `AMAZON_SCRAPE_QUERIES` and post the biggest discounts with your link (`amazon.com.br/dp/<ASIN>?tag=<your tag>`). It's polite (one page per term, a few seconds apart, stops at the first captcha), but know the risks before turning it on:
+- **Automated reading of Amazon pages goes against the Associates agreement.** If Amazon notices, it can close the account and **withhold commissions already earned**.
+- Amazon often answers GitHub's servers with a captcha; those runs just report "Amazon bloqueou a busca" and carry on with Shopee.
+- Amazon changes its pages without notice; when that happens the search finds nothing from Amazon until the parser (`src/providers/amazon-scrape.ts`) is updated.
+
+The safe routes stay the same: send links to the bot, or the Creators API once your account qualifies.
 
 ## WhatsApp
 WhatsApp's official API **can't post into normal groups**: its groups API is capped at 8 participants. So there are three options:

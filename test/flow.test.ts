@@ -127,6 +127,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       const go = await handler.fetch(new Request(`https://w/go/${code}`, { headers: { "user-agent": "Mozilla/5.0 (iPhone)", "cf-connecting-ip": "1.2.3.4" } }), {}, ctx);
       assert.equal(go.status, 302);
       assert.equal(go.headers.get("location"), big.affiliate_url);
+      await flush(); // the click is logged in the background; finish it so the two rows keep their order
       await handler.fetch(new Request(`https://w/go/${code}`, { headers: { "user-agent": "TelegramBot (like TwitterBot)" } }), {}, ctx);
       await flush();
       const clicks = await db.query<{ is_bot: boolean }>(`SELECT is_bot FROM clicks WHERE code=$1 ORDER BY id`, [code]);

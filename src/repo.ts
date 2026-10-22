@@ -8,7 +8,9 @@ const POST_SELECT = `
          p.discount_pct, p.lowest_seen_cents, p.affiliate_url, p.caption, p.caption_short, p.hashtag, p.ai_model,
          p.preview_chat_id, p.preview_message_id::text AS preview_message_id, p.preview_has_photo,
          to_char(p.scheduled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS scheduled_at,
-         p.price_from_admin, pr.marketplace, pr.external_id, pr.title, pr.image_url, pr.product_url
+         p.price_from_admin, pr.marketplace, pr.external_id, pr.title,
+         COALESCE(p.image_url, pr.image_url) AS image_url, pr.image_url AS store_image_url,
+         p.image_source, p.image_note, pr.product_url
   FROM posts p JOIN products pr ON pr.id = p.product_id`;
 
 export async function upsertProduct(db: Db, c: Candidate): Promise<number> {
@@ -154,6 +156,34 @@ export async function findPostByPreview(
   return rows[0];
 }
 
+/** Our own photo for a post (an AI scene), or back to the store photo with `null`. */
+export async function setPostImage(
+  db: Db,
+  postId: number,
+  image: { url: string; fileId: string; source: string; note?: string } | null,
+  note?: string,
+): Promise<void> {
+  await db.query(
+    `UPDATE posts SET image_url = $2, image_file_id = $3, image_source = $4, image_note = $5 WHERE id = $1`,
+    [postId, image?.url ?? null, image?.fileId ?? null, image?.source ?? null, image?.note ?? note ?? null],
+  );
+}
+
+export async function postImageFileId(db: Db, postId: number): Promise<string | undefined> {
+  const rows = await db.query<{ image_file_id: string | null }>(`SELECT image_file_id FROM posts WHERE id = $1`, [postId]);
+  return rows[0]?.image_file_id ?? undefined;
+}
+
+/** AI images made today (Brasília), for IMAGE_DAILY_LIMIT. */
+export async function generatedImagesToday(db: Db): Promise<number> {
+  const rows = await db.query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM posts
+     WHERE image_source = 'generated'
+       AND (created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`,
+  );
+  return rows[0]?.n ?? 0;
+}
+
 export async function setPreview(
   db: Db,
   postId: number,
@@ -271,7 +301,7 @@ export async function sentTelegramMessages(db: Db, postId: number): Promise<{ ta
  */
 export async function siteDeals(db: Db, days: number, limit: number, source = ""): Promise<SiteDeal[]> {
   const rows = await db.query<Omit<SiteDeal, "code"> & { code: string | null }>(
-    `SELECT p.id, pr.title, pr.marketplace, pr.image_url, p.price_cents, p.original_price_cents, p.discount_pct, p.caption,
+    `SELECT p.id, pr.title, pr.marketplace, COALESCE(p.image_url, pr.image_url) AS image_url, p.price_cents, p.original_price_cents, p.discount_pct, p.caption,
             p.lowest_seen_cents,
             to_char(p.published_at AT TIME ZONE 'America/Sao_Paulo', 'DD/MM "às" HH24:MI') AS published, l.code
      FROM posts p JOIN products pr ON pr.id = p.product_id

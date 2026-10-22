@@ -8,6 +8,7 @@ import {
   postIdFromOwnTextPrompt,
   refreshPreview,
   sendPreview,
+  swapPreviewPhoto,
   updatePreview,
 } from "./preview.ts";
 import {
@@ -27,6 +28,7 @@ import {
   findPostByPreview,
   getPost,
   getStats,
+  setPostImage,
   listPending,
   listQueued,
   recordJoin,
@@ -69,6 +71,8 @@ export interface TgUpdate {
   message?: TgMessage;
   callback_query?: { id: string; from: TgUser; data?: string; message?: TgMessage };
   chat_member?: ChatMemberUpdated;
+  /** Messages in channels the bot is admin of (only "/id" is answered there). */
+  channel_post?: TgMessage;
 }
 
 function inChat(m: ChatMember): boolean {
@@ -126,7 +130,7 @@ export async function regenerateCaption(cfg: Config, db: Db, post: PostRow): Pro
   const caption = await generateCaption(cfg.ai, candidateFromPost(post), post.caption);
   await updateCaption(db, post.id, caption.caption, caption.short, caption.model, caption.hashtag);
   const fresh = (await getPost(db, post.id)) as PostRow;
-  await updatePreview(cfg, fresh, undefined, pendingKeyboard(fresh));
+  await updatePreview(cfg, fresh, undefined, pendingKeyboard(fresh, cfg));
   if (caption.error) await aiBusyFallback(cfg, caption.error);
 }
 
@@ -223,6 +227,31 @@ async function requestVideo(cfg: Config, db: Db, postId: number): Promise<string
   return res.ok ? `🎬 Gerando o vídeo do #${postId}… chega aqui em 1–2 minutos.` : `GitHub respondeu HTTP ${res.status}`;
 }
 
+/**
+ * 🖼️ Nova imagem: the scene is made in GitHub Actions (no 30s limit there).
+ * "auto" (links the admin sends) only replaces white-background / text-heavy photos.
+ */
+async function requestImage(cfg: Config, db: Db, postId: number, mode: "force" | "auto"): Promise<string> {
+  const gh = cfg.githubDispatch;
+  if (!cfg.images.model) return "Configure IMAGE_MODEL para gerar imagens.";
+  if (!gh) return "Configure GH_DISPATCH_TOKEN e GH_REPO para gerar imagens.";
+  const post = await getPost(db, postId);
+  if (!post || (post.status !== "pending" && post.status !== "queued")) return "Só dá pra trocar a imagem antes de publicar.";
+  const res = await dispatchWorkflow(gh, "image.yml", { post_id: String(postId), mode });
+  return res.ok ? "🖼️ Gerando a imagem… a prévia muda em ~1 minuto." : `GitHub respondeu HTTP ${res.status}`;
+}
+
+/** ↩️ Foto da loja: back to the store photo (and the AI scene is forgotten). */
+async function restoreStorePhoto(cfg: Config, db: Db, postId: number): Promise<string> {
+  const post = await getPost(db, postId);
+  if (!post || (post.status !== "pending" && post.status !== "queued")) return "Só dá pra trocar a imagem antes de publicar.";
+  if (post.image_source !== "generated" || !post.store_image_url) return "Já está com a foto da loja.";
+  await setPostImage(db, postId, null);
+  const fresh = (await getPost(db, postId)) as PostRow;
+  await swapPreviewPhoto(cfg, db, fresh, post.store_image_url);
+  return "Foto da loja de volta.";
+}
+
 /** Starts the "Collect deals" GitHub workflow. Used by /buscar and by the Worker's cron. */
 export async function triggerCollect(cfg: Config): Promise<{ ok: boolean; message: string }> {
   const gh = cfg.githubDispatch;
@@ -279,6 +308,10 @@ async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: numb
     await transition(db, post.id, "pending", "failed");
     throw error;
   }
+  // White-background / text-heavy photo → AI scene, made in GitHub Actions; the preview updates by itself.
+  if (cfg.images.model && cfg.githubDispatch && post.image_url) {
+    await requestImage(cfg, db, post.id, "auto").catch(() => "");
+  }
   if (link.generated) {
     await sendText(token, chatId, `🔗 Esse link não tinha a sua tag da Amazon: o post #${post.id} usa o seu link de afiliado\n<code>${escapeHtml(link.url)}</code>`);
   }
@@ -301,6 +334,8 @@ async function handleCallback(cfg: Config, db: Db, cq: NonNullable<TgUpdate["cal
   if (action === "wd") return answer(await declineRoundup(cfg, db, postId));
 
   if (action === "v") return answer(await requestVideo(cfg, db, postId));
+  if (action === "g") return answer(await requestImage(cfg, db, postId, "force"));
+  if (action === "o") return answer(await restoreStorePhoto(cfg, db, postId));
 
   if (action === "a") {
     const post = await getPost(db, postId);
@@ -462,11 +497,19 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
   }
 }
 
+/** "/id" posted in a channel: the bot answers with the channel id (then you can delete both messages). */
+async function handleChannelPost(cfg: Config, post: TgMessage): Promise<void> {
+  const command = (post.text?.trim().split(/\s+/)[0] ?? "").split("@")[0]?.toLowerCase();
+  if (command !== "/id") return;
+  await sendText(cfg.telegram.botToken, String(post.chat.id), `Chat id: <code>${post.chat.id}</code>`);
+}
+
 export async function handleUpdate(cfg: Config, db: Db, update: TgUpdate): Promise<void> {
   try {
     if (update.callback_query) await handleCallback(cfg, db, update.callback_query);
     else if (update.chat_member) await handleChatMember(cfg, db, update.chat_member);
     else if (update.message) await handleMessage(cfg, db, update.message);
+    else if (update.channel_post) await handleChannelPost(cfg, update.channel_post);
   } catch (error) {
     console.error("bot update failed", errorMessage(error));
     await sendText(cfg.telegram.botToken, cfg.telegram.adminChatId, `⚠️ Erro: ${escapeHtml(errorMessage(error))}`).catch(() => {});

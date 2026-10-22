@@ -19,30 +19,48 @@ export interface Caption {
  * Price, link and disclosure are added by our code, never by the model, so
  * the AI can't invent a wrong price.
  */
-const SYSTEM_PROMPT = `Você escreve a chamada de um post num grupo brasileiro de promoções.
-Objetivo: uma piadinha rápida que faça a pessoa rir ou se identificar e queira olhar a oferta.
-O nome do produto, a foto e o preço já aparecem logo abaixo da sua frase.
+const SYSTEM_PROMPT = `Você escreve a frase de chamada de um post de promoção num canal/grupo brasileiro (Telegram e WhatsApp).
+A frase fica logo acima do nome do produto, da foto e do preço.
 
-Regras:
-- Curto: NO MÁXIMO 2 frases curtas. Melhor ainda se for 1.
-- É uma piada, um trocadilho ou uma situação engraçada do dia a dia. NÃO descreva o produto: nada de especificações, recursos, "ideal para", "perfeito para", nem repetir o nome completo do produto.
-- Português do Brasil, tom leve, bem brasileiro, jeito de quem conversa no grupo.
-- Use SOMENTE as informações dadas. Não invente características, avaliações, frete, estoque, prazo ou urgência ("últimas unidades", "só hoje") que não foram informados.
-- No "texto" e no "tweet", NÃO escreva preço, desconto, link, @menções nem hashtags (o sistema adiciona isso depois).
-- No máximo 1 ou 2 emojis.
-- Se vier "Público do grupo", escreva para essas pessoas: use as referências e o jeito de falar delas.
-- Responda APENAS com JSON: {"texto": "...", "tweet": "...", "tag": "..."}
-  - "texto": a piada, no máximo 2 frases curtas (até 120 caracteres).
-  - "tweet": uma frase de efeito (até 100 caracteres).
-  - "tag": a marca ou o nome curto do produto, para virar hashtag (ex.: "Kindle", "JBL", "Xiaomi"), sem # e sem espaços; "" se não houver uma marca clara.`;
+Como a frase deve ser:
+- UMA frase curta e simples (até uns 60 caracteres), direta, no jeito de quem fala com amigo.
+- Fale do PRODUTO e do que ele faz por quem compra: o benefício principal, o uso, a sensação. Um exagero de brincadeira é bem-vindo ("dá mais FPS", "pisar fofo").
+- Cite o produto de forma natural e curta: o modelo/marca ("Air Max", "Dunk Low") ou o tipo ("esse teclado", "essa air fryer"). Nunca o nome completo.
+- NÃO faça piada que não tem a ver com o produto, nem trocadilho forçado, nem referência a programação/dev/TI/trabalho de escritório se o produto não for disso.
+- NÃO use frases de vendedor: "achado", "imperdível", "corre", "aproveite", "não perca", "ideal para", "perfeito para".
+- Não invente característica que não dá pra tirar do nome do produto.
+- Sem preço, desconto, link, @menção ou hashtag (o sistema coloca). No máximo 1 emoji, e só se combinar.
+
+Exemplos (produto → texto):
+- Tênis Nike Air Max 90 masculino → Nike Air Max pra você pisar fofo
+- Teclado mecânico gamer Redragon Kumara RGB → Esse teclado vai melhorar sua gameplay
+- Placa de vídeo Radeon RX 7600 8GB RGB → Placa de vídeo com RGB dá mais FPS 😎
+- Placa de vídeo Radeon RX 9060 XT → Bora dar um upgrade nessa máquina
+- Tênis Nike Dunk Low feminino → Dunk Low pras meninas
+- Smartwatch Huawei Band 10 → Esse faz mais do que mostrar as horas
+- Air fryer Mondial 4L → Batata crocante sem gastar óleo
+- Cadeira gamer ThunderX3 → Suas costas agradecem depois da ranked
+- Fone Bluetooth JBL Tune 520BT → Música sem fio o dia inteiro
+
+Responda APENAS com JSON: {"texto": "...", "tweet": "...", "tag": "..."}
+- "texto": a frase (até 70 caracteres).
+- "tweet": a mesma frase ou uma variação (até 100 caracteres).
+- "tag": a marca ou o nome curto do produto, para virar hashtag (ex.: "Kindle", "JBL", "AirMax"), sem # e sem espaços; "" se não houver uma marca clara.`;
+
+/** Short product name for template lines: "Fone Bluetooth JBL Tune 520BT, Preto" -> "Fone Bluetooth JBL Tune". */
+export function shortProductName(title: string): string {
+  const head = title.split(/\s[-–|,(/]|[,(|]/)[0] ?? title;
+  const words = head.replace(/\s+/g, " ").trim().split(" ").slice(0, 4).join(" ");
+  return words || title;
+}
 
 const TEMPLATES = [
-  "Seu carrinho tava pedindo isso e a gente ouviu 🛒",
-  "Promoção boa assim não espera o salário cair 😅",
-  "Aquele achado que você vai fingir que precisava há anos 👀",
-  "Se é pra gastar, que seja pagando menos 💸",
-  "Achamos antes de você. De nada 😎",
-  "Spoiler: seu eu do futuro agradece essa compra ✨",
+  (n: string) => `${n} com preço bom de verdade`,
+  (n: string) => `${n} pagando bem menos`,
+  (n: string) => `Bora de ${n}?`,
+  (n: string) => `${n} pelo menor preço que achamos`,
+  (n: string) => `Olha o preço: ${n} 👀`,
+  (n: string) => `${n} tá valendo a pena hoje`,
 ];
 
 /** A template line; `avoid` (the current text) is skipped so 🔄 always changes something. */
@@ -51,14 +69,15 @@ export function templateCaption(
   seed = Date.now(),
   avoid?: string,
 ): Caption {
-  const options = TEMPLATES.filter((t) => t !== avoid);
+  const name = shortProductName(candidate.title);
+  const options = TEMPLATES.map((t) => t(name)).filter((t) => t !== avoid);
   const line = options[Math.abs(seed) % options.length] as string;
   return { caption: line, short: line, model: "template" };
 }
 
-function facts(c: Candidate, niche?: string): string {
+/** The niche (NICHE) is left out on purpose: texts are about the product, not the audience. */
+function facts(c: Candidate): string {
   return [
-    niche ? `Público do grupo: ${niche}` : "",
     `Produto: ${c.title}`,
     `Loja: ${STORE[c.marketplace]}`,
     `Preço (só contexto, não escreva): ${brl(c.priceCents)}`,
@@ -201,7 +220,7 @@ export async function askModel(
         max_tokens: 1500,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: facts(candidate, cfg.niche) },
+          { role: "user", content: facts(candidate) },
         ],
       }),
       signal: AbortSignal.timeout(timeoutMs),
@@ -226,8 +245,8 @@ export async function askModel(
       if (!json) throw error;
       parsed = parseAiJson(json);
     }
-    const caption = shortCaption(cleanAiText(parsed.texto, 400), 2, 160);
-    const short = shortCaption(cleanAiText(parsed.tweet, 300), 1, 120);
+    const caption = shortCaption(cleanAiText(parsed.texto, 400), 1, 90);
+    const short = shortCaption(cleanAiText(parsed.tweet, 300), 1, 110);
     // "...", "ok", a lone emoji: not a caption, let the next model try.
     if ((caption.match(/\p{L}/gu) ?? []).length < 8) throw new Error(`reply too short: "${caption}"`);
     return { caption, short: short || truncate(caption, 150), model: entry.label, hashtag: cleanHashtag(parsed.tag) };

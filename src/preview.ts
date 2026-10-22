@@ -1,8 +1,9 @@
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { renderTelegram, STORE } from "./render.ts";
-import { setPreview } from "./repo.ts";
-import { editPost, type Keyboard, sendPost } from "./telegram.ts";
+import type { ImageDecision } from "./images.ts";
+import { setPostImage, setPreview } from "./repo.ts";
+import { editPhoto, editPost, type Keyboard, sendPhotoFile, sendPost, tg, type UploadedImage } from "./telegram.ts";
 import type { PostRow } from "./types.ts";
 import { formatSlot } from "./schedule.ts";
 import { brl, escapeHtml } from "./util.ts";
@@ -36,12 +37,21 @@ export function previewHtml(cfg: Config, post: PostRow, header?: string): string
   const top =
     header ??
     `📝 <b>Prévia #${post.id}</b> · ${STORE[post.marketplace]}${post.discount_pct ? ` · -${post.discount_pct}%` : ""}` +
-      `${post.ai_model === "template" ? " · texto padrão" : ""}${priceHistoryNote(post)}`;
+      `${post.ai_model === "template" ? " · texto padrão" : ""}${priceHistoryNote(post)}` +
+      `${post.image_note ? `\n${post.image_source === "generated" ? "" : "⚠️ "}${escapeHtml(post.image_note)}` : ""}`;
   const body = renderTelegram(renderInput(cfg, post, `${cfg.publicBaseUrl}/go/•••••••`));
   return `${top}\n➖➖➖➖➖➖\n${body}`;
 }
 
-export function pendingKeyboard(post: PostRow): Keyboard {
+/** 🖼️ buttons only when an image model is set and the post has a photo at all. */
+function imageRow(post: PostRow, cfg?: Config): Keyboard {
+  if (!cfg?.images.model || !(post.store_image_url ?? post.image_url)) return [];
+  const row = [{ text: "🖼️ Nova imagem", callback_data: `g:${post.id}` }];
+  if (post.image_source === "generated") row.push({ text: "↩️ Foto da loja", callback_data: `o:${post.id}` });
+  return [row];
+}
+
+export function pendingKeyboard(post: PostRow, cfg?: Config): Keyboard {
   return [
     [
       { text: "✅ Aprovar", callback_data: `a:${post.id}` },
@@ -51,6 +61,7 @@ export function pendingKeyboard(post: PostRow): Keyboard {
       { text: "🔄 Outro texto", callback_data: `r:${post.id}` },
       { text: "✏️ Meu texto", callback_data: `e:${post.id}` },
     ],
+    ...imageRow(post, cfg),
     [{ text: "🔗 Ver produto", url: post.affiliate_url }],
   ];
 }
@@ -65,6 +76,47 @@ export function queuedKeyboard(post: PostRow): Keyboard {
   ];
 }
 
+/** Buttons for a preview in its current state (pending or queued). */
+export function previewKeyboard(cfg: Config, post: PostRow): Keyboard {
+  return post.status === "queued" ? queuedKeyboard(post) : pendingKeyboard(post, cfg);
+}
+
+function previewHeader(post: PostRow): string | undefined {
+  return post.status === "queued" && post.scheduled_at
+    ? statusHeader(post, "🕒", `Agendado para ${formatSlot(new Date(post.scheduled_at), new Date())}`)
+    : undefined;
+}
+
+/**
+ * Puts a new photo on a preview (an AI scene upload, or the store photo URL).
+ * A preview that went out as text can't get a photo by editing, so it's sent
+ * again and the old one removed. Returns the photo's Telegram file_id.
+ */
+export async function swapPreviewPhoto(cfg: Config, db: Db, post: PostRow, photo: UploadedImage | string): Promise<string | undefined> {
+  const token = cfg.telegram.botToken;
+  const html = previewHtml(cfg, post, previewHeader(post));
+  const keyboard = previewKeyboard(cfg, post);
+  if (post.preview_chat_id && post.preview_message_id && post.preview_has_photo) {
+    return editPhoto(token, post.preview_chat_id, Number(post.preview_message_id), photo, html, keyboard);
+  }
+  const chatId = post.preview_chat_id ?? cfg.telegram.adminChatId;
+  let messageId: number;
+  let fileId: string | undefined;
+  if (typeof photo === "string") {
+    const sent = await sendPost(token, chatId, html, photo, keyboard);
+    messageId = sent.messageId;
+  } else {
+    const sent = await sendPhotoFile(token, chatId, photo, html, keyboard);
+    messageId = sent.messageId;
+    fileId = sent.fileId;
+  }
+  if (post.preview_message_id) {
+    await tg(token, "deleteMessage", { chat_id: chatId, message_id: Number(post.preview_message_id) }).catch(() => {});
+  }
+  await setPreview(db, post.id, chatId, messageId, true);
+  return fileId;
+}
+
 /** Redraws a preview for its current state (pending, or queued with its slot) after the text changed. */
 export async function refreshPreview(cfg: Config, post: PostRow): Promise<void> {
   if (post.status === "queued" && post.scheduled_at) {
@@ -72,7 +124,7 @@ export async function refreshPreview(cfg: Config, post: PostRow): Promise<void> 
     await updatePreview(cfg, post, header, queuedKeyboard(post));
     return;
   }
-  await updatePreview(cfg, post, undefined, pendingKeyboard(post));
+  await updatePreview(cfg, post, undefined, pendingKeyboard(post, cfg));
 }
 
 /** Text of the bot's "write your text" prompt; the reply to it is matched by the "#id" in it. */
@@ -97,15 +149,45 @@ export function retryKeyboard(post: PostRow): Keyboard {
 export const EDIT_HINT =
   "💡 Para usar o seu próprio texto, toque ✏️ Meu texto na prévia (ou responda à prévia com o texto).";
 
-export async function sendPreview(cfg: Config, db: Db, post: PostRow): Promise<void> {
+/** The Worker's address for a post's own photo (served from Telegram, see /img in http.ts). */
+export function postImageUrl(cfg: Config, postId: number): string {
+  return `${cfg.publicBaseUrl}/img/${postId}.jpg`;
+}
+
+/**
+ * Sends the preview. With an AI scene (`image`), the photo is uploaded with
+ * it and kept in Telegram; the post then uses /img/<id> everywhere.
+ */
+export async function sendPreview(cfg: Config, db: Db, post: PostRow, image?: ImageDecision): Promise<PostRow> {
+  if (image?.kind === "generated") {
+    const withNote = { ...post, image_source: "generated", image_note: image.note };
+    try {
+      const { messageId, fileId } = await sendPhotoFile(
+        cfg.telegram.botToken,
+        cfg.telegram.adminChatId,
+        image.image,
+        previewHtml(cfg, withNote),
+        pendingKeyboard(withNote, cfg),
+      );
+      await setPostImage(db, post.id, { url: postImageUrl(cfg, post.id), fileId, source: "generated", note: image.note });
+      await setPreview(db, post.id, cfg.telegram.adminChatId, messageId, true);
+      return { ...withNote, image_url: postImageUrl(cfg, post.id) };
+    } catch (error) {
+      console.warn(`AI image upload failed, using the store photo: ${(error as Error).message}`);
+    }
+  }
+  const note = image?.kind === "store" ? image.note : undefined;
+  if (note) await setPostImage(db, post.id, null, note);
+  const shown = { ...post, image_note: note ?? null };
   const { messageId, hasPhoto } = await sendPost(
     cfg.telegram.botToken,
     cfg.telegram.adminChatId,
-    previewHtml(cfg, post),
+    previewHtml(cfg, shown),
     post.image_url,
-    pendingKeyboard(post),
+    pendingKeyboard(shown, cfg),
   );
   await setPreview(db, post.id, cfg.telegram.adminChatId, messageId, hasPhoto);
+  return shown;
 }
 
 export async function updatePreview(
