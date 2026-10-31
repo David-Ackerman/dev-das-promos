@@ -201,3 +201,7 @@ src/
 migrations/         SQL, applied once each, never rolled back
 .github/workflows/  deploy (push to main), collect (cron), backup (daily), ci (PRs)
 ```
+
+## License
+
+The code is released under the [MIT License](LICENSE). The **Dev das Promos** name, logo, mascot and artwork (the images in `public/`) are not covered by it: they belong to the project owner and may not be reused without permission.

@@ -2,6 +2,7 @@
   "name": "dev-das-promos",
   "version": "2.0.0",
   "private": true,
+  "license": "MIT",
   "description": "Finds Amazon/Shopee deals, writes a fun AI post, asks for approval on Telegram, then publishes to Telegram, WhatsApp and X with tracked links.",
   "type": "module",
   "engines": {
