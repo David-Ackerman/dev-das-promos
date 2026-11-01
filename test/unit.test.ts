@@ -556,3 +556,17 @@ describe("migrations never destroy data", () => {
     }
   });
 });
+
+describe("workflow secrets", () => {
+  it("never pass toJSON(secrets) and list exactly SECRET_KEYS where settings are loaded", async () => {
+    const { SECRET_KEYS } = await import("../src/jobs/secret-keys.ts");
+    const dir = ".github/workflows";
+    for (const file of readdirSync(dir).filter((f) => f.endsWith(".yml"))) {
+      const text = readFileSync(join(dir, file), "utf8");
+      assert.ok(!/toJSON\(\s*secrets\s*\)/.test(text), `${file} passes toJSON(secrets): GitHub holds it as possibly malicious`);
+      if (!text.includes("gh-export-env.ts")) continue;
+      const listed = [...text.matchAll(/^\s+([A-Z][A-Z0-9_]*): \$\{\{ secrets\.\1 \}\}$/gm)].map((m) => m[1]).sort();
+      assert.deepEqual(listed, [...SECRET_KEYS].sort(), `${file} must list every key in src/jobs/secret-keys.ts`);
+    }
+  });
+});

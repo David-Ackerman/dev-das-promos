@@ -1,16 +1,20 @@
-// GitHub Actions helper: copies every repository Variable and Secret into the
-// environment of the following steps, so adding a setting in GitHub is all
-// you ever need to do (no workflow edits). Secrets win over variables.
+// GitHub Actions helper: copies every repository Variable, plus the Secrets
+// listed in `secret-keys.ts`, into the environment of the following steps.
+// A new Variable needs no workflow edit; a new Secret must be added to that
+// list and to each workflow's "Load settings" step. Secrets win over variables.
 import { appendFileSync } from "node:fs";
+import { SECRET_KEYS } from "./secret-keys.ts";
 
 const target = process.env.GITHUB_ENV;
 if (!target) throw new Error("Only meant to run inside GitHub Actions");
 
 const vars = JSON.parse(process.env.VARS_JSON || "{}") as Record<string, string>;
-const secrets = JSON.parse(process.env.SECRETS_JSON || "{}") as Record<string, string>;
+const secrets: Record<string, string> = {};
+for (const key of SECRET_KEYS) {
+  const value = process.env[key];
+  if (value) secrets[key] = value;
+}
 const merged: Record<string, string> = { ...vars, ...secrets };
-delete merged.github_token;
-delete merged.GITHUB_TOKEN;
 
 let count = 0;
 for (const [key, value] of Object.entries(merged)) {

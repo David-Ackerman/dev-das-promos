@@ -16,8 +16,11 @@ up to date when you add a route, cron, workflow, table or provider).
     import `node:*` modules or `db-node.ts`; use `fetch` and WebCrypto.
 - All SQL lives in `src/repo.ts` behind the tiny `Db` interface (`src/db.ts`).
 - Settings come only from env vars (`src/config.ts`, documented in
-  `.env.example`). In GitHub, every repo Variable/Secret is exported
-  automatically by `src/jobs/gh-export-env.ts`; Worker settings are the
+  `.env.example`). In GitHub, every repo Variable is exported
+  automatically by `src/jobs/gh-export-env.ts`, but Secrets only when listed in
+  `src/jobs/secret-keys.ts` and in each workflow's "Load settings" step (never
+  `toJSON(secrets)`: in a public repo GitHub holds those runs as possibly
+  malicious, which silently stopped collect and deploy). Worker settings are the
   `WORKER_KEYS` list in `src/jobs/worker-secrets.ts`, so add new Worker
   settings there.
 
