@@ -178,7 +178,9 @@ npm run typecheck
 Add a new file such as `migrations/002_something.sql`. Never edit or delete an applied file, and only use `ADD`/`CREATE` (a test rejects `DROP`, `TRUNCATE` and `DELETE`). It's applied automatically on the next deploy.
 
 ## Restoring a backup
-Download `backup.dump` from **Actions → Backup database → a run → Artifacts**, then run:
+Easiest: **Actions → Restore database → Run workflow** with the artifact name (e.g. `db-backup-21`, from **Actions → Backup database → a run → Artifacts**). It only runs when the database has no tables, so it can't overwrite live data; then run **Deploy**.
+
+By hand: download `backup.dump` from **Actions → Backup database → a run → Artifacts**, then run:
 ```bash
 pg_restore --no-owner --no-acl -d "$DATABASE_URL" backup.dump
 ```

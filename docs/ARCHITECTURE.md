@@ -82,6 +82,7 @@ publishing queue), and Neon Postgres is the single source of truth both share.
 | | `heal.yml` | Rewrites captions that fell back to a template when the Worker ran out of time | `src/jobs/heal.ts` |
 | | `deploy.yml` | Tests, backup, migrations, Worker deploy, Worker settings, Telegram webhook | see [Deploying](#3-deploying) |
 | | `backup.yml` | Daily `pg_dump`, kept 90 days as an artifact | — |
+| | `restore.yml` | By hand: puts a `db-backup-N` artifact back, only into an empty database | — |
 | | `ai-check.yml` | Measures how often the AI writes the caption (manual) | `src/jobs/ai-check.ts` |
 | | `video.yml` | 10 s vertical video of a deal for Reels / TikTok / Shorts, sent to the admin | `src/jobs/video.ts` → `src/video.ts` |
 | | `ci.yml` | Typecheck + tests on pull requests (and inside `deploy.yml`) | `test/` |

@@ -1,0 +1,57 @@
+name: Restore database
+
+# Puts a nightly backup (a "db-backup-N" artifact from the Backup workflow) back
+# into the production database. Run it by hand from the Actions tab.
+# Safety: it refuses to run unless the database has no tables, so it can never
+# overwrite or duplicate live data. After it finishes, run Deploy (or push).
+on:
+  workflow_dispatch:
+    inputs:
+      backup:
+        description: 'Artifact name, e.g. db-backup-21 (Actions → Backup database → a run → Artifacts)'
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: restore
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Download the backup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BACKUP: ${{ inputs.backup }}
+        run: |
+          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$BACKUP&per_page=1" --jq '.artifacts[0] | select(.expired == false) | .id')
+          if [ -z "$id" ]; then echo "::error::No unexpired artifact named $BACKUP"; exit 1; fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > backup.zip
+          unzip -o backup.zip backup.dump
+          test -s backup.dump
+          ls -lh backup.dump
+
+      - name: Restore into an empty database only
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          docker run --rm -e PGURL="$DATABASE_URL" -v "$PWD:/w" -w /w postgres:18-alpine sh -euc '
+            tables=$(psql "$PGURL" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = '\''public'\''")
+            if [ "$tables" != "0" ]; then
+              echo "::error::The database already has $tables tables. Refusing to restore over live data."
+              exit 1
+            fi
+            # The dump may not create the public schema itself; make sure it exists.
+            if ! pg_restore -l backup.dump | grep -q "SCHEMA - public "; then
+              psql "$PGURL" -v ON_ERROR_STOP=1 -c "CREATE SCHEMA IF NOT EXISTS public"
+            fi
+            pg_restore --no-owner --no-acl --exit-on-error --single-transaction -d "$PGURL" backup.dump
+            echo "Restored. Row counts:"
+            psql "$PGURL" -c "SELECT (SELECT count(*) FROM products) AS products, (SELECT count(*) FROM posts) AS posts, (SELECT count(*) FROM schema_migrations) AS migrations"
+          '
