@@ -143,6 +143,8 @@ WhatsApp's official API **can't post into normal groups**: its groups API is cap
 
 The last two are unofficial and WhatsApp can ban numbers that look like spam. If you use them, use a dedicated number and keep the volume reasonable.
 
+To post automatically to a **WhatsApp Channel**, follow [docs/WHATSAPP.md](docs/WHATSAPP.md): a dedicated chip, a free Oracle Cloud VM and the ready-made server in `deploy/evolution/`.
+
 ## X / Twitter
 X dropped its free API in 2026. It's now pay-per-use, and **posts with a link cost a lot more** than plain text posts.
 - `X_MODE=share` (default) is free. After you approve, tap **🐦 Postar no X**: a page opens with the post (joke, product, price and tracked link) and buttons to **copy it** or **open it in the X app**. You post it yourself.
