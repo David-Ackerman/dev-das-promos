@@ -1,6 +1,6 @@
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
-import { renderTelegram, STORE } from "./render.ts";
+import { renderTelegram, storeName } from "./render.ts";
 import type { ImageDecision } from "./images.ts";
 import { setPostImage, setPreview } from "./repo.ts";
 import { editPhoto, editPost, type Keyboard, sendPhotoFile, sendPost, tg, type UploadedImage } from "./telegram.ts";
@@ -36,7 +36,7 @@ function priceHistoryNote(post: PostRow): string {
 export function previewHtml(cfg: Config, post: PostRow, header?: string): string {
   const top =
     header ??
-    `📝 <b>Prévia #${post.id}</b> · ${STORE[post.marketplace]}${post.discount_pct ? ` · -${post.discount_pct}%` : ""}` +
+    `📝 <b>Prévia #${post.id}</b> · ${storeName(post.marketplace)}${post.discount_pct ? ` · -${post.discount_pct}%` : ""}` +
       `${post.ai_model === "template" ? " · texto padrão" : ""}${priceHistoryNote(post)}` +
       `${post.image_note ? `\n${post.image_source === "generated" ? "" : "⚠️ "}${escapeHtml(post.image_note)}` : ""}`;
   const body = renderTelegram(renderInput(cfg, post, `${cfg.publicBaseUrl}/go/•••••••`));

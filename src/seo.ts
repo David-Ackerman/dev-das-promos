@@ -1,6 +1,6 @@
 import type { Config } from "./config.ts";
 import type { DealDetail } from "./repo.ts";
-import { STORE } from "./render.ts";
+import { storeName } from "./render.ts";
 import { dealUrl, siteDescription } from "./site.ts";
 import { brl, errorMessage, truncate } from "./util.ts";
 
@@ -69,7 +69,7 @@ ${urls.join("\n")}
 /** One line a person or an AI can quote: "Mouse X por R$ 99,90 (antes R$ 149,90, -33%) na Shopee". */
 export function dealLine(d: Pick<DealDetail, "title" | "price_cents" | "original_price_cents" | "discount_pct" | "marketplace">): string {
   const before = d.original_price_cents && d.discount_pct > 0 ? ` (antes ${brl(d.original_price_cents)}, -${d.discount_pct}%)` : "";
-  return `${d.title} por ${brl(d.price_cents)}${before} na ${STORE[d.marketplace]}`;
+  return `${d.title} por ${brl(d.price_cents)}${before} na ${storeName(d.marketplace)}`;
 }
 
 export function rssXml(cfg: Config, deals: DealDetail[]): string {
@@ -82,7 +82,7 @@ export function rssXml(cfg: Config, deals: DealDetail[]): string {
   <link>${xml(`${url}?src=rss`)}</link>
   <guid isPermaLink="true">${xml(url)}</guid>
   <pubDate>${new Date(d.published_iso).toUTCString()}</pubDate>
-  <category>${xml(STORE[d.marketplace])}</category>
+  <category>${xml(storeName(d.marketplace))}</category>
   <description>${xml(desc)}</description>${d.image_url ? `\n  <enclosure url="${xml(d.image_url)}" type="image/jpeg" length="0"/>` : ""}
 </item>`;
   });

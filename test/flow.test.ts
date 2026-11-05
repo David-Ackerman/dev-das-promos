@@ -571,7 +571,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     try {
       await say(cfg, link);
       assert.equal(await postByLink(link), undefined);
-      assert.match(f.to("sendMessage").at(-1)!.body.text, /Não consegui ler o preço na página \(HTTP 403\)\. Mande de novo/);
+      assert.match(f.to("sendMessage").at(-1)!.body.text, /Não consegui ler o preço na página do produto \(Mercado Livre\)/);
 
       await say(cfg, `${link} 299 399,90\nA fritadeira que faltava 🍟`);
       const post = (await postByLink(link))!;
@@ -592,7 +592,95 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       assert.equal(named.caption, "Conforto nível sofá 🛋️");
 
       await say(cfg, "https://shopee.com.br/produto-x 10");
-      assert.match(f.to("sendMessage").at(-1)!.body.text, /Só aceito links da Amazon e do Mercado Livre/);
+      assert.match(f.to("sendMessage").at(-1)!.body.text, /Não consegui ler o nome do produto na página do produto \(Shopee\)/);
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("Shopee links: item read from the API; a plain product page gets the admin's affiliate link", async () => {
+    const cfg = testConfig({ X_MODE: "off", WHATSAPP_MODE: "off" });
+    const item = String(9e11 + (Date.now() % 1e9));
+    const plain = `https://shopee.com.br/Fone-Bluetooth-Lenovo-LP40-i.777.${item}`;
+    const short = `https://s.shopee.com.br/${suffix}`;
+    const shopeeApi = (call: { body: { query: string } }) =>
+      call.body.query.includes("generateShortLink")
+        ? { data: { generateShortLink: { shortLink: `https://s.shopee.com.br/gen${suffix}` } } }
+        : { data: { productOfferV2: { nodes: [{ itemId: item, productName: "Fone Bluetooth Lenovo LP40 Pro", productLink: `https://shopee.com.br/product/777/${item}`, imageUrl: "https://cf.shopee.com.br/file/fone.jpg", priceMin: "59.90", priceDiscountRate: 40, commissionRate: "0.08" }] } } };
+    const f = mockFetch([
+      ["affiliate.shopee", shopeeApi],
+      ["shopee.com.br/Fone", () => new Response("<html>app</html>", { status: 200 })],
+      ["s.shopee.com.br", () => new Response("<html>app</html>", { status: 200 })],
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", ai],
+    ]);
+    try {
+      await say(cfg, plain);
+      const generated = `https://s.shopee.com.br/gen${suffix}`;
+      const post = (await postByLink(generated))!;
+      assert.ok(post, "the plain product page became the admin's affiliate short link");
+      assert.equal(post.marketplace, "shopee");
+      assert.equal(post.external_id, item, "same id as the search uses");
+      assert.equal(post.title, "Fone Bluetooth Lenovo LP40 Pro", "name from the API");
+      assert.equal(post.price_cents, 5990);
+      const ref = (await db.query<{ ref: string }>(`SELECT ref FROM posts WHERE id = $1`, [post.id]))[0]!.ref;
+      const linkCall = f.to("affiliate.shopee").find((c) => c.body.query.includes("generateShortLink"))!;
+      assert.deepEqual(linkCall.body.variables.input.subIds, [ref], "Shopee reports show the post");
+      assert.match(f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body.text, /link de produto da Shopee sem rastreio/);
+
+      // An affiliate short link is kept byte for byte (no item id in it here, so the admin is asked).
+      await say(cfg, `${short} 49,90\nFone Lenovo`);
+      const kept = (await postByLink(short))!;
+      assert.equal(kept.title, "Fone Lenovo");
+      assert.equal(f.to("affiliate.shopee").filter((c) => c.body.query.includes("generateShortLink")).length, 1, "no new link generated");
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("any store: reads the page's product data, or asks once and takes the reply", async () => {
+    const cfg = testConfig({ X_MODE: "off", WHATSAPP_MODE: "off" });
+    const kabum = `https://www.kabum.com.br/produto/${suffix}/ssd-kingston-nv2-1tb`;
+    const blocked = `https://pt.aliexpress.com/item/1005${Date.now() % 1e9}.html`;
+    const page = `<html><head><title>SSD Kingston NV2 1TB | KaBuM!</title>
+      <meta property="og:image" content="https://images.kabum.com.br/ssd.jpg">
+      <script type="application/ld+json">{"@context":"https://schema.org","@type":"Product","name":"SSD Kingston NV2 1TB NVMe | KaBuM!","offers":{"@type":"Offer","price":"399.90","priceCurrency":"BRL"}}</script></head></html>`;
+    const f = mockFetch([
+      ["kabum.com.br", () => new Response(page, { status: 200 })],
+      ["aliexpress.com", () => new Response("<html><title>AliExpress</title></html>", { status: 200 })],
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", ai],
+    ]);
+    try {
+      await say(cfg, `${kabum} 399,90 549,90`);
+      const post = (await postByLink(kabum))!;
+      assert.equal(post.marketplace, "kabum");
+      assert.equal(post.title, "SSD Kingston NV2 1TB NVMe", "store name dropped from the title");
+      assert.deepEqual([post.price_cents, post.original_price_cents], [39990, 54990]);
+      assert.match(f.to("sendPhoto").filter((c) => c.body.chat_id === "111").at(-1)!.body.caption, /KaBuM! · -27%/);
+
+      await say(cfg, blocked);
+      const question = f.to("sendMessage").at(-1)!.body;
+      assert.match(question.text, /Não consegui ler o preço e o nome do produto na página do produto \(AliExpress\)/);
+      assert.equal(question.reply_markup.force_reply, true);
+      await createHandler(() => ({ cfg, db })).fetch(
+        new Request("https://w/telegram/webhook", {
+          method: "POST",
+          headers: { "x-telegram-bot-api-secret-token": "secret_secret_secret" },
+          body: JSON.stringify({
+            update_id: 2,
+            message: { message_id: 51, chat: { id: 111, type: "private" }, from: { id: 111 }, text: "89,90 129,90 Mini Projetor HY300\nCinema no quarto 🎬", reply_to_message: { message_id: 9, text: question.text } },
+          }),
+        }),
+        {},
+        ctx,
+      );
+      await flush();
+      const ali = (await postByLink(blocked))!;
+      assert.equal(ali.marketplace, "aliexpress");
+      assert.equal(ali.title, "Mini Projetor HY300");
+      assert.deepEqual([ali.price_cents, ali.original_price_cents], [8990, 12990]);
+      assert.equal(ali.caption, "Cinema no quarto 🎬");
     } finally {
       f.restore();
     }
@@ -1116,7 +1204,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     try {
       await say(cfg, link);
       const ask = f.to("sendMessage").at(-1)!.body;
-      assert.match(ask.text, /A Amazon bloqueia a leitura/);
+      assert.match(ask.text, /Não consegui ler o preço e o nome do produto na página do produto \(Amazon\)/);
       assert.equal(ask.reply_markup.force_reply, true);
       assert.equal(await postByLink(link), undefined);
 

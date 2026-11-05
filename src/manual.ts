@@ -1,9 +1,15 @@
+import type { Config } from "./config.ts";
+import { fetchShopeeItem, shopeeAffiliateLink } from "./providers/shopee.ts";
+import { storeName } from "./render.ts";
 import type { Candidate, Marketplace } from "./types.ts";
 import { discountPct, errorMessage, toCents } from "./util.ts";
 
+type ShopeeConfig = NonNullable<Config["shopee"]>;
+
 /**
- * Posts from a link the admin sends to the bot (Amazon / Mercado Livre affiliate
- * links), for stores whose API we can't use yet. Runs in the Worker: fetch only.
+ * Posts from a link the admin sends to the bot: any store (Amazon, Mercado
+ * Livre, Shopee, AliExpress, KaBuM!…), usually the admin's affiliate link.
+ * Runs in the Worker: fetch only.
  *
  * Message format (private chat with the bot):
  *   <link> [preço] [preço antigo]
@@ -18,6 +24,8 @@ export interface Submission {
   caption?: string;
   /** Text before the link (the Amazon app shares "Product name https://…"): the name when the page can't be read. */
   before?: string;
+  /** Name the admin typed when asked: wins over the page's. */
+  title?: string;
 }
 
 const URL_RE = /https?:\/\/[^\s<>"]+/i;
@@ -61,10 +69,33 @@ export function parseSubmission(text: string): Submission | undefined {
   };
 }
 
+/** Link shorteners: the store is only known after following the link. */
+const SHORTENERS = new Set([
+  "bit.ly", "bitly.com", "tinyurl.com", "cutt.ly", "t.co", "goo.gl", "is.gd", "ow.ly", "buff.ly", "rb.gy", "s.id",
+  "shorturl.at", "tiny.cc", "rebrand.ly", "encurtador.com.br", "encurta.net", "tidd.ly", "linktr.ee", "l.instagram.com",
+]);
+/** Domain endings dropped to find the store's name: kabum.com.br -> kabum. */
+const DOMAIN_ENDINGS = new Set(["com", "br", "net", "org", "shop", "store", "online", "app", "io", "co"]);
+const STORE_ALIASES: Record<string, Marketplace> = { magazineluiza: "magalu", mercadolibre: "mercadolivre", terabyte: "terabyteshop" };
+
+/** "www.kabum.com.br" -> "kabum", "divulgador.magalu.com" -> "magalu". */
+export function storeKeyFromHost(host: string): Marketplace | undefined {
+  const labels = host.toLowerCase().replace(/^www\d*\./, "").split(".");
+  while (labels.length > 1 && DOMAIN_ENDINGS.has(labels[labels.length - 1] as string)) labels.pop();
+  const key = (labels[labels.length - 1] ?? "").replace(/[^a-z0-9]/g, "");
+  return key ? (STORE_ALIASES[key] ?? key) : undefined;
+}
+
+/**
+ * Which store a link is from: the three with APIs, AliExpress, or any other
+ * store keyed by its address. undefined for non-links and shorteners.
+ */
 export function marketplaceOf(url: string): Marketplace | undefined {
   let host: string;
   try {
-    host = new URL(url).hostname.toLowerCase();
+    const u = new URL(url);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return undefined;
+    host = u.hostname.toLowerCase();
   } catch {
     return undefined;
   }
@@ -78,14 +109,25 @@ export function marketplaceOf(url: string): Marketplace | undefined {
   if (/(^|\.)mercadolivre\.com(\.br)?$/.test(host) || /(^|\.)mercadolibre\.com$/.test(host) || host === "meli.la") {
     return "mercadolivre";
   }
-  return undefined;
+  if (/(^|\.)shopee\.com\.br$/.test(host) || /(^|\.)shope\.ee$/.test(host) || /(^|\.)shp\.ee$/.test(host)) return "shopee";
+  if (/(^|\.)aliexpress\.(com|us)$/.test(host) || host === "a.aliexpress.com") return "aliexpress";
+  // Lookalikes such as amazon.com.evil.io must not pass as the real store.
+  if (/(^|\.)(amazon|mercadolivre|shopee|aliexpress)\./.test(host)) return undefined;
+  if (SHORTENERS.has(host) || !host.includes(".")) return undefined;
+  return storeKeyFromHost(host);
 }
 
-/** ASIN / MLB id from a product URL, so the same product is recognised across links. */
+/** ASIN / MLB id / Shopee item id / AliExpress item id from a product URL, so the same product is recognised across links. */
 export function externalIdFrom(marketplace: Marketplace, url: string): string | undefined {
   if (marketplace === "amazon") return url.match(/\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Z0-9]{10})(?:[/?#]|$)/i)?.[1]?.toUpperCase();
-  const id = url.match(/\b(MLB)-?(\d{6,})/i);
-  return id ? `MLB${id[2]}` : undefined;
+  if (marketplace === "mercadolivre") {
+    const id = url.match(/\b(MLB)-?(\d{6,})/i);
+    return id ? `MLB${id[2]}` : undefined;
+  }
+  // Shopee: ".../Nome-i.<shop>.<item>" or ".../product/<shop>/<item>"; the item id alone, like the search API uses.
+  if (marketplace === "shopee") return url.match(/-i\.\d+\.(\d+)(?:[/?#]|$)/)?.[1] ?? url.match(/\/product\/\d+\/(\d+)(?:[/?#]|$)/)?.[1];
+  if (marketplace === "aliexpress") return url.match(/\/item\/(\d{6,})\.html/)?.[1];
+  return undefined;
 }
 
 /** Human title from the URL slug, e.g. ".../Fone-Bluetooth-JBL/dp/..." -> "Fone Bluetooth JBL". */
@@ -98,7 +140,8 @@ export function titleFromUrl(url: string): string | undefined {
   }
   const amazon = path.match(/^\/([^/]+)\/(?:dp|gp\/product)\//)?.[1];
   const meli = path.match(/MLB-?\d+-(.+?)(?:-_JM)?$/i)?.[1] ?? path.match(/^\/([^/]+)\/p\/MLB\d+/i)?.[1];
-  const slug = amazon ?? meli;
+  const shopee = path.match(/^\/(.+)-i\.\d+\.\d+\/?$/)?.[1];
+  const slug = amazon ?? meli ?? shopee;
   if (!slug || slug.length < 6) return undefined;
   return slug.replace(/[-_]+/g, " ").trim();
 }
@@ -162,14 +205,21 @@ function money(raw: string | number | undefined): number | undefined {
   return cents && cents > 0 ? cents : undefined;
 }
 
+/** Page titles that mean "blocked / not a product", in any store. */
+const NOT_A_PRODUCT =
+  /^(amazon\.com\.br|mercado livre|shopee( brasil)?|aliexpress|robot check|página não encontrada|page not found|access denied|acesso negado|just a moment\.*|attention required!?.*|captcha.*|login|entrar|404.*|erro.*)$/i;
+
 function cleanTitle(title: string | undefined): string | undefined {
   const t = title
     ?.replace(/^Amazon\.com\.br\s*:\s*/i, "")
     .replace(/\s*\|\s*(Amazon\.com\.br|Mercado Livre).*$/i, "")
     .replace(/\s*:\s*Amazon\.com\.br.*$/i, "")
+    .replace(/\s+-\s+AliExpress(\s+\d+)?\s*$/i, "")
     .replace(/\s+/g, " ")
-    .trim();
-  return t && !/^(amazon\.com\.br|mercado livre|robot check|página não encontrada)$/i.test(t) ? t : undefined;
+    .trim()
+    // Other stores end titles with "| Store name": drop it when what's left still reads like a product.
+    .replace(/^(.{10,}?)\s*\|\s*[^|]{2,40}$/, "$1");
+  return t && t.length >= 3 && !NOT_A_PRODUCT.test(t) ? t : undefined;
 }
 
 export interface PageInfo {
@@ -181,7 +231,7 @@ export interface PageInfo {
   originalPriceCents?: number;
 }
 
-/** Best-effort read of title, photo and prices from an Amazon / Mercado Livre product page. */
+/** Best-effort read of title, photo and prices from a product page (standard tags, plus Amazon / Mercado Livre specifics). */
 export function parseProductPage(marketplace: Marketplace, html: string): PageInfo {
   const ld = ldProduct(html);
   const offer = [ld?.offers].flat()[0];
@@ -202,7 +252,7 @@ export function parseProductPage(marketplace: Marketplace, html: string): PageIn
     info.originalPriceCents = money(strike && decodeEntities(strike).replace(/R\$/i, ""));
     const hiRes = html.match(/data-old-hires=["'](https:[^"']+)["']/i)?.[1] ?? html.match(/"hiRes":"(https:[^"]+)"/)?.[1];
     info.imageUrl = hiRes ?? info.imageUrl;
-  } else {
+  } else if (marketplace === "mercadolivre") {
     const before = html.match(/andes-money-amount--previous[^>]*aria-label=["'][^"']*?(\d[\d.]*) reais(?: com (\d{1,2}) centavos)?/i);
     if (before) info.originalPriceCents = Number((before[1] as string).replace(/\./g, "")) * 100 + Number(before[2] ?? 0);
     Object.assign(info, featuredCard(html));
@@ -253,7 +303,7 @@ const BROWSER_HEADERS = {
 export function unwrapVerification(url: string): string {
   try {
     const go = new URL(url).searchParams.get("go");
-    return go && marketplaceOf(go) ? go : url;
+    return go && marketplaceOf(url) === "mercadolivre" && marketplaceOf(go) === "mercadolivre" ? go : url;
   } catch {
     return url;
   }
@@ -301,6 +351,24 @@ export function affiliateLinkFor(
   return { url: `https://www.amazon.com.br/dp/${asin}?tag=${encodeURIComponent(amazonTag)}`, generated: true };
 }
 
+/**
+ * Shopee: a plain shopee.com.br product page carries no affiliate tracking, so
+ * it becomes the admin's affiliate short link (Shopee API, sub-id = the post's
+ * ref). Short links (s.shopee.com.br, shope.ee) are kept byte for byte.
+ */
+export async function shopeeLinkFor(
+  shopee: ShopeeConfig | undefined,
+  sentLink: string,
+  ref: string,
+): Promise<{ url: string; generated: boolean }> {
+  if (!shopee || !isPlainShopeeProduct(sentLink)) return { url: sentLink, generated: false };
+  try {
+    return { url: await shopeeAffiliateLink(shopee, sentLink, ref), generated: true };
+  } catch {
+    return { url: sentLink, generated: false };
+  }
+}
+
 /** Several links in one message (one per line, with their prices): one preview each. */
 export function parseSubmissions(text: string, max = 5): Submission[] {
   const urlLines = text.split("\n").filter((l) => URL_RE.test(l));
@@ -319,81 +387,110 @@ export const SUBMIT_HELP = `Para criar um post a partir de um link, me mande:
 e, se quiser, o texto do post nas linhas de baixo.
 
 Ex.: <code>https://amzn.to/abc 129,90 199,90</code>
-Até 5 links de uma vez, um por linha. Links da Amazon sem a sua tag (ex.: compartilhados do app) ganham a sua tag automaticamente.
-Se eu não conseguir ler o nome do produto, eu aviso: aí mande o nome na linha de baixo do link.
-Aceito links da Amazon e do Mercado Livre (inclusive meli.la). Normalmente eu leio nome, foto e preço
-sozinho; se a loja bloquear a leitura, eu aviso e você manda o preço junto com o link.`;
+Até 5 links de uma vez, um por linha. Aceito links de qualquer loja: Amazon, Mercado Livre, Shopee,
+AliExpress, KaBuM!, Magalu… Normalmente eu leio nome, foto e preço sozinho; se a loja bloquear a
+leitura, eu pergunto e você responde com o preço e o nome.
+Links da Amazon sem a sua tag e links de produto da Shopee sem rastreio de afiliado ganham o seu link de afiliado automaticamente.`;
 
 export type BuildResult =
-  | { ok: true; candidate: Candidate; caption?: string }
-  /** `askAmazon`: Amazon blocked the page; ask the admin for price and name in one reply. */
-  | { ok: false; reason: string; askAmazon?: boolean };
+  | { ok: true; candidate: Candidate; caption?: string; via?: "shopee-api" }
+  /** `ask`: the page couldn't be read; ask the admin for what's missing in one reply. */
+  | { ok: false; reason: string; ask?: boolean };
 
-/** First line of the bot's question when Amazon blocks the page; the reply is matched by it. */
+/** First line of the bot's question when Amazon blocks the page (older questions still in the chat). */
 export const AMAZON_ASK = "🛒 A Amazon bloqueia a leitura automática da página";
+/** First words of the bot's question when a store's page can't be read; the reply is matched by it. */
+export const STORE_ASK = "🛒 Não consegui ler";
 
-export function amazonAskText(link: string): string {
+/** Asks for what's missing; the link travels inside the question, so one reply finishes the post. */
+export function askText(link: string, store: string, needName: boolean, needPrice: boolean): string {
+  const what = [needPrice && "o preço", needName && "o nome do produto"].filter(Boolean).join(" e ");
   return (
-    `${AMAZON_ASK}, então me diga o preço e o nome do produto.\n` +
-    "Responda esta mensagem assim: preço [preço antigo] Nome do produto\n" +
-    "Ex.: 349,90 499,90 Echo Dot 5ª geração\n" +
+    `${STORE_ASK} ${what} na página do produto (${store}), então me diga.\n` +
+    `Responda esta mensagem assim: preço [preço antigo]${needName ? " Nome do produto" : " [nome do produto]"}\n` +
+    `Ex.: 349,90 499,90${needName ? " Fone JBL Tune 520" : ""}\n` +
     "(nas linhas de baixo, se quiser, o texto do post)\n\n" +
     `🔗 ${link}`
   );
 }
 
-/** The admin's reply to amazonAskText → the same submission as "link price [old]\nName\n[text]". */
-export function submissionFromAmazonReply(promptText: string | undefined, reply: string): Submission | undefined {
-  if (!promptText?.startsWith(AMAZON_ASK)) return undefined;
+/** Kept for tests and old messages: the Amazon question. */
+export function amazonAskText(link: string): string {
+  return askText(link, "Amazon", true, true);
+}
+
+/**
+ * The admin's reply to the question → a submission. First line: prices, then
+ * the name (it wins over the page's); next lines: the post text.
+ */
+export function submissionFromReply(promptText: string | undefined, reply: string): Submission | undefined {
+  if (!promptText?.startsWith(AMAZON_ASK) && !promptText?.startsWith(STORE_ASK)) return undefined;
   const link = promptText.match(/🔗 (https?:\/\/\S+)/)?.[1];
   if (!link) return undefined;
   const [first = "", ...rest] = reply.trim().split("\n");
-  return parseSubmission(`${link} ${first}${rest.length ? `\n${rest.join("\n")}` : ""}`);
+  const parsed = parseSubmission(`${link} ${first}`);
+  if (!parsed) return undefined;
+  const text = rest.join("\n").trim();
+  return { link, priceCents: parsed.priceCents, originalPriceCents: parsed.originalPriceCents, title: parsed.caption, caption: text || undefined };
 }
 
-/** Turns a submission into a Candidate, preferring what the admin typed over what the page says. */
-export async function buildCandidate(sub: Submission): Promise<BuildResult> {
+/** Old name, same thing. */
+export const submissionFromAmazonReply = submissionFromReply;
+
+/** A shopee.com.br product page (not an affiliate short link): it carries no affiliate tracking. */
+export function isPlainShopeeProduct(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return /^(www\.)?shopee\.com\.br$/i.test(u.hostname) && externalIdFrom("shopee", url) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/** Turns a submission into a Candidate, preferring what the admin typed over what the page or the API says. */
+export async function buildCandidate(sub: Submission, opts: { shopee?: ShopeeConfig } = {}): Promise<BuildResult> {
   const initial = marketplaceOf(sub.link);
   const { finalUrl, page, error } = await fetchProductPage(sub.link);
-  const marketplace = marketplaceOf(finalUrl) ?? initial;
-  if (!marketplace) return { ok: false, reason: "Só aceito links da Amazon e do Mercado Livre por enquanto." };
+  const marketplace = marketplaceOf(finalUrl) ?? initial ?? (error ? "loja" : undefined);
+  if (!marketplace) return { ok: false, reason: "Não reconheci esse link. Mande o link do produto (ou o seu link de afiliado)." };
+
+  // Shopee pages can't be read, but the affiliate API knows the item: name, photo, price, commission.
+  const shopeeId = marketplace === "shopee" ? (externalIdFrom("shopee", finalUrl) ?? externalIdFrom("shopee", sub.link)) : undefined;
+  const api = shopeeId && opts.shopee ? await fetchShopeeItem(opts.shopee, shopeeId).catch(() => null) : undefined;
 
   // When the page can't be read, the first line under the link is the product name.
   let caption = sub.caption;
-  let title = page.title ?? titleFromUrl(finalUrl) ?? sub.before;
+  let title = sub.title ?? api?.title ?? page.title ?? titleFromUrl(finalUrl) ?? sub.before;
   if (!title && caption) {
     const [first, ...rest] = caption.split("\n");
     title = first?.trim() || undefined;
     caption = rest.join("\n").trim() || undefined;
   }
-  const priceCents = sub.priceCents ?? page.priceCents;
-  const missing = [!title && "o nome do produto", !priceCents && "o preço"].filter(Boolean).join(" e ");
-  if (missing && marketplace === "amazon") return { ok: false, reason: amazonAskText(sub.link), askAmazon: true };
-  if (missing) {
-    return {
-      ok: false,
-      reason:
-        `Não consegui ler ${missing} na página${error ? ` (${error})` : ""}. Mande de novo assim:\n` +
-        `<code>link preço [preço antigo]\n${title ? "" : "Nome do produto\n"}[texto do post, opcional]</code>`,
-    };
+  const priceCents = sub.priceCents ?? api?.priceCents ?? page.priceCents;
+  if (!title || !priceCents) {
+    return { ok: false, reason: askText(sub.link, storeName(marketplace), !title, !priceCents), ask: true };
   }
-  const originalPriceCents = sub.priceCents !== undefined ? sub.originalPriceCents : page.originalPriceCents;
+  const originalPriceCents =
+    sub.priceCents !== undefined ? sub.originalPriceCents : (api ? api.originalPriceCents : page.originalPriceCents);
   return {
     ok: true,
     candidate: {
       marketplace,
       externalId:
+        shopeeId ??
         externalIdFrom(marketplace, finalUrl) ??
         page.externalId ??
         externalIdFrom(marketplace, sub.link) ??
         finalUrl.split(/[?#]/)[0]!,
-      title: title as string,
-      imageUrl: page.imageUrl,
-      productUrl: finalUrl,
-      priceCents: priceCents as number,
+      title,
+      imageUrl: api?.imageUrl ?? page.imageUrl,
+      productUrl: api?.productUrl ?? finalUrl,
+      priceCents,
       originalPriceCents,
-      discountPct: discountPct(priceCents as number, originalPriceCents),
+      discountPct: discountPct(priceCents, originalPriceCents),
+      commissionRate: api?.commissionRate,
     },
     caption,
+    via: api ? "shopee-api" : undefined,
   };
 }

@@ -1,7 +1,7 @@
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { type DealDetail, dealDetail, findDeals, priceHistory } from "./repo.ts";
-import { STORE } from "./render.ts";
+import { storeName } from "./render.ts";
 import { dealLine } from "./seo.ts";
 import { dealUrl, historyFacts, siteDescription } from "./site.ts";
 import type { Marketplace } from "./types.ts";
@@ -18,7 +18,8 @@ import { brl } from "./util.ts";
  */
 
 const SOURCE = "ai";
-const MARKETPLACES: Marketplace[] = ["shopee", "amazon", "mercadolivre"];
+/** Stores the search covers; deals the admin sends can come from any store. */
+const MARKETPLACES: Marketplace[] = ["shopee", "amazon", "mercadolivre", "aliexpress"];
 export const MCP_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const DISCLOSURE = "Links de afiliado (#publi): o site pode ganhar comissão, sem custo extra para quem compra. Preços e estoque mudam; confira na loja.";
 
@@ -40,10 +41,13 @@ export function searchWords(query: string | undefined | null): string[] {
     .slice(0, 8);
 }
 
+const STORE_ALIASES: Record<string, Marketplace> = { ml: "mercadolivre", meli: "mercadolivre", mercadolibre: "mercadolivre", ali: "aliexpress", magazineluiza: "magalu" };
+
+/** A store key: one of MARKETPLACES, or any other store's key as in /oferta pages ("kabum", "magalu"…). */
 function marketplaceOf(value: unknown): Marketplace | undefined {
-  const v = String(value ?? "").toLowerCase().replace(/[\s_-]+/g, "");
-  if (v === "mercadolivre" || v === "ml" || v === "meli") return "mercadolivre";
-  return (MARKETPLACES as string[]).includes(v) ? (v as Marketplace) : undefined;
+  const v = String(value ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (!v || v.length > 30) return undefined;
+  return STORE_ALIASES[v] ?? v;
 }
 
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
@@ -78,7 +82,7 @@ export function dealJson(cfg: Config, d: DealDetail): DealJson {
   return {
     id: d.id,
     title: d.title,
-    store: STORE[d.marketplace],
+    store: storeName(d.marketplace),
     price_brl: d.price_cents / 100,
     price_text: brl(d.price_cents),
     original_price_brl: d.original_price_cents && d.discount_pct > 0 ? d.original_price_cents / 100 : null,
@@ -138,7 +142,7 @@ export function mcpTools(cfg: Config) {
         properties: {
           query: { type: "string", description: 'Product words, e.g. "ssd 1tb", "fone bluetooth", "cadeira gamer". Empty = any.' },
           max_price_brl: { type: "number", description: "Maximum price in reais (BRL)." },
-          store: { type: "string", enum: MARKETPLACES, description: "Only this store." },
+          store: { type: "string", examples: MARKETPLACES, description: "Only this store, e.g. shopee, amazon, mercadolivre, aliexpress, kabum, magalu." },
           include_expired: { type: "boolean", description: "Also return deals from the last 90 days that may have ended (useful for price history). Default false." },
           limit: { type: "integer", minimum: 1, maximum: 10, description: "Default 5." },
         },
@@ -153,7 +157,7 @@ export function mcpTools(cfg: Config) {
       inputSchema: {
         type: "object",
         properties: {
-          store: { type: "string", enum: MARKETPLACES, description: "Only this store." },
+          store: { type: "string", examples: MARKETPLACES, description: "Only this store, e.g. shopee, amazon, mercadolivre, aliexpress, kabum, magalu." },
           limit: { type: "integer", minimum: 1, maximum: 10, description: "Default 5." },
         },
         additionalProperties: false,
@@ -375,7 +379,7 @@ export function openApi(cfg: Config): object {
           parameters: [
             { name: "q", in: "query", schema: { type: "string" }, description: 'Product words in Portuguese, e.g. "teclado mecanico".' },
             { name: "preco_max", in: "query", schema: { type: "number" }, description: "Maximum price in BRL." },
-            { name: "loja", in: "query", schema: { type: "string", enum: MARKETPLACES } },
+            { name: "loja", in: "query", schema: { type: "string", examples: MARKETPLACES }, description: "Store key, e.g. shopee, amazon, mercadolivre, aliexpress, kabum." },
             { name: "limite", in: "query", schema: { type: "integer", minimum: 1, maximum: 20 } },
             { name: "incluir_encerradas", in: "query", schema: { type: "string", enum: ["0", "1"] }, description: "1 = also deals of the last 90 days that may have ended." },
           ],

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   affiliateLinkFor,
+  AMAZON_ASK,
   amazonAskText,
   externalIdFrom,
   marketplaceOf,
@@ -58,10 +59,14 @@ describe("links sent to the bot", () => {
       link: "https://link.amazon/B0im0xAJ8",
       priceCents: 34990,
       originalPriceCents: 49990,
-      caption: "Echo Dot 5ª geração\nA Alexa agradece",
-      before: undefined,
+      title: "Echo Dot 5ª geração",
+      caption: "A Alexa agradece",
     });
     assert.equal(submissionFromAmazonReply("outra mensagem", "349,90 Echo"), undefined);
+    const old = `${AMAZON_ASK}, então me diga o preço e o nome do produto.
+
+🔗 https://link.amazon/B0im0xAJ8`;
+    assert.equal(submissionFromAmazonReply(old, "99 Kindle")?.title, "Kindle", "questions already in the chat still work");
   });
 
   it("splits a message with several links into one submission each", () => {
@@ -77,7 +82,21 @@ describe("links sent to the bot", () => {
     assert.equal(marketplaceOf("https://mercadolivre.com/sec/abc"), "mercadolivre");
     assert.equal(marketplaceOf("https://produto.mercadolivre.com.br/MLB-123456789-x-_JM"), "mercadolivre");
     assert.equal(marketplaceOf("https://amazon.com.evil.io/dp/B0ABCDEFGH"), undefined);
-    assert.equal(marketplaceOf("https://shopee.com.br/x"), undefined);
+    assert.equal(marketplaceOf("https://shopee.com.br/x"), "shopee");
+    assert.equal(marketplaceOf("https://s.shopee.com.br/abc"), "shopee");
+    assert.equal(marketplaceOf("https://shope.ee/abc"), "shopee");
+    assert.equal(marketplaceOf("https://s.click.aliexpress.com/e/_abc"), "aliexpress");
+    assert.equal(marketplaceOf("https://pt.aliexpress.com/item/1005006.html"), "aliexpress");
+    assert.equal(marketplaceOf("https://www.kabum.com.br/produto/123/ssd"), "kabum");
+    assert.equal(marketplaceOf("https://www.magazineluiza.com.br/x/p/abc/"), "magalu");
+    assert.equal(marketplaceOf("https://divulgador.magalu.com/abc"), "magalu");
+    assert.equal(marketplaceOf("https://bit.ly/abc"), undefined, "shorteners: the store is known only after following");
+    assert.equal(marketplaceOf("https://shopee.com.br.golpe.io/x"), undefined, "lookalikes");
+    assert.equal(marketplaceOf("javascript:alert(1)"), undefined);
+    assert.equal(externalIdFrom("shopee", "https://shopee.com.br/Fone-Bluetooth-i.123456.987654321?sp_atk=x"), "987654321");
+    assert.equal(externalIdFrom("shopee", "https://shopee.com.br/product/123456/987654321"), "987654321");
+    assert.equal(externalIdFrom("aliexpress", "https://pt.aliexpress.com/item/1005006123456789.html?spm=x"), "1005006123456789");
+    assert.equal(titleFromUrl("https://shopee.com.br/Fone-Bluetooth-Lenovo-LP40-i.123456.987654321"), "Fone Bluetooth Lenovo LP40");
     assert.equal(externalIdFrom("amazon", "https://www.amazon.com.br/Fone/dp/b0abcdefgh?tag=x-20"), "B0ABCDEFGH");
     assert.equal(externalIdFrom("mercadolivre", "https://produto.mercadolivre.com.br/MLB-3846028617-fone-_JM"), "MLB3846028617");
     assert.equal(externalIdFrom("mercadolivre", "https://www.mercadolivre.com.br/apple-iphone/p/MLB1027172669"), "MLB1027172669");

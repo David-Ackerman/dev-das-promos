@@ -1,4 +1,9 @@
-export type Marketplace = "amazon" | "shopee" | "mercadolivre";
+/**
+ * Store key. The search runs on the three with APIs; links the admin sends can
+ * be from any store, keyed by its web address ("kabum", "magalu", "aliexpress"…).
+ * Display names: `storeName` in render.ts.
+ */
+export type Marketplace = "amazon" | "shopee" | "mercadolivre" | "aliexpress" | (string & {});
 export type Channel = "telegram" | "whatsapp" | "x" | "web";
 
 /** A deal found on a marketplace, before we decide to post it. */

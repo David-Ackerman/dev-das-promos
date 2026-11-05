@@ -30,9 +30,12 @@ up to date when you add a route, cron, workflow, table or provider).
 - Money is integer cents.
 - The AI never writes prices or links; `src/render.ts` adds them.
 - Links the admin sends (`src/manual.ts`) are stored as `affiliate_url`
-  byte for byte: never rewrite them, or the affiliate tag can be lost. The one
-  exception is an Amazon link without the admin's `AMAZON_PARTNER_TAG`
-  (`affiliateLinkFor`): it becomes `amazon.com.br/dp/<ASIN>?tag=<tag>`.
+  byte for byte: never rewrite them, or the affiliate tag can be lost. The two
+  exceptions carry no affiliate tracking at all: an Amazon link without the
+  admin's `AMAZON_PARTNER_TAG` (`affiliateLinkFor`) becomes
+  `amazon.com.br/dp/<ASIN>?tag=<tag>`, and a plain `shopee.com.br` product page
+  (`shopeeLinkFor`) becomes the admin's Shopee short link (sub-id = post ref).
+  Links can be from any store; its key comes from the address (`marketplaceOf`).
 - Amazon product data comes from links the admin sends, the official API, or
   the opt-in search-page reader (`src/providers/amazon-scrape.ts`, only with
   `AMAZON_SCRAPE=on`, which the owner chose knowing it can conflict with the

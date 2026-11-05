@@ -17,7 +17,8 @@ import {
   parseSubmissions,
   SUBMIT_HELP,
   type Submission,
-  submissionFromAmazonReply,
+  shopeeLinkFor,
+  submissionFromReply,
 } from "./manual.ts";
 import { approvePost, declinePost, publishNow, retryPost, unschedulePost } from "./publish.ts";
 import { declineRoundup, proposeRoundup, sendRoundup } from "./roundup.ts";
@@ -266,8 +267,8 @@ export async function triggerCollect(cfg: Config): Promise<{ ok: boolean; messag
 async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: number, sub: Submission): Promise<void> {
   const token = cfg.telegram.botToken;
   await tg(token, "setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👀" }] }).catch(() => {});
-  const built = await buildCandidate(sub);
-  if (!built.ok && built.askAmazon) {
+  const built = await buildCandidate(sub, { shopee: cfg.shopee });
+  if (!built.ok && built.ask) {
     // One reply with "price [old] Name" finishes it; the link travels inside the question.
     await tg(token, "sendMessage", {
       chat_id: chatId,
@@ -283,7 +284,12 @@ async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: numb
   }
   const c = built.candidate;
   const text = built.caption;
-  const link = affiliateLinkFor(c, sub.link, cfg.amazonPartnerTag);
+  const ref = randomCode(10);
+  // The admin's link byte for byte, except an Amazon link without their tag or a plain Shopee product page.
+  const link =
+    c.marketplace === "shopee"
+      ? await shopeeLinkFor(cfg.shopee, sub.link, ref)
+      : affiliateLinkFor(c, sub.link, cfg.amazonPartnerTag);
   const startedAt = await dbNow(db);
   const productId = await upsertProduct(db, c);
   // Page read + AI must fit in the ~30s the Worker gets after answering Telegram.
@@ -292,9 +298,9 @@ async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: numb
     : await generateCaption(cfg.ai, c, undefined, { budgetMs: 15_000 });
   const post = await createPost(db, {
     productId,
-    ref: randomCode(10),
+    ref,
     candidate: c,
-    affiliateUrl: link.url, // the admin's link byte for byte, or the tagged Amazon link built from it
+    affiliateUrl: link.url,
     priceFromAdmin: sub.priceCents !== undefined,
     lowestSeenCents: await lowestSeenPrice(db, productId, startedAt),
     caption: caption.caption,
@@ -313,7 +319,8 @@ async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: numb
     await requestImage(cfg, db, post.id, "auto").catch(() => "");
   }
   if (link.generated) {
-    await sendText(token, chatId, `🔗 Esse link não tinha a sua tag da Amazon: o post #${post.id} usa o seu link de afiliado\n<code>${escapeHtml(link.url)}</code>`);
+    const why = c.marketplace === "shopee" ? "era um link de produto da Shopee sem rastreio de afiliado" : "não tinha a sua tag da Amazon";
+    await sendText(token, chatId, `🔗 Esse link ${why}: o post #${post.id} usa o seu link de afiliado\n<code>${escapeHtml(link.url)}</code>`);
   }
   if (caption.error) await aiBusyFallback(cfg, caption.error);
 }
@@ -388,10 +395,10 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
   }
   if (!isAdmin(cfg, msg.from?.id)) return;
 
-  // Reply to "Amazon blocked the page": price + name for that link.
-  const amazonReply = !command && text ? submissionFromAmazonReply(msg.reply_to_message?.text, text) : undefined;
-  if (amazonReply) {
-    await postFromLink(cfg, db, chatId, msg.message_id, amazonReply);
+  // Reply to "couldn't read the page": price + name for that link.
+  const storeReply = !command && text ? submissionFromReply(msg.reply_to_message?.text, text) : undefined;
+  if (storeReply) {
+    await postFromLink(cfg, db, chatId, msg.message_id, storeReply);
     return;
   }
 

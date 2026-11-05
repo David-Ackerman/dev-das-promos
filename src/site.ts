@@ -1,6 +1,6 @@
 import type { Config } from "./config.ts";
 import type { DealDetail } from "./repo.ts";
-import { STORE } from "./render.ts";
+import { storeName } from "./render.ts";
 import type { Marketplace } from "./types.ts";
 import { brl, escapeHtml, truncate } from "./util.ts";
 
@@ -109,7 +109,7 @@ function isLowest(d: SiteDeal): boolean {
 }
 
 function tags(d: SiteDeal): string {
-  return `<div class="tags"><span>${STORE[d.marketplace]}</span>${d.discount_pct > 0 ? `<span class="off">-${d.discount_pct}%</span>` : ""}${isLowest(d) ? `<span class="low">📉 Menor preço em 30 dias</span>` : ""}</div>`;
+  return `<div class="tags"><span>${storeName(d.marketplace)}</span>${d.discount_pct > 0 ? `<span class="off">-${d.discount_pct}%</span>` : ""}${isLowest(d) ? `<span class="low">📉 Menor preço em 30 dias</span>` : ""}</div>`;
 }
 
 function priceHtml(d: SiteDeal): string {
@@ -314,7 +314,7 @@ export function dealPage(
   more: (SiteDeal & { shared?: number })[],
 ): string {
   const url = dealUrl(cfg, d.id, d.title);
-  const store = STORE[d.marketplace];
+  const store = storeName(d.marketplace);
   const image = absolute(cfg, d.image_url) ?? `${cfg.publicBaseUrl}/og.jpg`;
   const price = brl(d.price_cents);
   const title = d.live ? `${truncate(d.title, 70)} por ${price} na ${store}` : `${truncate(d.title, 70)}: histórico de preço`;

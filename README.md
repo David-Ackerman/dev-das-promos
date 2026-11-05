@@ -95,18 +95,19 @@ The first run prints your Worker URL in a warning. Save it as the `PUBLIC_BASE_U
 
 Test it with **Actions → Collect deals → Run workflow**. The previews should show up in your Telegram chat.
 
-## Posting from your own links (Amazon, Mercado Livre)
-Until a store's API is available (Amazon only opens the Creators API after enough sales, and Mercado Livre has no public API), you can send the bot an affiliate link in your private chat:
+## Posting from your own links (any store)
+Send the bot an affiliate link from **any store** in your private chat: Amazon, Mercado Livre, Shopee, AliExpress, KaBuM!, Magalu…
 
 ```
 https://amzn.to/abc123 129,90 199,90
 Texto do post (optional; without it the AI writes one)
 ```
 
-- The bot opens the link and reads the product name, photo and prices when the store allows it. For Mercado Livre, share the product from the app as an affiliate and send the `meli.la` link as is: it opens your affiliate showcase, and the bot reads the featured product from it. If a store blocks the read, the bot says so and you type the price after the link.
+- The bot opens the link and reads the product name, photo and prices when the store allows it (the standard product data most stores publish). For Mercado Livre, share the product from the app as an affiliate and send the `meli.la` link as is: it opens your affiliate showcase, and the bot reads the featured product from it.
+- **Shopee:** the bot asks the Shopee API about the item, so name, photo, price and commission are exact. A plain `shopee.com.br` product link (no affiliate tracking) is swapped for your affiliate short link; `s.shopee.com.br` links you made are kept.
+- If a store blocks the read (Amazon, AliExpress often do), the bot asks for what's missing. Reply to its question with `preço [preço antigo] Nome do produto` and, on the lines below, the post text if you want.
 - The numbers after the link are the price and the old price, in any order. Prices you type win over what the page says.
-- If it can't read the product name, it tells you. Send it again with the name on the line below the link.
-- Your link is kept **exactly as you sent it**, so your affiliate tag is untouched. Clicks still go through the bot's `/go` tracking.
+- Your link is kept **exactly as you sent it**, so your affiliate tag is untouched (except the Amazon/Shopee cases above that had no tracking). Clicks still go through the bot's `/go` tracking.
 - From there it's the normal flow: preview, ✅ ❌ 🔄, publish.
 
 Links sent inside groups are ignored. Only your private chat with the bot counts.

@@ -5,7 +5,7 @@
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { STORE } from "./render.ts";
+import { storeName } from "./render.ts";
 import type { Marketplace } from "./types.ts";
 import { brl } from "./util.ts";
 
@@ -101,7 +101,7 @@ export function videoFilter(spec: VideoSpec, dir: string, font: string): string 
     items.push({ text: `de ${brl(spec.originalPriceCents)}`, y: below + 124, size: 40, color: "0xa9b4c2" });
   }
   items.push({ text: `por ${brl(spec.priceCents)}`, y: below + 172, size: 88, color: "0xff7a33" });
-  items.push({ text: `na ${STORE[spec.marketplace]}`, y: below + 274, size: 38, color: "white" });
+  items.push({ text: `na ${storeName(spec.marketplace)}`, y: below + 274, size: 38, color: "white" });
   items.push({ text: "LINK NA BIO", y: below + 336, size: 48, color: "0x111111", box: "0xff7a33" });
   items.push({ text: "#publi · link de afiliado", y: below + 422, size: 28, color: "0xa9b4c2" });
   return [
@@ -146,5 +146,5 @@ export async function buildVideo(spec: VideoSpec, outPath: string, dir: string, 
 export function socialCaption(spec: VideoSpec, hashtag: string | null): string {
   const price = spec.discountPct > 0 ? `${brl(spec.priceCents)} (-${spec.discountPct}%)` : brl(spec.priceCents);
   const tags = ["#publi", "#achadinhos", "#promoção", "#tech", "#setup", hashtag ? `#${hashtag}` : ""].filter(Boolean).join(" ");
-  return `${spec.hook}\n\n${spec.title} por ${price} na ${STORE[spec.marketplace]} 🔥\n🔗 Link na bio\n\n${tags}`;
+  return `${spec.hook}\n\n${spec.title} por ${price} na ${storeName(spec.marketplace)} 🔥\n🔗 Link na bio\n\n${tags}`;
 }

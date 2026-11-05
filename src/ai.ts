@@ -1,5 +1,5 @@
 import type { Config } from "./config.ts";
-import { STORE } from "./render.ts";
+import { storeName } from "./render.ts";
 import type { Candidate, PostRow } from "./types.ts";
 import { brl, errorMessage, sleep, truncate } from "./util.ts";
 
@@ -79,7 +79,7 @@ export function templateCaption(
 function facts(c: Candidate): string {
   return [
     `Produto: ${c.title}`,
-    `Loja: ${STORE[c.marketplace]}`,
+    `Loja: ${storeName(c.marketplace)}`,
     `Preço (só contexto, não escreva): ${brl(c.priceCents)}`,
     c.discountPct ? `Desconto (só contexto, não escreva): ${c.discountPct}%` : "",
     c.rating ? `Nota dos compradores: ${c.rating}` : "",

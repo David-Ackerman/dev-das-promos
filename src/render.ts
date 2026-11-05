@@ -15,7 +15,43 @@ export interface RenderInput {
   hashtag?: string | null;
 }
 
-export const STORE: Record<Marketplace, string> = { amazon: "Amazon", shopee: "Shopee", mercadolivre: "Mercado Livre" };
+/** How stores are written in posts; any other store is named from its key (its web address). */
+export const STORE: Record<string, string> = {
+  amazon: "Amazon",
+  shopee: "Shopee",
+  mercadolivre: "Mercado Livre",
+  aliexpress: "AliExpress",
+  magalu: "Magalu",
+  kabum: "KaBuM!",
+  americanas: "Americanas",
+  casasbahia: "Casas Bahia",
+  pontofrio: "Ponto",
+  carrefour: "Carrefour",
+  fastshop: "Fast Shop",
+  pichau: "Pichau",
+  terabyteshop: "Terabyte",
+  netshoes: "Netshoes",
+  centauro: "Centauro",
+  shein: "Shein",
+  temu: "Temu",
+  submarino: "Submarino",
+  girafa: "Girafa",
+  samsung: "Samsung",
+  lenovo: "Lenovo",
+  dell: "Dell",
+  nike: "Nike",
+  adidas: "adidas",
+  dafiti: "Dafiti",
+  leroymerlin: "Leroy Merlin",
+  madeiramadeira: "MadeiraMadeira",
+  natura: "Natura",
+  boticario: "O Boticário",
+  loja: "Loja",
+};
+
+export function storeName(marketplace: Marketplace): string {
+  return STORE[marketplace] ?? marketplace.charAt(0).toUpperCase() + marketplace.slice(1);
+}
 
 /** Telegram, HTML parse mode. */
 export function renderTelegram(p: RenderInput): string {
@@ -28,7 +64,7 @@ export function renderTelegram(p: RenderInput): string {
     "",
     `🛍️ <b>${escapeHtml(truncate(p.title, 110))}</b>`,
     `💸 ${price}`,
-    `🏪 ${STORE[p.marketplace]}`,
+    `🏪 ${storeName(p.marketplace)}`,
     "",
     `🛒 ${escapeHtml(p.link)}`,
     p.footer ? `\n<i>${escapeHtml(p.footer)}</i>` : "",
@@ -48,7 +84,7 @@ export function renderWhatsApp(p: RenderInput): string {
     "",
     `🛍️ *${truncate(p.title, 110)}*`,
     `💸 ${price}`,
-    `🏪 ${STORE[p.marketplace]}`,
+    `🏪 ${storeName(p.marketplace)}`,
     "",
     `🛒 ${p.link}`,
     p.footer ? `\n_${p.footer}_` : "",
