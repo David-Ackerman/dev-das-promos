@@ -418,7 +418,15 @@ always integer cents.
 | `GET /wr/:id` | Opens WhatsApp with the weekly Top 10 written |
 | `GET /img/:id.jpg` | A post's own photo (AI scene), streamed from Telegram's file storage (the bot token never leaves the Worker) |
 | `POST /telegram/webhook` | Bot updates: messages, buttons, channel posts (`/id`) and group joins/leaves (`chat_member`, for per-link join stats); checked with `TELEGRAM_WEBHOOK_SECRET` |
-| `GET /robots.txt`, `/health` | Search engines; deploy smoke test |
+| `GET /oferta/:id-:slug` | One deal's own page: photo, price, status (live / maybe changed / ended), 90-day price history chart from `price_snapshots`, Product + Breadcrumb JSON-LD (an `Offer` only while live), join CTA, more deals. Wrong slugs 301 to the current one. Accepts `?src=` like `/` |
+| `GET /sitemap.xml` | Home + deal pages of the last 180 days |
+| `GET /feed.xml` (`/rss.xml`) | RSS of the last 14 days (links carry `?src=rss`) |
+| `GET /llms.txt` | Markdown summary for AI assistants: what the site is, the MCP/API endpoints, the live deals |
+| `POST /mcp` | MCP server (Streamable HTTP, stateless, JSON replies, no login): `search_deals`, `latest_deals`, `get_deal`, `community_links`. Buy links are "web" links with target `ai` (`/stats` → `web ai`). `src/mcp.ts` |
+| `GET /api/ofertas`, `/api/ofertas/:id`, `/openapi.json` | Same search as JSON (`q`, `preco_max`, `loja`, `limite`) for ChatGPT GPT actions and other agents; CORS open |
+| `GET /privacidade` | Privacy notice (needed to publish a GPT with actions) |
+| `GET /<INDEXNOW_KEY>.txt` | IndexNow key file. With `INDEXNOW_KEY` set, every published deal page is pinged to IndexNow (Bing, which feeds ChatGPT search; Yandex…) from `finishPublishing` |
+| `GET /robots.txt`, `/health` | Search engines and AI crawlers (named explicitly, same rules), sitemap link; deploy smoke test |
 | `/banner*.webp`, `/og.jpg` | Static assets from `public/` |
 
 ### Bot

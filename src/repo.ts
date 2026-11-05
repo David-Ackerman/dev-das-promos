@@ -1,6 +1,6 @@
 import type { Db } from "./db.ts";
 import type { SiteDeal } from "./site.ts";
-import type { Candidate, Channel, PostRow } from "./types.ts";
+import type { Candidate, Channel, Marketplace, PostRow } from "./types.ts";
 import { randomCode } from "./util.ts";
 
 const POST_SELECT = `
@@ -314,6 +314,100 @@ export async function siteDeals(db: Db, days: number, limit: number, source = ""
   const out: SiteDeal[] = [];
   for (const r of rows) out.push({ ...r, code: r.code ?? (await getOrCreateLink(db, r.id, "web", source)) });
   return out;
+}
+
+/**
+ * A deal is "live" on the site, in feeds and for AI agents while it hasn't been
+ * flagged as ended and was published in the last 7 days (the home page window).
+ * Older pages stay up for their price history, but never claim the price still holds.
+ */
+const LIVE_SQL = `(p.deal_ended_at IS NULL AND p.published_at > now() - interval '7 days')`;
+
+/** Everything a deal's own page (/oferta/:id), the API and the MCP tools show. */
+export interface DealDetail extends SiteDeal {
+  product_id: number;
+  live: boolean;
+  ended: boolean;
+  /** UTC ISO time of publishing. */
+  published_iso: string;
+}
+
+const DEAL_COLUMNS = `p.id, p.product_id, pr.title, pr.marketplace, COALESCE(p.image_url, pr.image_url) AS image_url,
+            p.price_cents, p.original_price_cents, p.discount_pct, p.caption, p.lowest_seen_cents,
+            ${LIVE_SQL} AS live, (p.deal_ended_at IS NOT NULL) AS ended,
+            to_char(p.published_at AT TIME ZONE 'America/Sao_Paulo', 'DD/MM "às" HH24:MI') AS published,
+            to_char(p.published_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS published_iso`;
+
+/** A published deal of any age (null for drafts, declined or unknown ids), with its "web" link for `source`. */
+export async function dealDetail(db: Db, id: number, source = ""): Promise<DealDetail | undefined> {
+  const rows = await db.query<Omit<DealDetail, "code"> & { code: string | null }>(
+    `SELECT ${DEAL_COLUMNS}, l.code
+     FROM posts p JOIN products pr ON pr.id = p.product_id
+     LEFT JOIN links l ON l.post_id = p.id AND l.channel = 'web' AND l.target = $2
+     WHERE p.id = $1 AND p.status IN ('published', 'partial')`,
+    [id, source],
+  );
+  const r = rows[0];
+  if (!r) return undefined;
+  return { ...r, code: r.code ?? (await getOrCreateLink(db, r.id, "web", source)) };
+}
+
+/**
+ * Published deals matching every word of `words` in the title (accents and case
+ * ignored), live ones first, newest first. Each comes with its "web" link for `source`.
+ */
+export async function findDeals(
+  db: Db,
+  opts: { words?: string[]; maxPriceCents?: number; marketplace?: Marketplace; days: number; limit: number; liveOnly: boolean; source: string },
+): Promise<DealDetail[]> {
+  const params: unknown[] = [opts.days, opts.limit, opts.source];
+  const where = [`p.status IN ('published', 'partial')`, `p.published_at > now() - make_interval(days => $1::int)`];
+  if (opts.liveOnly) where.push(LIVE_SQL);
+  if (opts.maxPriceCents !== undefined) {
+    params.push(opts.maxPriceCents);
+    where.push(`p.price_cents <= $${params.length}`);
+  }
+  if (opts.marketplace) {
+    params.push(opts.marketplace);
+    where.push(`pr.marketplace = $${params.length}`);
+  }
+  for (const word of (opts.words ?? []).slice(0, 8)) {
+    params.push(`%${word.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    where.push(`translate(lower(pr.title), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc') LIKE $${params.length} ESCAPE '\\'`);
+  }
+  const rows = await db.query<Omit<DealDetail, "code"> & { code: string | null }>(
+    `SELECT ${DEAL_COLUMNS}, l.code
+     FROM posts p JOIN products pr ON pr.id = p.product_id
+     LEFT JOIN links l ON l.post_id = p.id AND l.channel = 'web' AND l.target = $3
+     WHERE ${where.join(" AND ")}
+     ORDER BY ${LIVE_SQL} DESC, p.published_at DESC LIMIT $2`,
+    params,
+  );
+  const out: DealDetail[] = [];
+  for (const r of rows) out.push({ ...r, code: r.code ?? (await getOrCreateLink(db, r.id, "web", opts.source)) });
+  return out;
+}
+
+/** Lowest price of each day (Brasília) we saw a product at, oldest first. */
+export async function priceHistory(db: Db, productId: number, days = 90): Promise<{ day: string; price_cents: number }[]> {
+  return db.query<{ day: string; price_cents: number }>(
+    `SELECT to_char((captured_at AT TIME ZONE 'America/Sao_Paulo')::date, 'YYYY-MM-DD') AS day, min(price_cents)::int AS price_cents
+     FROM price_snapshots WHERE product_id = $1 AND captured_at > now() - make_interval(days => $2::int)
+     GROUP BY 1 ORDER BY 1`,
+    [productId, days],
+  );
+}
+
+/** Deal pages for sitemap.xml: published in the last `days`, newest first. */
+export async function sitemapDeals(db: Db, days: number, limit: number): Promise<{ id: number; title: string; lastmod: string }[]> {
+  return db.query<{ id: number; title: string; lastmod: string }>(
+    `SELECT p.id, pr.title,
+            to_char(GREATEST(p.published_at, COALESCE(p.deal_ended_at, p.published_at)) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS lastmod
+     FROM posts p JOIN products pr ON pr.id = p.product_id
+     WHERE p.status IN ('published', 'partial') AND p.published_at > now() - make_interval(days => $1::int)
+     ORDER BY p.published_at DESC LIMIT $2`,
+    [days, limit],
+  );
 }
 
 /** One more visit to the public page today from `source`. */

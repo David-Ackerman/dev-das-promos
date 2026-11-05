@@ -1,0 +1,14 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.David-Ackerman/dev-das-promos",
+  "title": "Dev das Promos",
+  "description": "Brazilian tech & gaming deals (BRL) from Shopee, Amazon and Mercado Livre, price-history checked.",
+  "version": "1.0.0",
+  "websiteUrl": "https://das-promos.YOUR-SUBDOMAIN.workers.dev/",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://das-promos.YOUR-SUBDOMAIN.workers.dev/mcp"
+    }
+  ]
+}

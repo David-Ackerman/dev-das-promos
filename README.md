@@ -155,6 +155,10 @@ X dropped its free API in 2026. It's now pay-per-use, and **posts with a link co
 
 Check current prices in the X developer console.
 
+## Search engines and AI assistants
+
+Every published deal gets its own page (`/oferta/123-nome-do-produto`) with the price history and Product structured data, plus `sitemap.xml`, an RSS feed (`/feed.xml`), `llms.txt`, an MCP server for AI agents (`/mcp`) and a JSON API (`/api/ofertas`, `/openapi.json`). Set `INDEXNOW_KEY` so new deals reach Bing (and ChatGPT search) within minutes. The one-time steps (Search Console, Bing, MCP registry, ChatGPT GPT) are in [docs/AI-DISCOVERY.md](docs/AI-DISCOVERY.md).
+
 ## What we track
 - Every channel and every group gets its **own** `/go/<code>` link, so you can compare Telegram group A, group B, WhatsApp and X.
 - Clicks from link-preview robots (Telegram, WhatsApp and X fetch the link to draw the preview) are flagged and **left out** of `/stats`.

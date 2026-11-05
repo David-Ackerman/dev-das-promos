@@ -2,16 +2,23 @@ import { handleUpdate, type TgUpdate, triggerCollect } from "./bot.ts";
 import type { Config, Env } from "./config.ts";
 import type { Db } from "./db.ts";
 import { goUrl, publishDue } from "./publish.ts";
-import { getPost, postImageFileId, recordClick, recordSiteView, resolveLink, siteDeals } from "./repo.ts";
+import { dealDetail, findDeals, getPost, postImageFileId, priceHistory, recordClick, recordSiteView, resolveLink, siteDeals, sitemapDeals } from "./repo.ts";
 import { sendText, telegramFileUrl } from "./telegram.ts";
 import { whatsappShareUrl, xSharePage, xShareText } from "./share.ts";
-import { ROBOTS_TXT, sitePage, siteSource } from "./site.ts";
+import { dealPage, dealPath, privacyPage, sitePage, siteSource, slugify } from "./site.ts";
+import { isIndexNowKeyPath, llmsTxt, robotsTxt, rssXml, sitemapXml } from "./seo.ts";
+import { handleApi, handleMcp, openApi } from "./mcp.ts";
 import { proposeRoundup, roundupWhatsAppUrl } from "./roundup.ts";
 import { isValidCode, sha256Hex } from "./util.ts";
 
 /**
  * Cloudflare Worker (free plan). Routes:
  *   GET  /, /ofertas        public page with the live deals
+ *   GET  /oferta/:id-:slug  one deal: price history, Product structured data
+ *   GET  /sitemap.xml, /feed.xml, /llms.txt, /robots.txt   for search engines and AI assistants
+ *   POST /mcp               MCP server for AI agents (src/mcp.ts)
+ *   GET  /api/ofertas[/:id], /openapi.json   JSON search for AI agents / GPT actions
+ *   GET  /privacidade       privacy notice
  *   GET  /go/:code          tracked redirect to the affiliate link (logs the click)
  *   GET  /wa/:code          opens WhatsApp with the post text ready to send
  *   GET  /x/:code           page to copy the X post or open it in the X app
@@ -44,7 +51,56 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
       const path = url.pathname.replace(/\/+$/, "") || "/";
 
       if (path === "/health") return new Response("ok");
-      if (path === "/robots.txt") return new Response(ROBOTS_TXT, { headers: { "content-type": "text/plain; charset=utf-8" } });
+      const isRead = request.method === "GET" || request.method === "HEAD";
+      const text = (body: string, type: string, maxAge = 300) =>
+        new Response(request.method === "HEAD" ? null : body, {
+          headers: { "content-type": `${type}; charset=utf-8`, "cache-control": `public, max-age=${maxAge}`, "access-control-allow-origin": "*" },
+        });
+
+      if (path === "/robots.txt" && isRead) return text(robotsTxt(getDeps(env).cfg), "text/plain", 3600);
+      if (path === "/sitemap.xml" && isRead) {
+        const { db, cfg } = getDeps(env);
+        return text(sitemapXml(cfg, await sitemapDeals(db, 180, 5000)), "application/xml", 900);
+      }
+      if ((path === "/feed.xml" || path === "/rss.xml") && isRead) {
+        const { db, cfg } = getDeps(env);
+        return text(rssXml(cfg, await findDeals(db, { days: 14, limit: 40, liveOnly: false, source: "" })), "application/rss+xml", 600);
+      }
+      if ((path === "/llms.txt" || path === "/llms-full.txt") && isRead) {
+        const { db, cfg } = getDeps(env);
+        return text(llmsTxt(cfg, await findDeals(db, { days: 7, limit: 40, liveOnly: true, source: "" })), "text/markdown", 600);
+      }
+      if (path === "/openapi.json" && isRead) return text(JSON.stringify(openApi(getDeps(env).cfg), null, 2), "application/json", 3600);
+      if (path === "/mcp") {
+        const { db, cfg } = getDeps(env);
+        return handleMcp(cfg, db, request);
+      }
+      if (path.startsWith("/api/")) {
+        if (request.method === "OPTIONS") return handleMcp(getDeps(env).cfg, getDeps(env).db, request);
+        if (!isRead) return new Response("Method Not Allowed", { status: 405 });
+        const { db, cfg } = getDeps(env);
+        return handleApi(cfg, db, url, path);
+      }
+      if (path === "/privacidade" && isRead) return text(privacyPage(getDeps(env).cfg), "text/html", 3600);
+      if (isRead && isIndexNowKeyPath(getDeps(env).cfg, path)) return text(getDeps(env).cfg.indexNowKey!, "text/plain", 86400);
+
+      const deal = path.match(/^\/oferta\/(\d{1,9})(?:-([a-z0-9-]*))?$/);
+      if (deal && isRead) {
+        const { db, cfg } = getDeps(env);
+        const source = siteSource(url.searchParams.get("src"), request.headers.get("referer"));
+        const d = await dealDetail(db, Number(deal[1]), source);
+        if (!d) return new Response("Oferta não encontrada", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
+        // One URL per deal: old or partial slugs move to the current one (keeping ?src=).
+        if ((deal[2] ?? "") !== slugify(d.title)) {
+          return new Response(null, { status: 301, headers: { location: `${dealPath(d.id, d.title)}${url.search}` } });
+        }
+        const ua = request.headers.get("user-agent") ?? "";
+        if (request.method === "GET" && ua && !BOT_UA.test(ua)) {
+          ctx.waitUntil(recordSiteView(db, source).catch((e) => console.error("site view log failed", e)));
+        }
+        const [history, more] = await Promise.all([priceHistory(db, d.product_id, 90), siteDeals(db, 7, 7, source)]);
+        return text(dealPage(cfg, d, history, more.filter((m) => m.id !== d.id).slice(0, 6)), "text/html");
+      }
       if ((path === "/" || path === "/ofertas") && (request.method === "GET" || request.method === "HEAD")) {
         const { db, cfg } = getDeps(env);
         const source = siteSource(url.searchParams.get("src"), request.headers.get("referer"));

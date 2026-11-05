@@ -78,7 +78,9 @@ export interface Config {
   /** Previews with at least this discount (and real AI text, no fake discount) are approved automatically. 0 = off. */
   autoApproveMinDiscountPct: number;
   /** Public deals page (GET /). */
-  site: { name: string; telegramUrl?: string; whatsappUrl?: string; xUrl?: string };
+  site: { name: string; telegramUrl?: string; whatsappUrl?: string; xUrl?: string; googleVerification?: string; bingVerification?: string };
+  /** IndexNow key (8-128 letters, digits, "-"): new deal pages are announced to Bing & co. Off when empty. */
+  indexNowKey?: string;
   /** Product photos: AI scenes instead of white backgrounds / text-heavy store photos (src/images.ts). */
   images: ImageConfig;
   /** Your Associates tag: links the admin sends without it get a tagged link (works without the API). */
@@ -225,7 +227,11 @@ export function loadConfig(env: Env): Config {
       telegramUrl: httpsUrl(env.SITE_TELEGRAM_URL),
       whatsappUrl: httpsUrl(env.SITE_WHATSAPP_URL),
       xUrl: httpsUrl(env.SITE_X_URL),
+      // Search Console / Bing Webmaster Tools "HTML tag" verification codes (content="..." only).
+      googleVerification: verificationCode(env.GOOGLE_SITE_VERIFICATION),
+      bingVerification: verificationCode(env.BING_SITE_VERIFICATION),
     },
+    indexNowKey: /^[A-Za-z0-9-]{8,128}$/.test(env.INDEXNOW_KEY?.trim() ?? "") ? env.INDEXNOW_KEY!.trim() : undefined,
     images: {
       model: env.IMAGE_MODEL?.trim() || undefined,
       // Gemini's free tier reads images well; without a Gemini key, the first AI_MODEL entry is tried.
@@ -296,4 +302,10 @@ export function loadConfig(env: Env): Config {
     };
   }
   return config;
+}
+
+/** A site-verification code, or a whole <meta ... content="CODE"> tag pasted by mistake -> just the code. */
+function verificationCode(raw: string | undefined): string | undefined {
+  const value = raw?.trim().match(/content=["']([^"']+)["']/)?.[1] ?? raw?.trim();
+  return value && /^[A-Za-z0-9_-]{8,128}$/.test(value) ? value : undefined;
 }

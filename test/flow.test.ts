@@ -818,7 +818,8 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       const viewsAfter = await todayViews();
       const added = (src: string) => (viewsAfter[src] ?? 0) - (viewsBefore[src] ?? 0);
       assert.deepEqual([added("x"), added("other"), added("")], [1, 1, 0], "one visit each; the robot isn't counted");
-      assert.ok(fromX.includes(encodeURIComponent("https://promo.example.workers.dev/?src=share#oferta-")), "share links point to the site");
+      assert.ok(fromX.includes(encodeURIComponent(`https://promo.example.workers.dev/oferta/${live}-`)), "share links point to the deal's page");
+      assert.ok(fromX.includes(encodeURIComponent("?src=share")), "share links carry ?src=share");
       assert.ok(!/wa\.me\/\?text=[^"]*s\.shopee/.test(fromX), "never the affiliate link");
       assert.match(fromX, /class="sticky"/);
       assert.match(fromX, /Checamos o histórico de preço/);

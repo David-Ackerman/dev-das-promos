@@ -1,12 +1,15 @@
 import type { Config } from "./config.ts";
+import type { DealDetail } from "./repo.ts";
 import { STORE } from "./render.ts";
 import type { Marketplace } from "./types.ts";
 import { brl, escapeHtml, truncate } from "./util.ts";
 
 /**
- * Public deals page (GET / and /ofertas): what was published in the last days,
- * each with its own /go link (channel "web"), so search engines and shared
- * links bring people in and /stats counts them. Server-rendered, no scripts.
+ * Public pages, server-rendered, no scripts:
+ *  - GET / and /ofertas: what was published in the last days, each with its own
+ *    /go link (channel "web") so /stats counts the clicks;
+ *  - GET /oferta/:id-:slug: one deal with its price history and Product
+ *    structured data, the page search engines and AI assistants link to.
  */
 export interface SiteDeal {
   id: number;
@@ -23,7 +26,8 @@ export interface SiteDeal {
 }
 
 /** Where a visit came from: ?src= on bio/share links, allow-listed so junk can't create rows. */
-export const SITE_SOURCES = ["x", "ig", "tt", "yt", "tg", "wa", "share", "google"] as const;
+/** "ai" = links handed out by the MCP server / API to AI assistants; "rss" = the feed. */
+export const SITE_SOURCES = ["x", "ig", "tt", "yt", "tg", "wa", "share", "google", "ai", "rss"] as const;
 
 export function siteSource(param: string | null, referer: string | null): string {
   const src = param?.trim().toLowerCase();
@@ -53,9 +57,42 @@ function attr(text: string): string {
   return escapeHtml(text).replace(/"/g, "&quot;");
 }
 
-/** "Send to a friend" links point to the site (?src=share), never to the affiliate link. */
+/** "nike air max 90 – preto/branco!" -> "nike-air-max-90-preto-branco": ASCII, ≤ 60 chars, whole words. */
+export function slugify(text: string): string {
+  const slug = text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (slug.length <= 60) return slug || "oferta";
+  const cut = slug.slice(0, 61);
+  return cut.slice(0, cut.lastIndexOf("-") > 20 ? cut.lastIndexOf("-") : 60).replace(/-+$/, "");
+}
+
+/** Path of a deal's own page: /oferta/123-teclado-mecanico-redragon. */
+export function dealPath(id: number, title: string): string {
+  return `/oferta/${id}-${slugify(title)}`;
+}
+
+export function dealUrl(cfg: Config, id: number, title: string): string {
+  return `${cfg.publicBaseUrl}${dealPath(id, title)}`;
+}
+
+/** Store photos are absolute; ours (/img/<id>.jpg) already carry PUBLIC_BASE_URL, but be safe. */
+function absolute(cfg: Config, url: string | null): string | undefined {
+  if (!url) return undefined;
+  return url.startsWith("/") ? `${cfg.publicBaseUrl}${url}` : url;
+}
+
+/** JSON for a <script type="application/ld+json">: "<" escaped so a title can't close the tag. */
+function jsonLd(data: unknown): string {
+  return `<script type="application/ld+json">${JSON.stringify(data).replace(/</g, "\\u003c")}</script>`;
+}
+
+/** "Send to a friend" links point to the deal's page (?src=share), never to the affiliate link. */
 function shareLinks(cfg: Config, d: SiteDeal): string {
-  const page = `${cfg.publicBaseUrl}/?src=share#oferta-${d.id}`;
+  const page = `${dealUrl(cfg, d.id, d.title)}?src=share`;
   const text = `Olha essa oferta: ${truncate(d.title, 80)} por ${brl(d.price_cents)}`;
   const wa = `https://wa.me/?text=${encodeURIComponent(`${text} 👉 ${page}`)}`;
   const tg = `https://t.me/share/url?url=${encodeURIComponent(page)}&text=${encodeURIComponent(text)}`;
@@ -64,19 +101,29 @@ function shareLinks(cfg: Config, d: SiteDeal): string {
       <a href="${attr(tg)}" rel="noopener" target="_blank" aria-label="Enviar no Telegram">${ICONS.telegram}</a></p>`;
 }
 
+/** Only when our own 30-day history backs it up; never "menor preço do Brasil". */
+function isLowest(d: SiteDeal): boolean {
+  return d.lowest_seen_cents !== null && d.price_cents <= d.lowest_seen_cents;
+}
+
+function tags(d: SiteDeal): string {
+  return `<div class="tags"><span>${STORE[d.marketplace]}</span>${d.discount_pct > 0 ? `<span class="off">-${d.discount_pct}%</span>` : ""}${isLowest(d) ? `<span class="low">📉 Menor preço em 30 dias</span>` : ""}</div>`;
+}
+
+function priceHtml(d: SiteDeal): string {
+  const old = d.original_price_cents && d.discount_pct > 0 ? `<s>${brl(d.original_price_cents)}</s> ` : "";
+  return `<p class="price">${old}<b>${brl(d.price_cents)}</b></p>`;
+}
+
 function card(cfg: Config, d: SiteDeal): string {
   const href = `${cfg.publicBaseUrl}/go/${d.code}`;
-  const old =
-    d.original_price_cents && d.discount_pct > 0 ? `<s>${brl(d.original_price_cents)}</s> ` : "";
-  // Only when our own 30-day history backs it up; never "menor preço do Brasil".
-  const lowest = d.lowest_seen_cents !== null && d.price_cents <= d.lowest_seen_cents;
   return `<article class="deal" id="oferta-${d.id}">
-  ${d.image_url ? `<img src="${attr(d.image_url)}" alt="" loading="lazy" width="320" height="320">` : `<div class="noimg">🛍️</div>`}
+  ${d.image_url ? `<img src="${attr(d.image_url)}" alt="${attr(truncate(d.title, 100))}" loading="lazy" width="320" height="320">` : `<div class="noimg">🛍️</div>`}
   <div class="body">
-    <div class="tags"><span>${STORE[d.marketplace]}</span>${d.discount_pct > 0 ? `<span class="off">-${d.discount_pct}%</span>` : ""}${lowest ? `<span class="low">📉 Menor preço em 30 dias</span>` : ""}</div>
-    <h2>${escapeHtml(truncate(d.title, 110))}</h2>
+    ${tags(d)}
+    <h2><a href="${attr(dealPath(d.id, d.title))}">${escapeHtml(truncate(d.title, 110))}</a></h2>
     <p class="joke">${escapeHtml(d.caption)}</p>
-    <p class="price">${old}<b>${brl(d.price_cents)}</b></p>
+    ${priceHtml(d)}
     <a class="go" href="${attr(href)}" rel="nofollow sponsored noopener" target="_blank">${ICONS.cart}Ver oferta</a>
     ${shareLinks(cfg, d)}
     <p class="when">Publicado ${escapeHtml(d.published)}</p>
@@ -84,38 +131,279 @@ function card(cfg: Config, d: SiteDeal): string {
 </article>`;
 }
 
-export function sitePage(cfg: Config, deals: SiteDeal[]): string {
-  const name = cfg.site.name;
-  const description = cfg.ai.niche
-    ? `Promoções de ${cfg.ai.niche}, escolhidas a dedo na Shopee, Amazon e Mercado Livre.`
-    : "Promoções escolhidas a dedo na Shopee, Amazon e Mercado Livre.";
-  const join = [
+function joinButtons(cfg: Config): string {
+  return [
     cfg.site.telegramUrl ? `<a class="join tg" href="${attr(cfg.site.telegramUrl)}" rel="noopener">${ICONS.telegram}Grupo no Telegram</a>` : "",
     cfg.site.whatsappUrl ? `<a class="join wa" href="${attr(cfg.site.whatsappUrl)}" rel="noopener">${ICONS.whatsapp}Grupo no WhatsApp</a>` : "",
     cfg.site.xUrl ? `<a class="join x" href="${attr(cfg.site.xUrl)}" rel="noopener">${ICONS.x}Seguir no X</a>` : "",
   ].join("");
-  // Phones: the join buttons stay at the bottom of the screen while scrolling.
-  const sticky = [
+}
+
+/** Phones: the join buttons stay at the bottom of the screen while scrolling. */
+function stickyButtons(cfg: Config): string {
+  return [
     cfg.site.telegramUrl ? `<a class="join tg" href="${attr(cfg.site.telegramUrl)}" rel="noopener">${ICONS.telegram}Entrar no Telegram</a>` : "",
     cfg.site.whatsappUrl ? `<a class="join wa" href="${attr(cfg.site.whatsappUrl)}" rel="noopener">${ICONS.whatsapp}WhatsApp</a>` : "",
   ].join("");
+}
+
+export function siteDescription(cfg: Config): string {
+  return cfg.ai.niche
+    ? `Promoções de ${cfg.ai.niche}, escolhidas a dedo na Shopee, Amazon e Mercado Livre.`
+    : "Promoções escolhidas a dedo na Shopee, Amazon e Mercado Livre.";
+}
+
+interface Head {
+  title: string;
+  description: string;
+  canonical: string;
+  image: string;
+  imageSize?: [number, number];
+  type: "website" | "product";
+  extra?: string;
+}
+
+function page(cfg: Config, h: Head, body: string): string {
+  const sticky = stickyButtons(cfg);
   return `<!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(name)} · Promoções de hoje</title>
-<meta name="description" content="${attr(description)}">
-<link rel="canonical" href="${attr(cfg.publicBaseUrl)}/">
-<meta property="og:title" content="${attr(name)}">
-<meta property="og:description" content="${attr(description)}">
-<meta property="og:type" content="website">
-<meta property="og:image" content="${attr(cfg.publicBaseUrl)}/og.jpg">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="556">
+<title>${escapeHtml(h.title)}</title>
+<meta name="description" content="${attr(h.description)}">
+<link rel="canonical" href="${attr(h.canonical)}">
+<link rel="alternate" type="application/rss+xml" title="${attr(cfg.site.name)}" href="/feed.xml">
+<meta property="og:site_name" content="${attr(cfg.site.name)}">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:title" content="${attr(h.title)}">
+<meta property="og:description" content="${attr(h.description)}">
+<meta property="og:type" content="${h.type === "product" ? "product" : "website"}">
+<meta property="og:url" content="${attr(h.canonical)}">
+<meta property="og:image" content="${attr(h.image)}">
+${h.imageSize ? `<meta property="og:image:width" content="${h.imageSize[0]}">\n<meta property="og:image:height" content="${h.imageSize[1]}">` : ""}
 <meta name="twitter:card" content="summary_large_image">
-<style>
-  :root { color-scheme: light dark; --bg: #f6f7f9; --card: #fff; --fg: #14171a; --muted: #5b6672; --line: #e3e7ec; --accent: #e8590c; --accent-fg: #fff; --ok: #2b8a3e; }
+${cfg.site.googleVerification ? `<meta name="google-site-verification" content="${attr(cfg.site.googleVerification)}">\n` : ""}${cfg.site.bingVerification ? `<meta name="msvalidate.01" content="${attr(cfg.site.bingVerification)}">\n` : ""}${h.extra ?? ""}
+<style>${STYLE}</style>
+</head>
+<body${sticky ? ' class="has-sticky"' : ""}>
+${body}
+<footer>
+  <p>#publi · Os links são de afiliado: podemos ganhar uma comissão quando você compra, sem custo a mais para você.
+  Preços e estoque podem mudar a qualquer momento; confira na loja antes de comprar.</p>
+  <p><a href="/">Ofertas de hoje</a> · <a href="/feed.xml">Feed RSS</a> · <a href="/llms.txt">Para IAs e agentes (MCP)</a> · <a href="/privacidade">Privacidade</a></p>
+</footer>
+${sticky ? `<nav class="sticky" aria-label="Entrar no grupo">${sticky}</nav>` : ""}
+</body>
+</html>`;
+}
+
+export function sitePage(cfg: Config, deals: SiteDeal[]): string {
+  const name = cfg.site.name;
+  const description = siteDescription(cfg);
+  const join = joinButtons(cfg);
+  const home = `${cfg.publicBaseUrl}/`;
+  const sameAs = [cfg.site.xUrl, cfg.site.telegramUrl, cfg.site.whatsappUrl].filter(Boolean);
+  const ld = jsonLd([
+    { "@context": "https://schema.org", "@type": "WebSite", name, url: home, inLanguage: "pt-BR", description },
+    { "@context": "https://schema.org", "@type": "Organization", name, url: home, logo: `${cfg.publicBaseUrl}/og.jpg`, ...(sameAs.length ? { sameAs } : {}) },
+    {
+      "@context": "https://schema.org",
+      "@type": "ItemList",
+      name: `${name}: promoções de hoje`,
+      itemListElement: deals.map((d, i) => ({ "@type": "ListItem", position: i + 1, url: dealUrl(cfg, d.id, d.title), name: d.title })),
+    },
+  ]);
+  return page(
+    cfg,
+    { title: `${name} · Promoções de hoje`, description, canonical: home, image: `${cfg.publicBaseUrl}/og.jpg`, imageSize: [1200, 556], type: "website", extra: ld },
+    `<header>
+  <h1 class="sr-only">${escapeHtml(name)}</h1>
+  <img class="banner" src="/banner.webp" srcset="/banner-1000.webp 1000w, /banner.webp 2000w" sizes="(max-width: 1080px) 100vw, 1048px"
+    width="2000" height="667" alt="${attr(name)}: bug no preço, commit no carrinho. Ofertas de tech, gadgets e setup" fetchpriority="high">
+  <p>${escapeHtml(description)}</p>
+  <p class="trust">✔️ Checamos o histórico de preço antes de postar · oferta esgotada sai daqui · links de afiliado (#publi)</p>
+  ${join ? `<nav class="links">${join}</nav>` : ""}
+</header>
+<main>
+${deals.length ? deals.map((d) => card(cfg, d)).join("\n") : `<p class="empty">Nenhuma promoção ativa agora. Volte daqui a pouco!</p>`}
+</main>`,
+  );
+}
+
+/** "2026-10-27" -> "27/10" */
+function ddmm(day: string): string {
+  return `${day.slice(8, 10)}/${day.slice(5, 7)}`;
+}
+
+/** Step chart of the daily lowest price, as inline SVG (no scripts, readable by crawlers via the text below it). */
+export function priceChart(history: { day: string; price_cents: number }[]): string {
+  if (history.length < 2) return "";
+  const W = 640;
+  const H = 200;
+  const pad = { l: 96, r: 12, t: 14, b: 30 };
+  const prices = history.map((h) => h.price_cents);
+  let lo = Math.min(...prices);
+  let hi = Math.max(...prices);
+  if (hi === lo) {
+    hi += Math.max(100, Math.round(hi * 0.05));
+    lo = Math.max(0, lo - Math.max(100, Math.round(lo * 0.05)));
+  }
+  const t0 = Date.parse(history[0]!.day);
+  const span = Math.max(1, Date.parse(history[history.length - 1]!.day) - t0);
+  const x = (day: string) => pad.l + ((Date.parse(day) - t0) / span) * (W - pad.l - pad.r);
+  const y = (c: number) => pad.t + (1 - (c - lo) / (hi - lo)) * (H - pad.t - pad.b);
+  let d = "";
+  history.forEach((h, i) => {
+    const px = x(h.day).toFixed(1);
+    const py = y(h.price_cents).toFixed(1);
+    d += i === 0 ? `M${px} ${py}` : `H${px}V${py}`;
+  });
+  const last = history[history.length - 1]!;
+  d += `H${(W - pad.r).toFixed(1)}`;
+  const minI = prices.indexOf(Math.min(...prices));
+  const minP = history[minI]!;
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Histórico de preço de ${ddmm(history[0]!.day)} a ${ddmm(last.day)}">
+  <g font-size="16" fill="currentColor" opacity="0.7">
+    <text x="${pad.l - 8}" y="${y(hi) + 4}" text-anchor="end">${brl(hi)}</text>
+    <text x="${pad.l - 8}" y="${y(lo) + 4}" text-anchor="end">${brl(lo)}</text>
+    <text x="${pad.l}" y="${H - 6}">${ddmm(history[0]!.day)}</text>
+    <text x="${W - pad.r}" y="${H - 6}" text-anchor="end">${ddmm(last.day)}</text>
+  </g>
+  <line x1="${pad.l}" x2="${W - pad.r}" y1="${y(lo)}" y2="${y(lo)}" stroke="currentColor" stroke-opacity="0.15"/>
+  <line x1="${pad.l}" x2="${W - pad.r}" y1="${y(hi)}" y2="${y(hi)}" stroke="currentColor" stroke-opacity="0.15"/>
+  <path d="${d}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="${x(minP.day).toFixed(1)}" cy="${y(minP.price_cents).toFixed(1)}" r="5" fill="#1971c2"/>
+</svg>`;
+}
+
+/** Plain-language summary of the history: what people search ("histórico de preço X") and what AI assistants quote. */
+export function historyFacts(d: DealDetail, history: { day: string; price_cents: number }[]): string[] {
+  if (!history.length) return [];
+  const prices = history.map((h) => h.price_cents);
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const minDay = history[prices.indexOf(min)]!.day;
+  const facts = [
+    `Menor preço que registramos nos últimos 90 dias: ${brl(min)} (${ddmm(minDay)}).`,
+    `Maior preço registrado no período: ${brl(max)}.`,
+    `Preço quando publicamos esta oferta: ${brl(d.price_cents)}.`,
+    `Dias com registro de preço: ${history.length}.`,
+  ];
+  if (min === max) facts.splice(1, 1);
+  return facts;
+}
+
+function statusLine(d: DealDetail): string {
+  if (d.ended) return `<p class="status ended">⛔ Oferta encerrada: esgotou ou o preço subiu depois de ${escapeHtml(d.published)}. O histórico abaixo continua valendo pra comparar.</p>`;
+  if (!d.live) return `<p class="status">🕒 Oferta publicada em ${escapeHtml(d.published)}: o preço pode ter mudado. Confira o preço atual na loja.</p>`;
+  return `<p class="status live">✅ Oferta ativa, publicada ${escapeHtml(d.published)}. Preço e estoque podem mudar a qualquer momento.</p>`;
+}
+
+/** A deal's own page: the URL shared, indexed and handed to AI assistants. */
+export function dealPage(
+  cfg: Config,
+  d: DealDetail,
+  history: { day: string; price_cents: number }[],
+  more: SiteDeal[],
+): string {
+  const url = dealUrl(cfg, d.id, d.title);
+  const store = STORE[d.marketplace];
+  const image = absolute(cfg, d.image_url) ?? `${cfg.publicBaseUrl}/og.jpg`;
+  const price = brl(d.price_cents);
+  const title = d.live ? `${truncate(d.title, 70)} por ${price} na ${store}` : `${truncate(d.title, 70)}: histórico de preço`;
+  const facts = historyFacts(d, history);
+  const description = truncate(
+    d.live
+      ? `${d.title} por ${price}${d.discount_pct > 0 ? ` (-${d.discount_pct}%)` : ""} na ${store}. ${facts[0] ?? ""}`
+      : `Histórico de preço de ${d.title} na ${store}. ${facts[0] ?? ""}`,
+    160,
+  );
+  const product: Record<string, unknown> = {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: d.title,
+    image: [image],
+    description: d.caption || d.title,
+    url,
+  };
+  // Price claims only while the deal is live: an old page must not tell Google the price still holds.
+  if (d.live) {
+    product.offers = {
+      "@type": "Offer",
+      url,
+      price: (d.price_cents / 100).toFixed(2),
+      priceCurrency: "BRL",
+      availability: "https://schema.org/InStock",
+      seller: { "@type": "Organization", name: store },
+    };
+  }
+  const ld = jsonLd([
+    product,
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: cfg.site.name, item: `${cfg.publicBaseUrl}/` },
+        { "@type": "ListItem", position: 2, name: truncate(d.title, 80), item: url },
+      ],
+    },
+  ]);
+  const meta = d.live
+    ? `<meta property="product:price:amount" content="${(d.price_cents / 100).toFixed(2)}">\n<meta property="product:price:currency" content="BRL">\n${ld}`
+    : ld;
+  const join = joinButtons(cfg);
+  const chart = priceChart(history);
+  return page(
+    cfg,
+    { title: `${title} · ${cfg.site.name}`, description, canonical: url, image, type: "product", extra: meta },
+    `<div class="wrap">
+<nav class="top"><a href="/">← <b>${escapeHtml(cfg.site.name)}</b></a><a href="/">Todas as ofertas de hoje</a></nav>
+<article class="detail">
+  ${d.image_url ? `<img src="${attr(d.image_url)}" alt="${attr(truncate(d.title, 120))}" width="480" height="480">` : `<div class="noimg">🛍️</div>`}
+  <div>
+    ${tags(d)}
+    <h1>${escapeHtml(d.title)}</h1>
+    ${statusLine(d)}
+    <p class="joke">${escapeHtml(d.caption)}</p>
+    ${priceHtml(d)}
+    <a class="go" href="${attr(`${cfg.publicBaseUrl}/go/${d.code}`)}" rel="nofollow sponsored noopener" target="_blank">${ICONS.cart}${d.live ? `Ver oferta na ${store}` : `Ver preço atual na ${store}`}</a>
+    ${shareLinks(cfg, d)}
+  </div>
+</article>
+<section class="box">
+  <h2>Histórico de preço</h2>
+  ${chart || '<p class="joke">Ainda temos poucos registros de preço deste produto.</p>'}
+  ${facts.length ? `<ul class="facts">${facts.map((f) => `<li>${escapeHtml(f)}</li>`).join("")}</ul>` : ""}
+</section>
+${join ? `<section class="box"><h2>Receba ofertas assim primeiro</h2><p class="joke">A gente checa o histórico de preço antes de postar. Desconto fake não passa.</p><nav class="links">${join}</nav></section>` : ""}
+${more.length ? `<section><h2 style="margin:20px 0 4px">Mais ofertas de hoje</h2><div class="more">${more.map((m) => card(cfg, m)).join("\n")}</div></section>` : ""}
+</div>`,
+  );
+}
+
+/** Simple privacy notice: needed to list the API as a ChatGPT GPT action, and good to have anyway. */
+export function privacyPage(cfg: Config): string {
+  const name = escapeHtml(cfg.site.name);
+  return page(
+    cfg,
+    { title: `Privacidade · ${cfg.site.name}`, description: `Como o ${cfg.site.name} trata dados de quem visita o site.`, canonical: `${cfg.publicBaseUrl}/privacidade`, image: `${cfg.publicBaseUrl}/og.jpg`, type: "website" },
+    `<div class="wrap"><nav class="top"><a href="/">← <b>${name}</b></a></nav>
+<section class="box">
+  <h1 style="margin-top:0">Privacidade</h1>
+  <p>O ${name} é um site de ofertas com links de afiliado. Não pedimos cadastro, não usamos cookies de rastreamento nem scripts de terceiros.</p>
+  <ul>
+    <li><b>Visitas:</b> contamos quantas visitas cada página recebe por dia e de qual origem (ex.: X, Instagram), sem identificar ninguém.</li>
+    <li><b>Cliques em ofertas:</b> ao clicar em “Ver oferta”, registramos data, país aproximado, navegador (user agent), página de origem e um código irreversível derivado do IP (hash), só para contar cliques e filtrar robôs. Depois você vai para a loja, que tem a própria política de privacidade.</li>
+    <li><b>API e assistentes de IA:</b> as buscas feitas pela API ou pelo servidor MCP não são guardadas com dados pessoais; só contamos os cliques nos links que elas devolvem, como acima.</li>
+    <li><b>Grupos:</b> no Telegram contamos entradas e saídas por link de convite usando um código irreversível no lugar do seu ID.</li>
+  </ul>
+  <p>Não vendemos nem compartilhamos esses dados. Dúvidas ou pedidos de remoção: fale com a gente pelo ${cfg.site.xUrl ? `<a href="${attr(cfg.site.xUrl)}">X</a>` : "grupo"}.</p>
+</section></div>`,
+  );
+}
+
+const STYLE = `  :root { color-scheme: light dark; --bg: #f6f7f9; --card: #fff; --fg: #14171a; --muted: #5b6672; --line: #e3e7ec; --accent: #e8590c; --accent-fg: #fff; --ok: #2b8a3e; }
   @media (prefers-color-scheme: dark) { :root { --bg: #0e1013; --card: #171a1f; --fg: #e9edf1; --muted: #98a2ad; --line: #262b33; --accent: #ff7a33; --accent-fg: #111; --ok: #51cf66; } }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
@@ -137,7 +425,8 @@ export function sitePage(cfg: Config, deals: SiteDeal[]): string {
   .deal img, .noimg { width: 100%; aspect-ratio: 1; max-height: 240px; object-fit: contain; background: #fff; }
   .noimg { display: grid; place-items: center; font-size: 48px; background: var(--line); }
   .body { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px 14px; flex: 1; }
-  .tags { display: flex; gap: 6px; font-size: 12px; font-weight: 700; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; font-weight: 700; }
+  .tags span { white-space: nowrap; }
   .tags span { padding: 2px 8px; border-radius: 999px; background: var(--line); }
   .tags .off { background: var(--ok); color: #fff; }
   .tags .low { background: #1971c2; color: #fff; }
@@ -161,33 +450,27 @@ export function sitePage(cfg: Config, deals: SiteDeal[]): string {
   .when { margin: 0; color: var(--muted); font-size: 12px; }
   .empty { grid-column: 1 / -1; color: var(--muted); }
   footer { padding-bottom: 32px; color: var(--muted); font-size: 13px; }
-</style>
-</head>
-<body${sticky ? ' class="has-sticky"' : ""}>
-<header>
-  <h1 class="sr-only">${escapeHtml(name)}</h1>
-  <img class="banner" src="/banner.webp" srcset="/banner-1000.webp 1000w, /banner.webp 2000w" sizes="(max-width: 1080px) 100vw, 1048px"
-    width="2000" height="667" alt="${attr(name)}: bug no preço, commit no carrinho. Ofertas de tech, gadgets e setup" fetchpriority="high">
-  <p>${escapeHtml(description)}</p>
-  <p class="trust">✔️ Checamos o histórico de preço antes de postar · oferta esgotada sai daqui · links de afiliado (#publi)</p>
-  ${join ? `<nav class="links">${join}</nav>` : ""}
-</header>
-<main>
-${deals.length ? deals.map((d) => card(cfg, d)).join("\n") : `<p class="empty">Nenhuma promoção ativa agora. Volte daqui a pouco!</p>`}
-</main>
-<footer>
-  <p>#publi · Os links são de afiliado: podemos ganhar uma comissão quando você compra, sem custo a mais para você.
-  Preços e estoque podem mudar a qualquer momento; confira na loja antes de comprar.</p>
-</footer>
-${sticky ? `<nav class="sticky" aria-label="Entrar no grupo">${sticky}</nav>` : ""}
-</body>
-</html>`;
-}
 
-export const ROBOTS_TXT = `User-agent: *
-Allow: /
-Disallow: /go/
-Disallow: /wa/
-Disallow: /x/
-Disallow: /telegram/
+  a { color: inherit; }
+  h2 a { text-decoration: none; }
+  h2 a:hover { text-decoration: underline; }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0 4px; font-size: 14px; }
+  .top a { color: var(--muted); text-decoration: none; }
+  .top b { font-size: 16px; }
+  .detail { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-top: 8px; }
+  @media (max-width: 720px) { .detail { grid-template-columns: 1fr; } }
+  .detail img, .detail .noimg { width: 100%; aspect-ratio: 1; object-fit: contain; background: #fff; border-radius: 12px; max-height: none; }
+  .detail h1 { margin: 6px 0 8px; font-size: 22px; line-height: 1.25; }
+  .detail .price { font-size: 26px; margin: 10px 0; }
+  .detail .go { font-size: 17px; padding: 12px; }
+  .status { margin: 0 0 10px; padding: 8px 12px; border-radius: 10px; font-size: 14px; background: var(--line); }
+  .status.live { background: color-mix(in srgb, var(--ok) 18%, transparent); }
+  .status.ended { background: color-mix(in srgb, #e03131 18%, transparent); }
+  section.box { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-top: 16px; }
+  section.box h2 { font-size: 18px; margin-bottom: 8px; }
+  .chart { width: 100%; max-width: 680px; height: auto; display: block; }
+  .facts { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
+  .more { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); margin-top: 8px; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px 24px; }
+  footer a { color: var(--muted); }
 `;

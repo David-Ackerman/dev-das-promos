@@ -802,6 +802,11 @@ append-only migrations, affiliate links never rewritten, new Worker settings in
   handles the bot-not-admin error with a clear message.
 
 ### 5. Custom domain + SEO surface: sitemap, deal pages with price history, category pages. **Impact medium (compounding after 90 days), effort M–L**
+
+> **Status (2026-10-27):** shipped deal pages with price history and Product JSON-LD,
+> `sitemap.xml`, `feed.xml`, `llms.txt`, AI-crawler-friendly `robots.txt`, IndexNow
+> pings, and an MCP server + JSON API for AI assistants. Still open: the custom
+> domain and category pages. Owner steps in [AI-DISCOVERY.md](./AI-DISCOVERY.md).
 - **What:**
   - Custom domain as a Worker custom domain; `PUBLIC_BASE_URL` → new domain;
     keep the `workers.dev` host serving `/go/*` (old posts) and 301 the HTML pages

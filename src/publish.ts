@@ -1,4 +1,6 @@
 import type { Config } from "./config.ts";
+import { pingIndexNow } from "./seo.ts";
+import { dealUrl } from "./site.ts";
 import type { Db } from "./db.ts";
 import { pendingKeyboard, queuedKeyboard, renderInput, retryKeyboard, statusHeader, updatePreview, videoKeyboard } from "./preview.ts";
 import { checkPrice } from "./pricecheck.ts";
@@ -332,6 +334,8 @@ async function finishPublishing(cfg: Config, db: Db, postId: number, opts: { che
         ? "partial"
         : "failed";
   await transition(db, postId, "publishing", status);
+  // New deal page: tell Bing & co. now instead of waiting for the next crawl (no-op without INDEXNOW_KEY).
+  if (status !== "failed") await pingIndexNow(cfg, [dealUrl(cfg, post.id, post.title), `${cfg.publicBaseUrl}/`]);
 
   const lines = [
     result.ok.length ? `Enviado: ${result.ok.join(", ")}` : "",
