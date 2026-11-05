@@ -570,3 +570,11 @@ describe("workflow secrets", () => {
     }
   });
 });
+
+describe("titleKeywords", () => {
+  it("keeps what the product is, drops filler, colors and bare numbers", async () => {
+    const { titleKeywords } = await import("../src/util.ts");
+    assert.deepEqual(titleKeywords("Teclado Mecânico Redragon Kumara K552 Preto, com fio - 2 unidades"), ["teclado", "mecanico", "redragon", "kumara", "k552", "fio"]);
+    assert.deepEqual(titleKeywords("SSD 1TB NVMe Kingston NV2", 3), ["ssd", "1tb", "nvme"]);
+  });
+});

@@ -54,6 +54,21 @@ export function hasAnyWord(text: string, words: string[]): boolean {
   });
 }
 
+const FILLER = new Set(
+  "com sem para por pra das dos uma uns umas que mais muito novo nova original kit unidade unidades pecas peca cor cores preto preta branco branca azul cinza rosa verde vermelho tamanho modelo versao promocao oferta frete gratis envio".split(" "),
+);
+
+/**
+ * What a product title is about, for "similar products": accent-free words of 3+
+ * letters, without filler and colors, first ones first (titles start with the product type).
+ */
+export function titleKeywords(title: string, max = 6): string[] {
+  const words = normalizeWords(title)
+    .split(" ")
+    .filter((w) => w.length >= 3 && !FILLER.has(w) && !/^\d+$/.test(w));
+  return [...new Set(words)].slice(0, max);
+}
+
 export function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

@@ -40,7 +40,7 @@ Everything runs on free plans: **GitHub Actions**, **Cloudflare Workers** and **
 
 **Weekly Top 10.** Sundays at 18h (Brasília) the bot sends you the week's most-clicked live deals as one message, with **✅ Enviar nos grupos** and **❌ Descartar**. Each group gets its own tracked links, and there's a 📲 button for WhatsApp. `/resumo` makes one any time.
 
-**Public page.** The Worker's main address (your `PUBLIC_BASE_URL`) shows the live deals of the last 7 days, with your affiliate links tracked as the "web" channel. Set `SITE_NAME`, and `SITE_TELEGRAM_URL` / `SITE_WHATSAPP_URL` (group invite links) to show "join" buttons. Share it in your bio.
+**Public page.** The Worker's main address (your `PUBLIC_BASE_URL`) shows the live deals of the last 7 days, with your affiliate links tracked as the "web" channel. Set `SITE_NAME`, and `SITE_TELEGRAM_URL` / `SITE_WHATSAPP_URL` (group invite links) to show "join" buttons, plus `SITE_X_URL` / `SITE_TIKTOK_URL` for your profiles. Tapping a deal's photo or title opens its own page with the price history and similar products. Share it in your bio.
 
 Each preview also tells you, from our own price history, whether the deal is real: **📉** lowest price we've seen in 30 days, **↔️** same price as before, or **⚠️** it was recently cheaper (with the price). Only you see that line.
 

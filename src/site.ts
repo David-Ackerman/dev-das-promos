@@ -50,6 +50,8 @@ const ICONS = {
   whatsapp:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413Z"/></svg>',
   x: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"/></svg>',
+  tiktok:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg>',
   cart: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>',
 };
 
@@ -115,16 +117,19 @@ function priceHtml(d: SiteDeal): string {
   return `<p class="price">${old}<b>${brl(d.price_cents)}</b></p>`;
 }
 
+/** Photo and title open the deal's own page (details + price history); "Ver oferta" goes to the store. */
 function card(cfg: Config, d: SiteDeal): string {
   const href = `${cfg.publicBaseUrl}/go/${d.code}`;
+  const pagePath = dealPath(d.id, d.title);
   return `<article class="deal" id="oferta-${d.id}">
-  ${d.image_url ? `<img src="${attr(d.image_url)}" alt="${attr(truncate(d.title, 100))}" loading="lazy" width="320" height="320">` : `<div class="noimg">🛍️</div>`}
+  <a class="pic" href="${attr(pagePath)}" aria-label="Detalhes e histórico de preço: ${attr(truncate(d.title, 80))}">${d.image_url ? `<img src="${attr(d.image_url)}" alt="${attr(truncate(d.title, 100))}" loading="lazy" width="320" height="320">` : `<div class="noimg">🛍️</div>`}</a>
   <div class="body">
     ${tags(d)}
-    <h2><a href="${attr(dealPath(d.id, d.title))}">${escapeHtml(truncate(d.title, 110))}</a></h2>
+    <h2><a href="${attr(pagePath)}">${escapeHtml(truncate(d.title, 110))}</a></h2>
     <p class="joke">${escapeHtml(d.caption)}</p>
     ${priceHtml(d)}
     <a class="go" href="${attr(href)}" rel="nofollow sponsored noopener" target="_blank">${ICONS.cart}Ver oferta</a>
+    <a class="info" href="${attr(pagePath)}">📈 Detalhes e histórico de preço</a>
     ${shareLinks(cfg, d)}
     <p class="when">Publicado ${escapeHtml(d.published)}</p>
   </div>
@@ -136,6 +141,7 @@ function joinButtons(cfg: Config): string {
     cfg.site.telegramUrl ? `<a class="join tg" href="${attr(cfg.site.telegramUrl)}" rel="noopener">${ICONS.telegram}Grupo no Telegram</a>` : "",
     cfg.site.whatsappUrl ? `<a class="join wa" href="${attr(cfg.site.whatsappUrl)}" rel="noopener">${ICONS.whatsapp}Grupo no WhatsApp</a>` : "",
     cfg.site.xUrl ? `<a class="join x" href="${attr(cfg.site.xUrl)}" rel="noopener">${ICONS.x}Seguir no X</a>` : "",
+    cfg.site.tiktokUrl ? `<a class="join tt" href="${attr(cfg.site.tiktokUrl)}" rel="noopener">${ICONS.tiktok}Seguir no TikTok</a>` : "",
   ].join("");
 }
 
@@ -203,7 +209,7 @@ export function sitePage(cfg: Config, deals: SiteDeal[]): string {
   const description = siteDescription(cfg);
   const join = joinButtons(cfg);
   const home = `${cfg.publicBaseUrl}/`;
-  const sameAs = [cfg.site.xUrl, cfg.site.telegramUrl, cfg.site.whatsappUrl].filter(Boolean);
+  const sameAs = [cfg.site.xUrl, cfg.site.tiktokUrl, cfg.site.telegramUrl, cfg.site.whatsappUrl].filter(Boolean);
   const ld = jsonLd([
     { "@context": "https://schema.org", "@type": "WebSite", name, url: home, inLanguage: "pt-BR", description },
     { "@context": "https://schema.org", "@type": "Organization", name, url: home, logo: `${cfg.publicBaseUrl}/og.jpg`, ...(sameAs.length ? { sameAs } : {}) },
@@ -305,7 +311,7 @@ export function dealPage(
   cfg: Config,
   d: DealDetail,
   history: { day: string; price_cents: number }[],
-  more: SiteDeal[],
+  more: (SiteDeal & { shared?: number })[],
 ): string {
   const url = dealUrl(cfg, d.id, d.title);
   const store = STORE[d.marketplace];
@@ -377,7 +383,7 @@ export function dealPage(
   ${facts.length ? `<ul class="facts">${facts.map((f) => `<li>${escapeHtml(f)}</li>`).join("")}</ul>` : ""}
 </section>
 ${join ? `<section class="box"><h2>Receba ofertas assim primeiro</h2><p class="joke">A gente checa o histórico de preço antes de postar. Desconto fake não passa.</p><nav class="links">${join}</nav></section>` : ""}
-${more.length ? `<section><h2 style="margin:20px 0 4px">Mais ofertas de hoje</h2><div class="more">${more.map((m) => card(cfg, m)).join("\n")}</div></section>` : ""}
+${more.length ? `<section><h2 style="margin:20px 0 4px">${more.some((m) => (m.shared ?? 0) > 0) ? "Produtos parecidos" : "Mais ofertas de hoje"}</h2><div class="more">${more.map((m) => card(cfg, m)).join("\n")}</div></section>` : ""}
 </div>`,
   );
 }
@@ -419,7 +425,9 @@ const STYLE = `  :root { color-scheme: light dark; --bg: #f6f7f9; --card: #fff; 
   .join svg { width: 18px; height: 18px; flex: none; }
   .join.tg { background: #229ed9; color: #fff; }
   .join.wa { background: #25d366; color: #0b2e17; }
-  .join.x { background: var(--fg); color: var(--bg); }
+  .join.x, .join.tt { background: var(--fg); color: var(--bg); }
+  .pic { display: block; }
+  .info { text-align: center; font-size: 13px; color: var(--muted); }
   main { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); padding-top: 16px; padding-bottom: 24px; }
   .deal { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
   .deal img, .noimg { width: 100%; aspect-ratio: 1; max-height: 240px; object-fit: contain; background: #fff; }

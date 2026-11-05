@@ -830,6 +830,32 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("deal pages list similar products first; cards open the deal page; TikTok button", async () => {
+    const cfg = testConfig({ X_MODE: "off", WHATSAPP_MODE: "off", POSTS_PER_RUN: "5", SITE_TIKTOK_URL: "https://www.tiktok.com/@devdaspromos" });
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
+    try {
+      const titles = { "sim-a": "Zorblex Quantum Teclado Sem Fio", "sim-b": "Zorblex Quantum Mouse Gamer", "sim-c": "Fritadeira Plimbo 4L" };
+      await collect(cfg, Object.entries(titles).map(([id, title]) => offer(id, { title })));
+      for (const id of Object.keys(titles)) await tap(cfg, `a:${(await postFor(id)).id}`);
+      const [a, b, c] = await Promise.all(["sim-a", "sim-b", "sim-c"].map(postFor));
+
+      const handler = createHandler(() => ({ cfg, db }));
+      const home = await (await handler.fetch(new Request("https://w/"), {}, ctx)).text();
+      assert.ok(home.includes('href="https://www.tiktok.com/@devdaspromos"'), "TikTok button");
+      assert.match(home, new RegExp(`class="pic" href="/oferta/${a!.id}-zorblex-quantum-teclado-sem-fio"`), "the photo opens the deal page");
+      assert.match(home, /Detalhes e histórico de preço/);
+
+      const html = await (await handler.fetch(new Request(`https://w/oferta/${a!.id}-zorblex-quantum-teclado-sem-fio`), {}, ctx)).text();
+      assert.match(html, /Produtos parecidos/);
+      const at = (id: number) => html.indexOf(`id="oferta-${id}"`);
+      assert.ok(at(b!.id) > 0, "the similar product is listed");
+      assert.ok(at(c!.id) < 0 || at(b!.id) < at(c!.id), "shared words rank first");
+      assert.ok(at(a!.id) < 0, "never the deal itself");
+    } finally {
+      f.restore();
+    }
+  });
+
   it("builds the weekly Top 10, sends it to every group with their own links, once", async () => {
     const cfg = testConfig({ X_MODE: "off" });
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);

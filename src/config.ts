@@ -78,7 +78,7 @@ export interface Config {
   /** Previews with at least this discount (and real AI text, no fake discount) are approved automatically. 0 = off. */
   autoApproveMinDiscountPct: number;
   /** Public deals page (GET /). */
-  site: { name: string; telegramUrl?: string; whatsappUrl?: string; xUrl?: string; googleVerification?: string; bingVerification?: string };
+  site: { name: string; telegramUrl?: string; whatsappUrl?: string; xUrl?: string; tiktokUrl?: string; googleVerification?: string; bingVerification?: string };
   /** IndexNow key (8-128 letters, digits, "-"): new deal pages are announced to Bing & co. Off when empty. */
   indexNowKey?: string;
   /** Product photos: AI scenes instead of white backgrounds / text-heavy store photos (src/images.ts). */
@@ -227,6 +227,7 @@ export function loadConfig(env: Env): Config {
       telegramUrl: httpsUrl(env.SITE_TELEGRAM_URL),
       whatsappUrl: httpsUrl(env.SITE_WHATSAPP_URL),
       xUrl: httpsUrl(env.SITE_X_URL),
+      tiktokUrl: httpsUrl(env.SITE_TIKTOK_URL),
       // Search Console / Bing Webmaster Tools "HTML tag" verification codes (content="..." only).
       googleVerification: verificationCode(env.GOOGLE_SITE_VERIFICATION),
       bingVerification: verificationCode(env.BING_SITE_VERIFICATION),

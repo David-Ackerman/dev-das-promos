@@ -388,6 +388,36 @@ export async function findDeals(
   return out;
 }
 
+/**
+ * Live deals that look like `deal`, for its page: ranked by how many of `words`
+ * (the title's keywords) their title shares, then same store, then newest.
+ * `shared` counts the shared words; 0 means "just another deal of today".
+ */
+export async function similarDeals(
+  db: Db,
+  deal: { id: number; product_id: number; marketplace: string },
+  words: string[],
+  limit: number,
+  source: string,
+): Promise<(DealDetail & { shared: number })[]> {
+  const params: unknown[] = [deal.id, limit, source, deal.product_id, deal.marketplace];
+  const hits = words.slice(0, 8).map((word) => {
+    params.push(`%${word.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    return `(translate(lower(pr.title), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc') LIKE $${params.length} ESCAPE '\\')::int`;
+  });
+  const rows = await db.query<Omit<DealDetail, "code"> & { code: string | null; shared: number }>(
+    `SELECT ${DEAL_COLUMNS}, l.code, (${hits.join(" + ") || "0"})::int AS shared
+     FROM posts p JOIN products pr ON pr.id = p.product_id
+     LEFT JOIN links l ON l.post_id = p.id AND l.channel = 'web' AND l.target = $3
+     WHERE p.status IN ('published', 'partial') AND ${LIVE_SQL} AND p.id <> $1 AND p.product_id <> $4
+     ORDER BY shared DESC, (pr.marketplace = $5) DESC, p.published_at DESC LIMIT $2`,
+    params,
+  );
+  const out: (DealDetail & { shared: number })[] = [];
+  for (const r of rows) out.push({ ...r, code: r.code ?? (await getOrCreateLink(db, r.id, "web", source)) });
+  return out;
+}
+
 /** Lowest price of each day (Brasília) we saw a product at, oldest first. */
 export async function priceHistory(db: Db, productId: number, days = 90): Promise<{ day: string; price_cents: number }[]> {
   return db.query<{ day: string; price_cents: number }>(

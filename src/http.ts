@@ -2,14 +2,14 @@ import { handleUpdate, type TgUpdate, triggerCollect } from "./bot.ts";
 import type { Config, Env } from "./config.ts";
 import type { Db } from "./db.ts";
 import { goUrl, publishDue } from "./publish.ts";
-import { dealDetail, findDeals, getPost, postImageFileId, priceHistory, recordClick, recordSiteView, resolveLink, siteDeals, sitemapDeals } from "./repo.ts";
+import { dealDetail, findDeals, getPost, postImageFileId, priceHistory, recordClick, recordSiteView, resolveLink, similarDeals, siteDeals, sitemapDeals } from "./repo.ts";
 import { sendText, telegramFileUrl } from "./telegram.ts";
 import { whatsappShareUrl, xSharePage, xShareText } from "./share.ts";
 import { dealPage, dealPath, privacyPage, sitePage, siteSource, slugify } from "./site.ts";
 import { isIndexNowKeyPath, llmsTxt, robotsTxt, rssXml, sitemapXml } from "./seo.ts";
 import { handleApi, handleMcp, openApi } from "./mcp.ts";
 import { proposeRoundup, roundupWhatsAppUrl } from "./roundup.ts";
-import { isValidCode, sha256Hex } from "./util.ts";
+import { isValidCode, sha256Hex, titleKeywords } from "./util.ts";
 
 /**
  * Cloudflare Worker (free plan). Routes:
@@ -98,8 +98,11 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
         if (request.method === "GET" && ua && !BOT_UA.test(ua)) {
           ctx.waitUntil(recordSiteView(db, source).catch((e) => console.error("site view log failed", e)));
         }
-        const [history, more] = await Promise.all([priceHistory(db, d.product_id, 90), siteDeals(db, 7, 7, source)]);
-        return text(dealPage(cfg, d, history, more.filter((m) => m.id !== d.id).slice(0, 6)), "text/html");
+        const [history, similar] = await Promise.all([
+          priceHistory(db, d.product_id, 90),
+          similarDeals(db, d, titleKeywords(d.title), 6, source),
+        ]);
+        return text(dealPage(cfg, d, history, similar), "text/html");
       }
       if ((path === "/" || path === "/ofertas") && (request.method === "GET" || request.method === "HEAD")) {
         const { db, cfg } = getDeps(env);
