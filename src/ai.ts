@@ -1,5 +1,5 @@
 import type { Config } from "./config.ts";
-import { storeName } from "./render.ts";
+import { inStore, storeName } from "./render.ts";
 import type { Candidate, PostRow } from "./types.ts";
 import { brl, errorMessage, sleep, truncate } from "./util.ts";
 
@@ -47,6 +47,27 @@ Responda APENAS com JSON: {"texto": "...", "tweet": "...", "tag": "..."}
 - "tweet": a mesma frase ou uma variação (até 100 caracteres).
 - "tag": a marca ou o nome curto do produto, para virar hashtag (ex.: "Kindle", "JBL", "AirMax"), sem # e sem espaços; "" se não houver uma marca clara.`;
 
+/** Coupons: a call to use the coupon; the system writes code, value and rules below it. */
+const COUPON_PROMPT = `Você escreve a frase de chamada de um post de CUPOM DE DESCONTO num canal/grupo brasileiro de promoções (Telegram e WhatsApp).
+Abaixo da frase o sistema coloca o código do cupom, o desconto, as regras e o passo a passo.
+
+Como a frase deve ser:
+- UMA frase curta (até uns 60 caracteres), no jeito de quem fala com amigo, chamando pra usar o cupom na loja.
+- Pode citar a loja e, se as regras deixarem claro, pra que serve (primeira compra, app, frete).
+- NÃO escreva o código, o valor, a porcentagem, datas, link, @menção ou hashtag (o sistema coloca).
+- NÃO use frases de vendedor: "imperdível", "corre", "aproveite", "não perca". No máximo 1 emoji.
+
+Exemplos: "Cupom fresquinho pra encher o carrinho na KaBuM!" · "Desconto extra na Shopee pra quem compra pelo app" · "Primeira compra na Amazon saindo mais barata"
+
+Responda APENAS com JSON: {"texto": "...", "tweet": "...", "tag": "..."}
+- "texto": a frase (até 70 caracteres). "tweet": a mesma ou uma variação (até 100). "tag": o nome da loja sem espaços (ex.: "KaBuM", "Shopee").`;
+
+const COUPON_TEMPLATES = [
+  (s: string) => `Cupom novo ${inStore(s)} 🎟️`,
+  (s: string) => `Desconto extra ${inStore(s)} pra encher o carrinho`,
+  (s: string) => `Bora economizar ${inStore(s)}?`,
+];
+
 /** Short product name for template lines: "Fone Bluetooth JBL Tune 520BT, Preto" -> "Fone Bluetooth JBL Tune". */
 export function shortProductName(title: string): string {
   const head = title.split(/\s[-–|,(/]|[,(|]/)[0] ?? title;
@@ -65,18 +86,31 @@ const TEMPLATES = [
 
 /** A template line; `avoid` (the current text) is skipped so 🔄 always changes something. */
 export function templateCaption(
-  candidate: Pick<Candidate, "title">,
+  candidate: Pick<Candidate, "title"> & Partial<Pick<Candidate, "marketplace" | "coupon">>,
   seed = Date.now(),
   avoid?: string,
 ): Caption {
   const name = shortProductName(candidate.title);
-  const options = TEMPLATES.map((t) => t(name)).filter((t) => t !== avoid);
+  const options = (candidate.coupon && candidate.marketplace
+    ? COUPON_TEMPLATES.map((t) => t(candidate.coupon!.store ?? storeName(candidate.marketplace!)))
+    : TEMPLATES.map((t) => t(name))
+  ).filter((t) => t !== avoid);
   const line = options[Math.abs(seed) % options.length] as string;
   return { caption: line, short: line, model: "template" };
 }
 
 /** The niche (NICHE) is left out on purpose: texts are about the product, not the audience. */
 function facts(c: Candidate): string {
+  if (c.coupon) {
+    return [
+      `Loja: ${c.coupon.store ?? storeName(c.marketplace)}`,
+      "Tipo: cupom de desconto",
+      c.coupon.code ? "Tem código para digitar no pagamento" : "Cupom de resgatar no link (sem código)",
+      c.coupon.rules.length ? `Regras: ${c.coupon.rules.join("; ")}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
   return [
     `Produto: ${c.title}`,
     `Loja: ${storeName(c.marketplace)}`,
@@ -219,7 +253,7 @@ export async function askModel(
         // Room for reasoning models to think *and* answer; without it some return an empty reply.
         max_tokens: 1500,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: candidate.coupon ? COUPON_PROMPT : SYSTEM_PROMPT },
           { role: "user", content: facts(candidate) },
         ],
       }),
@@ -309,8 +343,12 @@ export async function generateCaption(
 }
 
 /** What the AI needs to know about an existing post (regenerate, healing template texts). */
-export function candidateFromPost(post: Pick<PostRow, "marketplace" | "title" | "product_url" | "price_cents" | "original_price_cents" | "discount_pct">): Candidate {
+export function candidateFromPost(
+  post: Pick<PostRow, "marketplace" | "title" | "product_url" | "price_cents" | "original_price_cents" | "discount_pct"> &
+    Partial<Pick<PostRow, "kind" | "coupon">>,
+): Candidate {
   return {
+    ...(post.kind === "coupon" && post.coupon ? { coupon: post.coupon } : {}),
     marketplace: post.marketplace,
     externalId: "",
     title: post.title,

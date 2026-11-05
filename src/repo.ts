@@ -1,6 +1,6 @@
 import type { Db } from "./db.ts";
 import type { SiteDeal } from "./site.ts";
-import type { Candidate, Channel, Marketplace, PostRow } from "./types.ts";
+import type { Candidate, Channel, Coupon, Marketplace, PostRow } from "./types.ts";
 import { randomCode } from "./util.ts";
 
 const POST_SELECT = `
@@ -8,7 +8,9 @@ const POST_SELECT = `
          p.discount_pct, p.lowest_seen_cents, p.affiliate_url, p.caption, p.caption_short, p.hashtag, p.ai_model,
          p.preview_chat_id, p.preview_message_id::text AS preview_message_id, p.preview_has_photo,
          to_char(p.scheduled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS scheduled_at,
-         p.price_from_admin, pr.marketplace, pr.external_id, pr.title,
+         p.price_from_admin, p.kind, p.coupon,
+         to_char(p.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS valid_until,
+         pr.marketplace, pr.external_id, pr.title,
          COALESCE(p.image_url, pr.image_url) AS image_url, pr.image_url AS store_image_url,
          p.image_source, p.image_note, pr.product_url
   FROM posts p JOIN products pr ON pr.id = p.product_id`;
@@ -116,6 +118,72 @@ export async function createPost(
     ],
   );
   return (await getPost(db, (rows[0] as { id: number }).id)) as PostRow;
+}
+
+/**
+ * A coupon from /cupom: its own "product" row (store + code, no price history)
+ * and a post of kind 'coupon' that goes through the usual approve / publish flow.
+ */
+export async function createCouponPost(
+  db: Db,
+  input: {
+    marketplace: string;
+    title: string;
+    link: string;
+    coupon: Coupon;
+    ref: string;
+    caption: string;
+    captionShort: string;
+    aiModel: string;
+  },
+): Promise<PostRow> {
+  const products = await db.query<{ id: number }>(
+    `INSERT INTO products (marketplace, external_id, title, image_url, product_url)
+     VALUES ($1, $2, $3, NULL, $4)
+     ON CONFLICT (marketplace, external_id) DO UPDATE SET title = EXCLUDED.title, product_url = EXCLUDED.product_url, updated_at = now()
+     RETURNING id`,
+    [input.marketplace, `cupom:${input.coupon.code ?? input.ref}`, input.title, input.link],
+  );
+  const rows = await db.query<{ id: number }>(
+    `INSERT INTO posts (product_id, ref, price_cents, discount_pct, affiliate_url, caption, caption_short, ai_model,
+                        price_from_admin, kind, coupon, valid_until)
+     VALUES ($1, $2, 0, $3, $4, $5, $6, $7, true, 'coupon', $8::text::jsonb, $9::timestamptz) RETURNING id`,
+    [
+      (products[0] as { id: number }).id,
+      input.ref,
+      input.coupon.pctOff ?? 0,
+      input.link,
+      input.caption,
+      input.captionShort,
+      input.aiModel,
+      JSON.stringify(input.coupon),
+      input.coupon.validUntil ?? null,
+    ],
+  );
+  return (await getPost(db, (rows[0] as { id: number }).id)) as PostRow;
+}
+
+/** Published coupons whose validity ran out and that weren't flagged yet. */
+export async function expiredCoupons(db: Db, days = 60): Promise<PostRow[]> {
+  return db.query<PostRow>(
+    `${POST_SELECT} WHERE p.kind = 'coupon' AND p.status IN ('published', 'partial') AND p.deal_ended_at IS NULL
+       AND p.valid_until < now() AND p.published_at > now() - make_interval(days => $1::int)
+     ORDER BY p.valid_until`,
+    [days],
+  );
+}
+
+/** Coupons still valid, for the site: published in the last `days`, newest first, with their "web" link. */
+export async function siteCoupons(db: Db, days: number, limit: number, source = ""): Promise<(PostRow & { code: string })[]> {
+  const rows = await db.query<PostRow>(
+    `${POST_SELECT} WHERE p.kind = 'coupon' AND p.status IN ('published', 'partial') AND p.deal_ended_at IS NULL
+       AND (p.valid_until IS NULL OR p.valid_until > now()) AND p.published_at > now() - make_interval(days => $1::int)
+     ORDER BY p.published_at DESC LIMIT $2`,
+    [days, limit],
+  );
+  const out: (PostRow & { code: string })[] = [];
+  for (const r of rows) out.push({ ...r, code: await getOrCreateLink(db, r.id, "web", source) });
+  return out;
 }
 
 /** A re-checked price: the post shows it from now on, and it joins the price history. */
@@ -270,7 +338,7 @@ export async function listPending(db: Db): Promise<PostRow[]> {
 /** Published deals from the last `days` that haven't been marked as ended yet. */
 export async function recentlyPublished(db: Db, days: number, limit: number): Promise<PostRow[]> {
   return db.query<PostRow>(
-    `${POST_SELECT} WHERE p.status IN ('published', 'partial') AND p.deal_ended_at IS NULL
+    `${POST_SELECT} WHERE p.status IN ('published', 'partial') AND p.deal_ended_at IS NULL AND p.kind = 'deal'
        AND p.published_at > now() - make_interval(days => $1::int)
      ORDER BY p.published_at DESC LIMIT $2`,
     [days, limit],
@@ -306,7 +374,7 @@ export async function siteDeals(db: Db, days: number, limit: number, source = ""
             to_char(p.published_at AT TIME ZONE 'America/Sao_Paulo', 'DD/MM "às" HH24:MI') AS published, l.code
      FROM posts p JOIN products pr ON pr.id = p.product_id
      LEFT JOIN links l ON l.post_id = p.id AND l.channel = 'web' AND l.target = $3
-     WHERE p.status IN ('published', 'partial') AND p.deal_ended_at IS NULL
+     WHERE p.status IN ('published', 'partial') AND p.deal_ended_at IS NULL AND p.kind = 'deal'
        AND p.published_at > now() - make_interval(days => $1::int)
      ORDER BY p.published_at DESC LIMIT $2`,
     [days, limit, source],
@@ -344,7 +412,7 @@ export async function dealDetail(db: Db, id: number, source = ""): Promise<DealD
     `SELECT ${DEAL_COLUMNS}, l.code
      FROM posts p JOIN products pr ON pr.id = p.product_id
      LEFT JOIN links l ON l.post_id = p.id AND l.channel = 'web' AND l.target = $2
-     WHERE p.id = $1 AND p.status IN ('published', 'partial')`,
+     WHERE p.id = $1 AND p.status IN ('published', 'partial') AND p.kind = 'deal'`,
     [id, source],
   );
   const r = rows[0];
@@ -361,7 +429,7 @@ export async function findDeals(
   opts: { words?: string[]; maxPriceCents?: number; marketplace?: Marketplace; days: number; limit: number; liveOnly: boolean; source: string },
 ): Promise<DealDetail[]> {
   const params: unknown[] = [opts.days, opts.limit, opts.source];
-  const where = [`p.status IN ('published', 'partial')`, `p.published_at > now() - make_interval(days => $1::int)`];
+  const where = [`p.status IN ('published', 'partial')`, `p.kind = 'deal'`, `p.published_at > now() - make_interval(days => $1::int)`];
   if (opts.liveOnly) where.push(LIVE_SQL);
   if (opts.maxPriceCents !== undefined) {
     params.push(opts.maxPriceCents);
@@ -409,7 +477,7 @@ export async function similarDeals(
     `SELECT ${DEAL_COLUMNS}, l.code, (${hits.join(" + ") || "0"})::int AS shared
      FROM posts p JOIN products pr ON pr.id = p.product_id
      LEFT JOIN links l ON l.post_id = p.id AND l.channel = 'web' AND l.target = $3
-     WHERE p.status IN ('published', 'partial') AND ${LIVE_SQL} AND p.id <> $1 AND p.product_id <> $4
+     WHERE p.status IN ('published', 'partial') AND p.kind = 'deal' AND ${LIVE_SQL} AND p.id <> $1 AND p.product_id <> $4
      ORDER BY shared DESC, (pr.marketplace = $5) DESC, p.published_at DESC LIMIT $2`,
     params,
   );
@@ -434,7 +502,7 @@ export async function sitemapDeals(db: Db, days: number, limit: number): Promise
     `SELECT p.id, pr.title,
             to_char(GREATEST(p.published_at, COALESCE(p.deal_ended_at, p.published_at)) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS lastmod
      FROM posts p JOIN products pr ON pr.id = p.product_id
-     WHERE p.status IN ('published', 'partial') AND p.published_at > now() - make_interval(days => $1::int)
+     WHERE p.status IN ('published', 'partial') AND p.kind = 'deal' AND p.published_at > now() - make_interval(days => $1::int)
      ORDER BY p.published_at DESC LIMIT $2`,
     [days, limit],
   );
@@ -455,7 +523,7 @@ export async function topDealsForRoundup(db: Db, days: number, limit: number): P
     `SELECT p.id FROM posts p
      LEFT JOIN links l ON l.post_id = p.id
      LEFT JOIN clicks c ON c.code = l.code AND NOT c.is_bot
-     WHERE p.status IN ('published', 'partial') AND p.deal_ended_at IS NULL
+     WHERE p.status IN ('published', 'partial') AND p.deal_ended_at IS NULL AND p.kind = 'deal'
        AND p.published_at > now() - make_interval(days => $1::int)
      GROUP BY p.id, p.discount_pct, p.published_at
      ORDER BY count(c.id) DESC, p.discount_pct DESC, p.published_at DESC

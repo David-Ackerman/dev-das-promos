@@ -1,7 +1,8 @@
 import type { Config } from "./config.ts";
 import type { DealDetail } from "./repo.ts";
-import { storeName } from "./render.ts";
-import type { Marketplace } from "./types.ts";
+import { discountLabel, limitsLine, validityLabel } from "./coupon.ts";
+import { inStore, storeName } from "./render.ts";
+import type { Coupon, Marketplace } from "./types.ts";
 import { brl, escapeHtml, truncate } from "./util.ts";
 
 /**
@@ -204,7 +205,27 @@ ${sticky ? `<nav class="sticky" aria-label="Entrar no grupo">${sticky}</nav>` : 
 </html>`;
 }
 
-export function sitePage(cfg: Config, deals: SiteDeal[]): string {
+/** A live coupon on the home page: code to copy, rules in short, and the tracked link. */
+export interface SiteCoupon {
+  marketplace: string;
+  coupon: Coupon | null;
+  code: string;
+}
+
+function couponCard(cfg: Config, s: SiteCoupon): string {
+  const c = s.coupon;
+  if (!c) return "";
+  const store = c.store ?? storeName(s.marketplace);
+  const details = [limitsLine(c), c.validUntil ? `válido até ${validityLabel(c.validUntil)}` : "", ...c.rules].filter(Boolean).join(" · ");
+  return `<article class="coupon">
+  <p class="ctitle">🎟️ <b>${escapeHtml(discountLabel(c))}</b> ${escapeHtml(inStore(store))}</p>
+  ${c.code ? `<p class="ccode">Código: <code>${escapeHtml(c.code)}</code></p>` : `<p class="ccode">Sem código: resgate no link</p>`}
+  ${details ? `<p class="joke">${escapeHtml(details)}</p>` : ""}
+  <a class="go" href="${attr(`${cfg.publicBaseUrl}/go/${s.code}`)}" rel="nofollow sponsored noopener" target="_blank">${c.code ? "Usar cupom" : "Pegar cupom"} ${escapeHtml(inStore(store))}</a>
+</article>`;
+}
+
+export function sitePage(cfg: Config, deals: SiteDeal[], coupons: SiteCoupon[] = []): string {
   const name = cfg.site.name;
   const description = siteDescription(cfg);
   const join = joinButtons(cfg);
@@ -231,6 +252,7 @@ export function sitePage(cfg: Config, deals: SiteDeal[]): string {
   <p class="trust">✔️ Checamos o histórico de preço antes de postar · oferta esgotada sai daqui · links de afiliado (#publi)</p>
   ${join ? `<nav class="links">${join}</nav>` : ""}
 </header>
+${coupons.length ? `<section class="coupons" aria-label="Cupons ativos"><h2>🎟️ Cupons ativos</h2><div class="clist">${coupons.map((c) => couponCard(cfg, c)).join("\n")}</div></section>` : ""}
 <main>
 ${deals.length ? deals.map((d) => card(cfg, d)).join("\n") : `<p class="empty">Nenhuma promoção ativa agora. Volte daqui a pouco!</p>`}
 </main>`,
@@ -317,12 +339,12 @@ export function dealPage(
   const store = storeName(d.marketplace);
   const image = absolute(cfg, d.image_url) ?? `${cfg.publicBaseUrl}/og.jpg`;
   const price = brl(d.price_cents);
-  const title = d.live ? `${truncate(d.title, 70)} por ${price} na ${store}` : `${truncate(d.title, 70)}: histórico de preço`;
+  const title = d.live ? `${truncate(d.title, 70)} por ${price} ${inStore(store)}` : `${truncate(d.title, 70)}: histórico de preço`;
   const facts = historyFacts(d, history);
   const description = truncate(
     d.live
-      ? `${d.title} por ${price}${d.discount_pct > 0 ? ` (-${d.discount_pct}%)` : ""} na ${store}. ${facts[0] ?? ""}`
-      : `Histórico de preço de ${d.title} na ${store}. ${facts[0] ?? ""}`,
+      ? `${d.title} por ${price}${d.discount_pct > 0 ? ` (-${d.discount_pct}%)` : ""} ${inStore(store)}. ${facts[0] ?? ""}`
+      : `Histórico de preço de ${d.title} ${inStore(store)}. ${facts[0] ?? ""}`,
     160,
   );
   const product: Record<string, unknown> = {
@@ -373,7 +395,7 @@ export function dealPage(
     ${statusLine(d)}
     <p class="joke">${escapeHtml(d.caption)}</p>
     ${priceHtml(d)}
-    <a class="go" href="${attr(`${cfg.publicBaseUrl}/go/${d.code}`)}" rel="nofollow sponsored noopener" target="_blank">${ICONS.cart}${d.live ? `Ver oferta na ${store}` : `Ver preço atual na ${store}`}</a>
+    <a class="go" href="${attr(`${cfg.publicBaseUrl}/go/${d.code}`)}" rel="nofollow sponsored noopener" target="_blank">${ICONS.cart}${d.live ? `Ver oferta ${inStore(store)}` : `Ver preço atual ${inStore(store)}`}</a>
     ${shareLinks(cfg, d)}
   </div>
 </article>
@@ -427,6 +449,12 @@ const STYLE = `  :root { color-scheme: light dark; --bg: #f6f7f9; --card: #fff; 
   .join.wa { background: #25d366; color: #0b2e17; }
   .join.x, .join.tt { background: var(--fg); color: var(--bg); }
   .pic { display: block; }
+  .coupons { max-width: 1080px; margin: 0 auto; padding: 8px 16px 0; }
+  .coupons h2 { font-size: 17px; margin: 0 0 8px; }
+  .clist { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .coupon { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; background: var(--card); border: 2px dashed var(--accent); border-radius: 14px; }
+  .coupon p { margin: 0; }
+  .ccode code { font-size: 16px; font-weight: 700; padding: 2px 8px; border-radius: 6px; background: var(--line); user-select: all; }
   .info { text-align: center; font-size: 13px; color: var(--muted); }
   main { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); padding-top: 16px; padding-bottom: 24px; }
   .deal { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }

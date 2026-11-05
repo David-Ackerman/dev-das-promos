@@ -20,6 +20,7 @@ export function renderInput(cfg: Config, post: PostRow, link: string) {
     link,
     footer: cfg.footer,
     hashtag: post.hashtag,
+    coupon: post.kind === "coupon" ? post.coupon : null,
   };
 }
 
@@ -36,7 +37,7 @@ function priceHistoryNote(post: PostRow): string {
 export function previewHtml(cfg: Config, post: PostRow, header?: string): string {
   const top =
     header ??
-    `📝 <b>Prévia #${post.id}</b> · ${storeName(post.marketplace)}${post.discount_pct ? ` · -${post.discount_pct}%` : ""}` +
+    `📝 <b>Prévia #${post.id}</b> · ${storeName(post.marketplace)}${post.kind === "coupon" ? " · 🎟️ cupom" : post.discount_pct ? ` · -${post.discount_pct}%` : ""}` +
       `${post.ai_model === "template" ? " · texto padrão" : ""}${priceHistoryNote(post)}` +
       `${post.image_note ? `\n${post.image_source === "generated" ? "" : "⚠️ "}${escapeHtml(post.image_note)}` : ""}`;
   const body = renderTelegram(renderInput(cfg, post, `${cfg.publicBaseUrl}/go/•••••••`));
@@ -139,6 +140,7 @@ export function postIdFromOwnTextPrompt(text: string | undefined): number | unde
 
 /** On published previews: a short video for Reels / TikTok, built in GitHub Actions. */
 export function videoKeyboard(post: PostRow): Keyboard {
+  if (post.kind === "coupon") return []; // videos show a product
   return [[{ text: "🎬 Vídeo para Reels/TikTok", callback_data: `v:${post.id}` }]];
 }
 

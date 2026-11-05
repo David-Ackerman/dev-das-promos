@@ -6,6 +6,23 @@
 export type Marketplace = "amazon" | "shopee" | "mercadolivre" | "aliexpress" | (string & {});
 export type Channel = "telegram" | "whatsapp" | "x" | "web";
 
+/** A discount coupon the admin sends with /cupom. Money in cents; every field comes from the admin, never the AI. */
+export interface Coupon {
+  /** What to type at checkout; absent for coupons you "pick up" on the link. */
+  code?: string;
+  pctOff?: number;
+  centsOff?: number;
+  /** Free-text discount when it isn't a plain % or R$ ("frete grátis", "leve 3 pague 2"). */
+  discountText?: string;
+  minCents?: number;
+  maxCents?: number;
+  /** ISO time it stops working (end of the day in Brasília when only a date was given). */
+  validUntil?: string;
+  rules: string[];
+  /** Store name the admin typed ("loja: …"), shown instead of the one from the link. */
+  store?: string;
+}
+
 /** A deal found on a marketplace, before we decide to post it. */
 export interface Candidate {
   marketplace: Marketplace;
@@ -20,6 +37,8 @@ export interface Candidate {
   sales?: number;
   rating?: number;
   commissionRate?: number;
+  /** Set for coupons: the AI writes a call to use the coupon instead of a product line. */
+  coupon?: Coupon;
 }
 
 export interface PostRow {
@@ -45,6 +64,11 @@ export interface PostRow {
   scheduled_at: string | null;
   /** The admin typed the price: the price check leaves it alone. */
   price_from_admin: boolean;
+  /** "deal" (a product) or "coupon" (/cupom: no product price, see `coupon`). */
+  kind: "deal" | "coupon";
+  coupon: Coupon | null;
+  /** ISO time a coupon stops working; null when unknown or for deals. */
+  valid_until: string | null;
   // joined from products
   marketplace: Marketplace;
   external_id: string;

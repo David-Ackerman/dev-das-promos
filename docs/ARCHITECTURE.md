@@ -351,6 +351,9 @@ erDiagram
     timestamptz scheduled_at "queue"
     boolean price_from_admin
     timestamptz deal_ended_at
+    text kind "deal | coupon"
+    jsonb coupon "code, discount, min, cap, rules"
+    timestamptz valid_until "coupon expiry"
   }
   links {
     text code PK "short code in /go"
@@ -441,7 +444,8 @@ always integer cents.
 | `/link nome` | Named invite link in each group; joins through it show in `/stats` (retention after 7 days) |
 | `/id` | Chat id (for setting up groups); also answered in channels (`channel_post`) |
 | 🖼️ / ↩️ | New AI photo for a preview (starts `image.yml`); back to the store photo |
-| Link in the private chat | Preview from an Amazon / Mercado Livre link |
+| Link in the private chat | Preview from a link of any store (Shopee via its API, AliExpress, KaBuM!…); asks for price/name in one reply when the page is blocked |
+| `/cupom` | Coupon post (`src/coupon.ts`): code, discount, rules and step-by-step use, same ✅ / queue flow; expired coupons are never published and get a "CUPOM VENCIDO" banner |
 | ✅ ❌ 🔄 ✏️ | Approve, decline, new AI text, write your own text |
 | ⚡ ↩️ | Publish a queued post now; back to preview |
 | 🔁 | Retry only the channels that failed |

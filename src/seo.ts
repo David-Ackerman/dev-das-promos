@@ -1,6 +1,6 @@
 import type { Config } from "./config.ts";
 import type { DealDetail } from "./repo.ts";
-import { storeName } from "./render.ts";
+import { inStore, storeName } from "./render.ts";
 import { dealUrl, siteDescription } from "./site.ts";
 import { brl, errorMessage, truncate } from "./util.ts";
 
@@ -69,7 +69,7 @@ ${urls.join("\n")}
 /** One line a person or an AI can quote: "Mouse X por R$ 99,90 (antes R$ 149,90, -33%) na Shopee". */
 export function dealLine(d: Pick<DealDetail, "title" | "price_cents" | "original_price_cents" | "discount_pct" | "marketplace">): string {
   const before = d.original_price_cents && d.discount_pct > 0 ? ` (antes ${brl(d.original_price_cents)}, -${d.discount_pct}%)` : "";
-  return `${d.title} por ${brl(d.price_cents)}${before} na ${storeName(d.marketplace)}`;
+  return `${d.title} por ${brl(d.price_cents)}${before} ${inStore(storeName(d.marketplace))}`;
 }
 
 export function rssXml(cfg: Config, deals: DealDetail[]): string {

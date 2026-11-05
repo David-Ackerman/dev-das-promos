@@ -27,6 +27,7 @@ export function comparePrice(oldCents: number, newCents: number): "same" | "lowe
 
 export async function checkPrice(cfg: Config, post: PostRow): Promise<PriceCheck> {
   try {
+    if (post.kind === "coupon") return { verdict: "unknown" }; // no product price; validity is checked instead
     if (post.marketplace === "shopee") {
       if (!cfg.shopee) return { verdict: "unknown", detail: "Shopee keys not set" };
       const item = await fetchShopeeItem(cfg.shopee, post.external_id);

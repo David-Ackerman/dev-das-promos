@@ -14,16 +14,22 @@ import {
 import {
   affiliateLinkFor,
   buildCandidate,
+  fetchProductPage,
+  marketplaceOf,
   parseSubmissions,
   SUBMIT_HELP,
   type Submission,
   shopeeLinkFor,
+  storeKeyFromName,
   submissionFromReply,
 } from "./manual.ts";
 import { approvePost, declinePost, publishNow, retryPost, unschedulePost } from "./publish.ts";
 import { declineRoundup, proposeRoundup, sendRoundup } from "./roundup.ts";
+import { COUPON_HELP, couponTitle, isExpired, parseCoupon } from "./coupon.ts";
+import { storeName } from "./render.ts";
 import { formatSlot } from "./schedule.ts";
 import {
+  createCouponPost,
   createPost,
   dbNow,
   findPostByPreview,
@@ -100,6 +106,7 @@ const HELP = `<b>Comandos</b>
 /link nome — cria um link de convite com nome em cada grupo (ex.: /link ig-bio), para ver no /stats quem entrou por onde
 /stats [dias] — cliques e o que mais funciona (padrão 7 dias)
 /buscar — busca promoções agora
+/cupom — posta um cupom de desconto (mande só /cupom para ver o formato)
 /id — mostra o id deste chat (útil para configurar grupos)
 
 Nas prévias: ✅ aprova (entra na fila e sai no próximo horário livre), ❌ descarta, 🔄 gera outro texto, ✏️ usa o seu texto.
@@ -224,6 +231,7 @@ async function requestVideo(cfg: Config, db: Db, postId: number): Promise<string
   if (!gh) return "Configure GH_DISPATCH_TOKEN e GH_REPO para gerar vídeos.";
   const post = await getPost(db, postId);
   if (!post) return `Não achei o post #${postId}.`;
+  if (post.kind === "coupon") return "Vídeo só para produtos (cupons não têm foto nem preço).";
   const res = await dispatchWorkflow(gh, "video.yml", { post_id: String(postId) });
   return res.ok ? `🎬 Gerando o vídeo do #${postId}… chega aqui em 1–2 minutos.` : `GitHub respondeu HTTP ${res.status}`;
 }
@@ -261,6 +269,56 @@ export async function triggerCollect(cfg: Config): Promise<{ ok: boolean; messag
   return res.ok
     ? { ok: true, message: "🔎 Buscando promoções… as prévias chegam em 1–2 minutos." }
     : { ok: false, message: `Não consegui iniciar a busca: GitHub respondeu HTTP ${res.status}` };
+}
+
+/** "/cupom CODE link 10% …" becomes a coupon preview; same ✅ / queue / publish flow as deals. */
+async function postCoupon(cfg: Config, db: Db, chatId: string, messageId: number, text: string): Promise<void> {
+  const token = cfg.telegram.botToken;
+  const draft = parseCoupon(text);
+  const c = draft.coupon;
+  if (!draft.link || (!c.code && !c.pctOff && !c.centsOff && !c.discountText)) {
+    const missing = !draft.link ? "Faltou o link do cupom." : "Faltou o código ou o desconto.";
+    await sendText(token, chatId, text.trim().toLowerCase() === "/cupom" ? COUPON_HELP : `${missing}
+
+${COUPON_HELP}`);
+    return;
+  }
+  if (isExpired(c.validUntil)) {
+    await sendText(token, chatId, "⌛ Essa validade já passou. Confira a data (ex.: <code>validade 10/11 23:59</code>).");
+    return;
+  }
+  await tg(token, "setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👀" }] }).catch(() => {});
+  // The store: the name the admin typed, else the link's (following shorteners and affiliate redirects).
+  let marketplace = draft.store ? storeKeyFromName(draft.store) : marketplaceOf(draft.link);
+  if (!marketplace) marketplace = marketplaceOf((await fetchProductPage(draft.link)).finalUrl) ?? "loja";
+  if (draft.store) c.store = draft.store;
+  const store = c.store ?? storeName(marketplace);
+  const ref = randomCode(10);
+  const caption = draft.caption
+    ? { caption: truncate(draft.caption, 600), short: truncate(draft.caption, 150), model: "manual", hashtag: undefined, error: undefined }
+    : await generateCaption(
+        cfg.ai,
+        { marketplace, externalId: "", title: couponTitle(c, store), productUrl: draft.link, priceCents: 0, discountPct: 0, coupon: c },
+        undefined,
+        { budgetMs: 15_000 },
+      );
+  const post = await createCouponPost(db, {
+    marketplace,
+    title: couponTitle(c, store),
+    link: draft.link, // the admin's link, byte for byte
+    coupon: c,
+    ref,
+    caption: caption.caption,
+    captionShort: caption.short,
+    aiModel: caption.model,
+  });
+  try {
+    await sendPreview(cfg, db, post);
+  } catch (error) {
+    await transition(db, post.id, "pending", "failed");
+    throw error;
+  }
+  if (caption.error) await aiBusyFallback(cfg, caption.error);
 }
 
 /** A link sent in the admin chat becomes a preview, like the ones the search sends. */
@@ -435,6 +493,9 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
   }
 
   switch (command) {
+    case "/cupom":
+      await postCoupon(cfg, db, chatId, msg.message_id, text);
+      return;
     case "/start":
     case "/ajuda":
     case "/help":

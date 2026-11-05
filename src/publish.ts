@@ -1,4 +1,5 @@
 import type { Config } from "./config.ts";
+import { isExpired } from "./coupon.ts";
 import { pingIndexNow } from "./seo.ts";
 import { dealUrl } from "./site.ts";
 import type { Db } from "./db.ts";
@@ -9,6 +10,7 @@ import { sendWhatsApp } from "./publishers/whatsapp.ts";
 import { renderTelegram, renderWhatsApp, renderX } from "./render.ts";
 import {
   deliveredTargets,
+  expiredCoupons,
   dueQueued,
   getOrCreateLink,
   getPost,
@@ -280,6 +282,11 @@ export async function retryPost(cfg: Config, db: Db, postId: number): Promise<st
  * the better price. Returns the message for the admin when it stopped the post.
  */
 async function holdIfPriceChanged(cfg: Config, db: Db, post: PostRow): Promise<string | undefined> {
+  if (post.kind === "coupon" && isExpired(post.valid_until)) {
+    await transition(db, post.id, "publishing", "expired");
+    await updatePreview(cfg, post, statusHeader(post, "⌛", "Não publicado: o cupom já venceu"), []);
+    return "O cupom venceu: não publiquei.";
+  }
   if (post.price_from_admin) return undefined; // typed by the admin (e.g. a coupon price): trust it
   const check = await checkPrice(cfg, post);
   if (check.verdict === "unknown" && check.detail) console.warn(`price check #${post.id}: ${check.detail}`);
@@ -335,7 +342,7 @@ async function finishPublishing(cfg: Config, db: Db, postId: number, opts: { che
         : "failed";
   await transition(db, postId, "publishing", status);
   // New deal page: tell Bing & co. now instead of waiting for the next crawl (no-op without INDEXNOW_KEY).
-  if (status !== "failed") await pingIndexNow(cfg, [dealUrl(cfg, post.id, post.title), `${cfg.publicBaseUrl}/`]);
+  if (status !== "failed" && post.kind === "deal") await pingIndexNow(cfg, [dealUrl(cfg, post.id, post.title), `${cfg.publicBaseUrl}/`]);
 
   const lines = [
     result.ok.length ? `Enviado: ${result.ok.join(", ")}` : "",
@@ -367,12 +374,16 @@ const WATCH_PER_RUN = 30;
  */
 export async function flagEndedDeals(cfg: Config, db: Db, log: (msg: string) => void = console.log): Promise<number> {
   let ended = 0;
-  for (const post of await recentlyPublished(db, WATCH_DAYS, WATCH_PER_RUN)) {
-    const check = await checkPrice(cfg, post);
+  const deals = await recentlyPublished(db, WATCH_DAYS, WATCH_PER_RUN);
+  for (const post of [...deals, ...(await expiredCoupons(db))]) {
     let banner: string | undefined;
-    if (check.verdict === "gone") banner = "❌ <b>ESGOTOU</b> · essa promoção acabou";
-    else if (check.priceCents && check.priceCents > post.price_cents * 1.05) {
-      banner = `⚠️ <b>O preço subiu</b>: agora ${brl(check.priceCents)}`;
+    if (post.kind === "coupon") banner = "⌛ <b>CUPOM VENCIDO</b> · esse cupom não vale mais";
+    else {
+      const check = await checkPrice(cfg, post);
+      if (check.verdict === "gone") banner = "❌ <b>ESGOTOU</b> · essa promoção acabou";
+      else if (check.priceCents && check.priceCents > post.price_cents * 1.05) {
+        banner = `⚠️ <b>O preço subiu</b>: agora ${brl(check.priceCents)}`;
+      }
     }
     if (!banner || !(await markDealEnded(db, post.id, banner))) continue;
     ended++;

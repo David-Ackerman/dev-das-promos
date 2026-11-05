@@ -112,6 +112,22 @@ Texto do post (optional; without it the AI writes one)
 
 Links sent inside groups are ignored. Only your private chat with the bot counts.
 
+## Coupons
+Send `/cupom` alone and the bot shows the format. One example:
+
+```
+/cupom KABUM10 https://your-affiliate-link 10%
+mínimo 200
+máximo 50
+validade 10/11 23:59
+só no app, primeira compra
+```
+
+- The first line holds the code, the link and the discount (`10%`, `R$20`) in any order. Coupons you "pick up" on the link have no code: just leave it out.
+- The other lines are optional: `mínimo`, `máximo`, `validade` (`10/11`, `hoje`, `amanhã 23h`), `desconto: frete grátis`, `loja: Nome`, `texto: your own line`. Any other line becomes a rule.
+- The post shows the code (tap to copy on Telegram), the limits, the validity and **step-by-step instructions for that store** (where to paste the code on Shopee, Amazon, Mercado Livre, AliExpress, or a generic checkout). The AI only writes the call line on top; every number comes from what you typed.
+- Same flow as deals: preview, ✅ queue, publish everywhere. A coupon past its validity is never published, and the group messages get a "⌛ CUPOM VENCIDO" banner when it runs out. Live coupons also show at the top of the site.
+
 ## Telegram: channel or group?
 For posting deals, a **channel** works better than a group: only you post, so offers aren't buried under chat or spam; there's no member limit; members can't see or DM each other; and every post shows how many people saw it. Want comments too? Link a **discussion group** to the channel (channel settings → Discussion) and people can reply under each post.
 
@@ -203,6 +219,7 @@ src/
   providers/        amazon.ts, shopee.ts
   publishers/       whatsapp.ts, x.ts
   manual.ts         links you send to the bot -> product -> preview       (Worker)
+  coupon.ts         /cupom: parse, how-to-use steps, validity             (Worker)
   schedule.ts       publishing queue timing; pricecheck.ts re-reads prices
   site.ts           public deals page; roundup.ts weekly Top 10           (Worker)
   ai.ts render.ts preview.ts share.ts repo.ts telegram.ts config.ts

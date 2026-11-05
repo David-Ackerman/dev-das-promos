@@ -2,7 +2,7 @@ import { handleUpdate, type TgUpdate, triggerCollect } from "./bot.ts";
 import type { Config, Env } from "./config.ts";
 import type { Db } from "./db.ts";
 import { goUrl, publishDue } from "./publish.ts";
-import { dealDetail, findDeals, getPost, postImageFileId, priceHistory, recordClick, recordSiteView, resolveLink, similarDeals, siteDeals, sitemapDeals } from "./repo.ts";
+import { dealDetail, findDeals, getPost, postImageFileId, priceHistory, recordClick, recordSiteView, resolveLink, similarDeals, siteCoupons, siteDeals, sitemapDeals } from "./repo.ts";
 import { sendText, telegramFileUrl } from "./telegram.ts";
 import { whatsappShareUrl, xSharePage, xShareText } from "./share.ts";
 import { dealPage, dealPath, privacyPage, sitePage, siteSource, slugify } from "./site.ts";
@@ -111,7 +111,8 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
         if (request.method === "GET" && ua && !BOT_UA.test(ua)) {
           ctx.waitUntil(recordSiteView(db, source).catch((e) => console.error("site view log failed", e)));
         }
-        return new Response(sitePage(cfg, await siteDeals(db, 7, 60, source)), {
+        const [deals, coupons] = await Promise.all([siteDeals(db, 7, 60, source), siteCoupons(db, 30, 12, source)]);
+        return new Response(sitePage(cfg, deals, coupons), {
           headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" },
         });
       }

@@ -45,6 +45,10 @@ up to date when you add a route, cron, workflow, table or provider).
   and is served at `/img/<id>.jpg`; `posts.image_url` points there and
   `POST_SELECT` returns it as `image_url` (else the store photo). The image
   model must keep the product identical and add no text (`src/images.ts`).
+- Coupons (`/cupom`, `src/coupon.ts`) are posts with `kind = 'coupon'`,
+  `price_cents = 0` and their details in `posts.coupon` (jsonb). Product-only
+  queries (site cards, deal pages, sitemap, roundup, price re-checks) must
+  filter `p.kind = 'deal'`. Coupon numbers come from the admin, never the AI.
 - Approve must stay idempotent: it wins `transition(db, id, "pending", ...)`
   once (to `publishing`, or to `queued` when the queue is on); a queued post is
   published only through `transition(db, id, "queued", "publishing")`. Retry

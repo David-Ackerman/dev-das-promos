@@ -8,6 +8,7 @@ import { healTemplateCaptions, runCollect } from "../src/collect.ts";
 import { createNodeDb } from "../src/db-node.ts";
 import { createHandler } from "../src/http.ts";
 import { migrate } from "../src/migrate.ts";
+import { flagEndedDeals } from "../src/publish.ts";
 import type { Candidate } from "../src/types.ts";
 import { mockFetch, telegramRoute, testConfig } from "./helpers.ts";
 
@@ -633,6 +634,74 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       const kept = (await postByLink(short))!;
       assert.equal(kept.title, "Fone Lenovo");
       assert.equal(f.to("affiliate.shopee").filter((c) => c.body.query.includes("generateShortLink")).length, 1, "no new link generated");
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("/cupom: coupon preview, publish with how-to-use, site strip, expiry", async () => {
+    const cfg = testConfig({ X_MODE: "off", WHATSAPP_MODE: "off" });
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai]]);
+    const code = `MELI${suffix}`.toUpperCase();
+    const link = `https://meli.la/cupom${suffix}`;
+    const couponPost = async (url: string) =>
+      (await db.query<{ id: number; status: string; kind: string; price_cents: number; coupon: { code?: string; minCents?: number }; caption: string }>(
+        `SELECT id, status, kind, price_cents, coupon, caption FROM posts WHERE affiliate_url = $1 ORDER BY id DESC LIMIT 1`,
+        [url],
+      ))[0];
+    try {
+      await say(cfg, "/cupom");
+      assert.match(f.to("sendMessage").at(-1)!.body.text, /Postar um cupom/);
+      await say(cfg, "/cupom https://meli.la/x");
+      assert.match(f.to("sendMessage").at(-1)!.body.text, /Faltou o código ou o desconto/);
+      await say(cfg, `/cupom ${code} ${link} 15%\nvalidade 01/01/2020`);
+      assert.match(f.to("sendMessage").at(-1)!.body.text, /validade já passou/);
+
+      await say(cfg, `/cupom ${code} ${link} 15%\nmínimo 100\nvalidade 31/12/2099 23:59\nSó no app`);
+      const post = (await couponPost(link))!;
+      assert.equal(post.kind, "coupon");
+      assert.equal(post.price_cents, 0);
+      assert.equal(post.coupon.code, code);
+      assert.equal(post.coupon.minCents, 10000);
+      const stored = await db.query<{ t: string }>(`SELECT jsonb_typeof(coupon) AS t FROM posts WHERE id = $1`, [post.id]);
+      assert.equal(stored[0]!.t, "object", "stored as a JSON object, not a JSON string");
+      assert.equal(post.caption, "Texto da IA");
+      const preview = f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body.text as string;
+      assert.match(preview, /Prévia #\d+<\/b> · Mercado Livre · 🎟️ cupom/);
+      assert.match(preview, new RegExp(`🔑 Código: <code>${code}</code>`));
+      assert.match(preview, /Como usar/);
+      assert.equal(f.to("chat/completions").at(-1)!.body.messages[0].content.includes("CUPOM DE DESCONTO"), true, "coupon prompt");
+
+      await tap(cfg, `a:${post.id}`);
+      assert.equal((await couponPost(link))!.status, "published");
+      const group = f.to("sendMessage").filter((c) => c.body.chat_id === "-1001").at(-1)!.body.text as string;
+      assert.match(group, /🎟️ <b>Cupom Mercado Livre: 15% OFF<\/b>/);
+      assert.match(group, /No resumo da compra, toque em "Inserir código de cupom" e cole <code>/);
+      assert.match(group, /Compras a partir de R\$ 100,00/);
+      assert.match(group, /👉 https:\/\/promo\.example\.workers\.dev\/go\//);
+      assert.doesNotMatch(group, /meli\.la/, "the store link only behind /go");
+
+      const handler = createHandler(() => ({ cfg, db }));
+      const home = await (await handler.fetch(new Request("https://w/"), {}, ctx)).text();
+      assert.match(home, /Cupons ativos/);
+      assert.ok(home.includes(`<code>${code}</code>`));
+      assert.ok(!home.includes(`id="oferta-${post.id}"`), "not a deal card");
+      assert.equal((await handler.fetch(new Request(`https://w/oferta/${post.id}`), {}, ctx)).status, 404, "no product page");
+
+      // It expires: the group messages get a banner, the site drops it.
+      await db.query(`UPDATE posts SET valid_until = now() - interval '1 hour' WHERE id = $1`, [post.id]);
+      await flagEndedDeals(cfg, db, () => {});
+      const edits = f.to("editMessageText").filter((c) => c.body.chat_id === "-1001");
+      assert.match(edits.at(-1)!.body.text, /CUPOM VENCIDO/);
+      assert.ok(!(await (await handler.fetch(new Request("https://w/"), {}, ctx)).text()).includes(`<code>${code}</code>`));
+
+      // Approved after its validity: never published.
+      const late = `${link}-late`;
+      await say(cfg, `/cupom ${code}2 ${late} R$ 20 off\nvalidade 31/12/2099`);
+      const pending = (await couponPost(late))!;
+      await db.query(`UPDATE posts SET valid_until = now() - interval '1 minute' WHERE id = $1`, [pending.id]);
+      await tap(cfg, `a:${pending.id}`);
+      assert.equal((await couponPost(late))!.status, "expired");
     } finally {
       f.restore();
     }

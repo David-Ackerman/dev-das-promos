@@ -2,7 +2,7 @@ import type { Config } from "./config.ts";
 import { fetchShopeeItem, shopeeAffiliateLink } from "./providers/shopee.ts";
 import { storeName } from "./render.ts";
 import type { Candidate, Marketplace } from "./types.ts";
-import { discountPct, errorMessage, toCents } from "./util.ts";
+import { discountPct, errorMessage, parsePriceToken, toCents } from "./util.ts";
 
 type ShopeeConfig = NonNullable<Config["shopee"]>;
 
@@ -30,13 +30,7 @@ export interface Submission {
 
 const URL_RE = /https?:\/\/[^\s<>"]+/i;
 
-/** "129,90", "R$129,90", "1.299", "1.299,90", "129.90" -> cents; anything else -> undefined. */
-export function parsePriceToken(raw: string): number | undefined {
-  const token = raw.replace(/^R\$/i, "");
-  if (/^\d{1,3}(\.\d{3})+$/.test(token)) return toCents(token.replace(/\./g, ""));
-  if (/^\d{1,3}(\.\d{3})*,\d{1,2}$/.test(token) || /^\d+([.,]\d{1,2})?$/.test(token)) return toCents(token);
-  return undefined;
-}
+export { parsePriceToken };
 
 export function parseSubmission(text: string): Submission | undefined {
   const lines = text.split("\n");
@@ -84,6 +78,12 @@ export function storeKeyFromHost(host: string): Marketplace | undefined {
   while (labels.length > 1 && DOMAIN_ENDINGS.has(labels[labels.length - 1] as string)) labels.pop();
   const key = (labels[labels.length - 1] ?? "").replace(/[^a-z0-9]/g, "");
   return key ? (STORE_ALIASES[key] ?? key) : undefined;
+}
+
+/** A store name the admin typed ("KaBuM!", "Magazine Luiza") -> its key ("kabum", "magalu"). */
+export function storeKeyFromName(name: string): Marketplace {
+  const key = name.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return STORE_ALIASES[key] ?? (key || "loja");
 }
 
 /**
@@ -390,7 +390,9 @@ Ex.: <code>https://amzn.to/abc 129,90 199,90</code>
 Até 5 links de uma vez, um por linha. Aceito links de qualquer loja: Amazon, Mercado Livre, Shopee,
 AliExpress, KaBuM!, Magalu… Normalmente eu leio nome, foto e preço sozinho; se a loja bloquear a
 leitura, eu pergunto e você responde com o preço e o nome.
-Links da Amazon sem a sua tag e links de produto da Shopee sem rastreio de afiliado ganham o seu link de afiliado automaticamente.`;
+Links da Amazon sem a sua tag e links de produto da Shopee sem rastreio de afiliado ganham o seu link de afiliado automaticamente.
+
+Para postar um cupom de desconto: <code>/cupom</code> (eu explico o formato).`;
 
 export type BuildResult =
   | { ok: true; candidate: Candidate; caption?: string; via?: "shopee-api" }

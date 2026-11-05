@@ -36,6 +36,14 @@ export function toCents(raw: string | number | undefined | null): number | undef
   return Number.isFinite(value) ? Math.round(value * 100) : undefined;
 }
 
+/** "129,90", "R$129,90", "1.299", "1.299,90", "129.90" -> cents; anything else -> undefined. */
+export function parsePriceToken(raw: string): number | undefined {
+  const token = raw.replace(/^R\$/i, "");
+  if (/^\d{1,3}(\.\d{3})+$/.test(token)) return toCents(token.replace(/\./g, ""));
+  if (/^\d{1,3}(\.\d{3})*,\d{1,2}$/.test(token) || /^\d+([.,]\d{1,2})?$/.test(token)) return toCents(token);
+  return undefined;
+}
+
 export function discountPct(priceCents: number, originalCents?: number): number {
   if (!originalCents || originalCents <= priceCents) return 0;
   return Math.round(((originalCents - priceCents) / originalCents) * 100);
