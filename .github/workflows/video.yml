@@ -39,6 +39,7 @@ jobs:
         env:
           VARS_JSON: ${{ toJSON(vars) }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          ALIEXPRESS_APP_SECRET: ${{ secrets.ALIEXPRESS_APP_SECRET }}
           AMAZON_CLIENT_ID: ${{ secrets.AMAZON_CLIENT_ID }}
           AMAZON_CLIENT_SECRET: ${{ secrets.AMAZON_CLIENT_SECRET }}
           CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}

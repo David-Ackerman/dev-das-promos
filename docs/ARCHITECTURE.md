@@ -88,6 +88,7 @@ publishing queue), and Neon Postgres is the single source of truth both share.
 | | `ci.yml` | Typecheck + tests on pull requests (and inside `deploy.yml`) | `test/` |
 | **Neon** | Postgres | Products, price history, posts, links, clicks, deliveries, roundups, X spend | `migrations/`, all SQL in `src/repo.ts` |
 | **Shopee** | Affiliate Open API (GraphQL) | Offer search, affiliate short links (post ref as sub-id), price check by item | `src/providers/shopee.ts` |
+| **AliExpress** (optional) | Affiliate API (`api-sg.aliexpress.com/sync`, MD5-signed) | Name, photo, BRL price and commission for AliExpress links the admin sends, and their price check | `src/providers/aliexpress.ts` |
 | **Amazon** | Creators API · product pages | Search (needs an eligible account); pages read for links the admin sends and price checks | `src/providers/amazon.ts`, `src/manual.ts` |
 | **Mercado Livre** | Product / showcase pages | `meli.la` affiliate links open the showcase; the featured card gives name, photo, price | `src/manual.ts` |
 | **Groq · Gemini · OpenRouter** | Chat completions | One-joke captions + brand hashtag; tried in order, each with its own free quota | `src/ai.ts` |

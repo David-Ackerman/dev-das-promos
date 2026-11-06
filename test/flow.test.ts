@@ -707,6 +707,37 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("AliExpress with API keys: price in reais from the Affiliate API, no question", async () => {
+    const cfg = testConfig({ X_MODE: "off", WHATSAPP_MODE: "off", ALIEXPRESS_APP_KEY: "ak", ALIEXPRESS_APP_SECRET: "as", ALIEXPRESS_TRACKING_ID: "devdaspromos" });
+    const id = `1005${String(Date.now()).slice(-9)}`;
+    const link = `https://pt.aliexpress.com/item/${id}.html?aff_fcid=x${suffix}`;
+    const f = mockFetch([
+      ["api-sg.aliexpress.com", () => ({
+        aliexpress_affiliate_productdetail_get_response: { resp_result: { resp_code: 200, resp_msg: "ok", result: { current_record_count: 1, products: { product: [{ product_id: Number(id), product_title: "Memória DDR4 8GB 3200MHz", product_main_image_url: "https://ae-pic-a1.aliexpress-media.com/kf/m.jpg", target_sale_price: "89.90", target_original_price: "159.90", target_sale_price_currency: "BRL", commission_rate: "7.0%" }] } } } },
+      })],
+      ["aliexpress.com", () => new Response('<meta property="og:title" content="Kllisre Memória - AliExpress 7" />', { status: 200 })],
+      ["api.telegram.org", telegramRoute()],
+      ["chat/completions", ai],
+    ]);
+    try {
+      await say(cfg, `Acabei de encontrar isso no AliExpress: ${link}`);
+      const post = (await postByLink(link))!;
+      assert.ok(post, "a preview, no question");
+      assert.equal(post.marketplace, "aliexpress");
+      assert.equal(post.external_id, id);
+      assert.equal(post.title, "Memória DDR4 8GB 3200MHz", "the API's name wins over the page's");
+      assert.deepEqual([post.price_cents, post.original_price_cents], [8990, 15990]);
+      const call = f.to("api-sg.aliexpress.com")[0]!;
+      const q = new URL(call.url).searchParams;
+      assert.equal(q.get("method"), "aliexpress.affiliate.productdetail.get");
+      assert.match(q.get("sign")!, /^[0-9A-F]{32}$/);
+      assert.equal(String(call.body), new URLSearchParams({ product_ids: id, target_currency: "BRL", target_language: "PT", country: "BR", tracking_id: "devdaspromos" }).toString());
+      assert.match(f.to("sendPhoto").filter((c) => c.body.chat_id === "111").at(-1)!.body.caption, /AliExpress · -44%/);
+    } finally {
+      f.restore();
+    }
+  });
+
   it("any store: reads the page's product data, or asks once and takes the reply", async () => {
     const cfg = testConfig({ X_MODE: "off", WHATSAPP_MODE: "off" });
     const kabum = `https://www.kabum.com.br/produto/${suffix}/ssd-kingston-nv2-1tb`;

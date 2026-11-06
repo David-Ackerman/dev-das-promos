@@ -1,10 +1,12 @@
 import type { Config } from "./config.ts";
+import { fetchAliExpressItem } from "./providers/aliexpress.ts";
 import { fetchShopeeItem, shopeeAffiliateLink } from "./providers/shopee.ts";
 import { storeName } from "./render.ts";
 import type { Candidate, Marketplace } from "./types.ts";
 import { discountPct, errorMessage, parsePriceToken, toCents } from "./util.ts";
 
 type ShopeeConfig = NonNullable<Config["shopee"]>;
+type AliConfig = NonNullable<Config["aliexpress"]>;
 
 /**
  * Posts from a link the admin sends to the bot: any store (Amazon, Mercado
@@ -403,7 +405,7 @@ Links da Amazon sem a sua tag e links de produto da Shopee sem rastreio de afili
 Para postar um cupom de desconto: <code>/cupom</code> (eu explico o formato).`;
 
 export type BuildResult =
-  | { ok: true; candidate: Candidate; caption?: string; via?: "shopee-api" }
+  | { ok: true; candidate: Candidate; caption?: string; via?: "shopee-api" | "aliexpress-api" }
   /** `ask`: the page couldn't be read; ask the admin for what's missing in one reply. */
   | { ok: false; reason: string; ask?: boolean };
 
@@ -460,15 +462,33 @@ export function isPlainShopeeProduct(url: string): boolean {
 }
 
 /** Turns a submission into a Candidate, preferring what the admin typed over what the page or the API says. */
-export async function buildCandidate(sub: Submission, opts: { shopee?: ShopeeConfig } = {}): Promise<BuildResult> {
+export async function buildCandidate(
+  sub: Submission,
+  opts: { shopee?: ShopeeConfig; aliexpress?: AliConfig } = {},
+): Promise<BuildResult> {
   const initial = marketplaceOf(sub.link);
   const { finalUrl, page, error } = await fetchProductPage(sub.link);
   const marketplace = marketplaceOf(finalUrl) ?? initial ?? (error ? "loja" : undefined);
   if (!marketplace) return { ok: false, reason: "Não reconheci esse link. Mande o link do produto (ou o seu link de afiliado)." };
 
-  // Shopee pages can't be read, but the affiliate API knows the item: name, photo, price, commission.
-  const shopeeId = marketplace === "shopee" ? (externalIdFrom("shopee", finalUrl) ?? externalIdFrom("shopee", sub.link)) : undefined;
-  const api = shopeeId && opts.shopee ? await fetchShopeeItem(opts.shopee, shopeeId).catch(() => null) : undefined;
+  // Shopee pages can't be read and AliExpress pages carry no price, but each
+  // affiliate API knows the item: name, photo, price, commission.
+  const apiId =
+    marketplace === "shopee" || marketplace === "aliexpress"
+      ? (externalIdFrom(marketplace, finalUrl) ?? externalIdFrom(marketplace, sub.link))
+      : undefined;
+  const lookup =
+    apiId && marketplace === "shopee" && opts.shopee
+      ? fetchShopeeItem(opts.shopee, apiId)
+      : apiId && marketplace === "aliexpress" && opts.aliexpress
+        ? fetchAliExpressItem(opts.aliexpress, apiId)
+        : undefined;
+  const api = lookup
+    ? await lookup.catch((e: unknown) => {
+        console.warn(`${marketplace} API for ${apiId}: ${errorMessage(e)}`);
+        return null;
+      })
+    : undefined;
 
   // When the page can't be read, the first line under the link is the product name.
   let caption = sub.caption;
@@ -489,7 +509,7 @@ export async function buildCandidate(sub: Submission, opts: { shopee?: ShopeeCon
     candidate: {
       marketplace,
       externalId:
-        shopeeId ??
+        apiId ??
         externalIdFrom(marketplace, finalUrl) ??
         page.externalId ??
         externalIdFrom(marketplace, sub.link) ??
@@ -503,6 +523,6 @@ export async function buildCandidate(sub: Submission, opts: { shopee?: ShopeeCon
       commissionRate: api?.commissionRate,
     },
     caption,
-    via: api ? "shopee-api" : undefined,
+    via: api ? (marketplace === "shopee" ? "shopee-api" : "aliexpress-api") : undefined,
   };
 }

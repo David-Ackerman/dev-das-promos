@@ -325,7 +325,7 @@ ${COUPON_HELP}`);
 async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: number, sub: Submission): Promise<void> {
   const token = cfg.telegram.botToken;
   await tg(token, "setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👀" }] }).catch(() => {});
-  const built = await buildCandidate(sub, { shopee: cfg.shopee });
+  const built = await buildCandidate(sub, { shopee: cfg.shopee, aliexpress: cfg.aliexpress });
   if (!built.ok && built.ask) {
     // One reply with "price [old] Name" finishes it; the link travels inside the question.
     await tg(token, "sendMessage", {

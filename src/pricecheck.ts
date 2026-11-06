@@ -1,5 +1,6 @@
 import type { Config } from "./config.ts";
 import { fetchProductPage } from "./manual.ts";
+import { fetchAliExpressItem } from "./providers/aliexpress.ts";
 import { fetchShopeeItem } from "./providers/shopee.ts";
 import type { PostRow } from "./types.ts";
 import { errorMessage } from "./util.ts";
@@ -33,6 +34,17 @@ export async function checkPrice(cfg: Config, post: PostRow): Promise<PriceCheck
       const item = await fetchShopeeItem(cfg.shopee, post.external_id);
       if (item === undefined) return { verdict: "gone" };
       if (item === null) return { verdict: "unknown", detail: "no price in Shopee's answer" };
+      return {
+        verdict: comparePrice(post.price_cents, item.priceCents),
+        priceCents: item.priceCents,
+        originalPriceCents: item.originalPriceCents,
+      };
+    }
+    // AliExpress pages have no price; with the API keys the API answers instead.
+    if (post.marketplace === "aliexpress" && cfg.aliexpress && /^\d{6,20}$/.test(post.external_id)) {
+      const item = await fetchAliExpressItem(cfg.aliexpress, post.external_id);
+      if (item === undefined) return { verdict: "gone" };
+      if (item === null) return { verdict: "unknown", detail: "no BRL price in AliExpress's answer" };
       return {
         verdict: comparePrice(post.price_cents, item.priceCents),
         priceCents: item.priceCents,

@@ -61,6 +61,8 @@ export interface Config {
     keywords: string[];
     sortType: number;
   };
+  /** AliExpress Affiliate API: name, photo and BRL price for AliExpress links the admin sends. */
+  aliexpress?: { appKey: string; appSecret: string; trackingId?: string };
   /** `models` are tried in order: free models are often busy (HTTP 429). */
   ai: AiConfig;
   selection: {
@@ -269,6 +271,14 @@ export function loadConfig(env: Env): Config {
       appSecret: env.SHOPEE_APP_SECRET.trim(),
       keywords: list(env.SHOPEE_KEYWORDS || DEFAULT_KEYWORDS),
       sortType: int(env.SHOPEE_SORT_TYPE, 2),
+    };
+  }
+
+  if (env.ALIEXPRESS_APP_KEY?.trim() && env.ALIEXPRESS_APP_SECRET?.trim()) {
+    config.aliexpress = {
+      appKey: env.ALIEXPRESS_APP_KEY.trim(),
+      appSecret: env.ALIEXPRESS_APP_SECRET.trim(),
+      trackingId: env.ALIEXPRESS_TRACKING_ID?.trim() || undefined,
     };
   }
 

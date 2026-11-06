@@ -105,7 +105,8 @@ Texto do post (optional; without it the AI writes one)
 
 - The bot opens the link and reads the product name, photo and prices when the store allows it (the standard product data most stores publish). For Mercado Livre, share the product from the app as an affiliate and send the `meli.la` link as is: it opens your affiliate showcase, and the bot reads the featured product from it.
 - **Shopee:** the bot asks the Shopee API about the item, so name, photo, price and commission are exact. A plain `shopee.com.br` product link (no affiliate tracking) is swapped for your affiliate short link; `s.shopee.com.br` links you made are kept.
-- If a store blocks the read (Amazon, AliExpress often do), the bot asks for what's missing. Reply to its question with `preço [preço antigo] Nome do produto` and, on the lines below, the post text if you want.
+- **AliExpress:** its pages have the name and photo but no price (it loads by script). With the optional AliExpress Affiliate API keys (`ALIEXPRESS_APP_KEY`, `ALIEXPRESS_APP_SECRET`, see `.env.example`) the bot gets the price in reais, the photo and the commission by itself; without them it shows the product it found and asks only for the price.
+- If a store blocks the read (Amazon often does), the bot asks for what's missing. Reply to its question with `preço [preço antigo] Nome do produto` and, on the lines below, the post text if you want.
 - The numbers after the link are the price and the old price, in any order. Prices you type win over what the page says.
 - Your link is kept **exactly as you sent it**, so your affiliate tag is untouched (except the Amazon/Shopee cases above that had no tracking). Clicks still go through the bot's `/go` tracking.
 - From there it's the normal flow: preview, ✅ ❌ 🔄, publish.

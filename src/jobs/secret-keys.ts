@@ -6,6 +6,7 @@
 // passed whole with `toJSON(vars)`.
 export const SECRET_KEYS = [
   "AI_API_KEY",
+  "ALIEXPRESS_APP_SECRET",
   "AMAZON_CLIENT_ID",
   "AMAZON_CLIENT_SECRET",
   "CEREBRAS_API_KEY",

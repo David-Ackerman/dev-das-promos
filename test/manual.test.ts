@@ -165,3 +165,17 @@ describe("links sent to the bot", () => {
     });
   });
 });
+
+describe("AliExpress Affiliate API", () => {
+  it("signs like the official SDK and reads a BRL product", async () => {
+    const { aliSign, aliProductToCandidate, md5Hex } = await import("../src/providers/aliexpress.ts");
+    const { createHash } = await import("node:crypto");
+    assert.equal(md5Hex("çãé 🎟️ preço"), createHash("md5").update("çãé 🎟️ preço").digest("hex"));
+    assert.equal(aliSign("shh", { method: "x", app_key: "k" }), createHash("md5").update("shhapp_keykmethodxshh").digest("hex").toUpperCase());
+    assert.deepEqual(
+      aliProductToCandidate({ product_id: 1005007009962738, product_title: " Memória DDR4 8GB ", product_main_image_url: "https://ae-pic-a1.aliexpress-media.com/kf/x.jpg", target_sale_price: "89.90", target_original_price: "159.90", target_sale_price_currency: "BRL", commission_rate: "7.0%", evaluate_rate: "96.4%" }),
+      { marketplace: "aliexpress", externalId: "1005007009962738", title: "Memória DDR4 8GB", imageUrl: "https://ae-pic-a1.aliexpress-media.com/kf/x.jpg", productUrl: "https://pt.aliexpress.com/item/1005007009962738.html", priceCents: 8990, originalPriceCents: 15990, discountPct: 44, sales: undefined, rating: 4.8, commissionRate: 0.07 },
+    );
+    assert.equal(aliProductToCandidate({ product_id: 1, product_title: "x", target_sale_price: "10", target_sale_price_currency: "USD" }), null, "only prices in reais");
+  });
+});
