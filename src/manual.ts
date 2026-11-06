@@ -51,7 +51,8 @@ export function parseSubmission(text: string): Submission | undefined {
   const caption = [words.join(" "), ...lines.slice(at + 1)].join("\n").trim();
   const before = [...lines.slice(0, at), line.slice(0, line.indexOf(link))]
     .join(" ")
-    .replace(/^\s*(confira|olha|veja)[^:]*:\s*/i, "")
+    // Share texts from the apps ("Acabei de encontrar isso no AliExpress:", "Confira este produto:") aren't the name.
+    .replace(/^\s*(confira|olha|veja|d[êe] uma olhada|acabei de encontrar|encontrei|achei|i just found|check out)[^:]*:\s*/i, "")
     .replace(/\s+/g, " ")
     .trim();
   return {
@@ -125,7 +126,14 @@ export function externalIdFrom(marketplace: Marketplace, url: string): string | 
     return id ? `MLB${id[2]}` : undefined;
   }
   // Shopee: ".../Nome-i.<shop>.<item>" or ".../product/<shop>/<item>"; the item id alone, like the search API uses.
-  if (marketplace === "shopee") return url.match(/-i\.\d+\.(\d+)(?:[/?#]|$)/)?.[1] ?? url.match(/\/product\/\d+\/(\d+)(?:[/?#]|$)/)?.[1];
+  // Short links from the app land on ".../<shop-name>/<shop>/<item>".
+  if (marketplace === "shopee") {
+    return (
+      url.match(/-i\.\d+\.(\d+)(?:[/?#]|$)/)?.[1] ??
+      url.match(/\/product\/\d+\/(\d+)(?:[/?#]|$)/)?.[1] ??
+      url.match(/^https?:\/\/(?:[a-z0-9-]+\.)*shopee\.com\.br\/[^/?#]+\/\d{4,}\/(\d{4,})(?:[/?#]|$)/i)?.[1]
+    );
+  }
   if (marketplace === "aliexpress") return url.match(/\/item\/(\d{6,})\.html/)?.[1];
   return undefined;
 }
@@ -405,10 +413,12 @@ export const AMAZON_ASK = "🛒 A Amazon bloqueia a leitura automática da pági
 export const STORE_ASK = "🛒 Não consegui ler";
 
 /** Asks for what's missing; the link travels inside the question, so one reply finishes the post. */
-export function askText(link: string, store: string, needName: boolean, needPrice: boolean): string {
+export function askText(link: string, store: string, needName: boolean, needPrice: boolean, found?: string): string {
   const what = [needPrice && "o preço", needName && "o nome do produto"].filter(Boolean).join(" e ");
   return (
     `${STORE_ASK} ${what} na página do produto (${store}), então me diga.\n` +
+    // What was read, so the admin only types what's missing (the name they type still wins).
+    (found ? `Achei o produto: ${found}\n` : "") +
     `Responda esta mensagem assim: preço [preço antigo]${needName ? " Nome do produto" : " [nome do produto]"}\n` +
     `Ex.: 349,90 499,90${needName ? " Fone JBL Tune 520" : ""}\n` +
     "(nas linhas de baixo, se quiser, o texto do post)\n\n" +
@@ -470,7 +480,7 @@ export async function buildCandidate(sub: Submission, opts: { shopee?: ShopeeCon
   }
   const priceCents = sub.priceCents ?? api?.priceCents ?? page.priceCents;
   if (!title || !priceCents) {
-    return { ok: false, reason: askText(sub.link, storeName(marketplace), !title, !priceCents), ask: true };
+    return { ok: false, reason: askText(sub.link, storeName(marketplace), !title, !priceCents, title), ask: true };
   }
   const originalPriceCents =
     sub.priceCents !== undefined ? sub.originalPriceCents : (api ? api.originalPriceCents : page.originalPriceCents);

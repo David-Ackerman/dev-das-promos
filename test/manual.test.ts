@@ -95,6 +95,12 @@ describe("links sent to the bot", () => {
     assert.equal(marketplaceOf("javascript:alert(1)"), undefined);
     assert.equal(externalIdFrom("shopee", "https://shopee.com.br/Fone-Bluetooth-i.123456.987654321?sp_atk=x"), "987654321");
     assert.equal(externalIdFrom("shopee", "https://shopee.com.br/product/123456/987654321"), "987654321");
+    // Where s.shopee.com.br app links land (real example, 2026-11).
+    assert.equal(externalIdFrom("shopee", "https://shopee.com.br/opaanlp/1677083827/22699431048?__mobile__=1&utm_medium=affiliates"), "22699431048");
+    assert.equal(externalIdFrom("shopee", "https://shopee.com.br/flash_sale/123/456"), undefined, "not a product page");
+    assert.equal(parseSubmission("Acabei de encontrar isso no AliExpress: https://a.aliexpress.com/_mOquQ2x")?.before, undefined, "share text isn't the name");
+    const ali = '<meta property="og:title" content="Kllisre Memória DDR4 8GB 2666MHz - AliExpress 7" /><meta property="og:image" content="https://ae-pic-a1.aliexpress-media.com/kf/x.jpg"/>';
+    assert.deepEqual(parseProductPage("aliexpress", ali), { title: "Kllisre Memória DDR4 8GB 2666MHz", imageUrl: "https://ae-pic-a1.aliexpress-media.com/kf/x.jpg", priceCents: undefined });
     assert.equal(externalIdFrom("aliexpress", "https://pt.aliexpress.com/item/1005006123456789.html?spm=x"), "1005006123456789");
     assert.equal(titleFromUrl("https://shopee.com.br/Fone-Bluetooth-Lenovo-LP40-i.123456.987654321"), "Fone Bluetooth Lenovo LP40");
     assert.equal(externalIdFrom("amazon", "https://www.amazon.com.br/Fone/dp/b0abcdefgh?tag=x-20"), "B0ABCDEFGH");
