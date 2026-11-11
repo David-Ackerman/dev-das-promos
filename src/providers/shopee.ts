@@ -11,6 +11,8 @@ import { sha256Hex, sleep, toCents } from "../util.ts";
  */
 const ENDPOINT = "https://open-api.affiliate.shopee.com.br/graphql";
 const RATE_LIMIT_CODE = 10030;
+/** Shopee's "System Error": a failure on their side, usually gone on a retry. */
+const SYSTEM_ERROR_CODE = 10000;
 
 type ShopeeConfig = NonNullable<Config["shopee"]>;
 
@@ -52,12 +54,17 @@ export async function shopeeRequest<T>(
     };
     const limited =
       res.status === 429 || body.errors?.some((e) => e.extensions?.code === RATE_LIMIT_CODE);
-    if (limited && attempt < 3) {
-      await sleep(500 * 2 ** attempt);
+    const transient =
+      res.status >= 500 ||
+      body.errors?.some((e) => e.extensions?.code === SYSTEM_ERROR_CODE || /system error/i.test(e.extensions?.message ?? e.message ?? ""));
+    if ((limited || transient) && attempt < 3) {
+      await sleep((transient ? 1500 : 500) * 2 ** attempt);
       continue;
     }
     if (!res.ok || body.errors?.length) {
-      const msg = body.errors?.map((e) => e.extensions?.message ?? e.message).join("; ");
+      const msg = body.errors
+        ?.map((e) => `${e.extensions?.message ?? e.message}${e.extensions?.code ? ` [${e.extensions.code}]` : ""}`)
+        .join("; ");
       throw new Error(`Shopee API error: ${msg || `HTTP ${res.status}`}`);
     }
     if (!body.data) throw new Error("Shopee API returned no data");
@@ -121,20 +128,37 @@ export async function fetchShopeeItem(cfg: ShopeeConfig, itemId: string): Promis
   return shopeeNodeToCandidate(node);
 }
 
-export async function fetchShopeeCandidates(cfg: ShopeeConfig, perKeyword = 20): Promise<Candidate[]> {
+/**
+ * Searches every keyword. One keyword failing no longer throws away the others:
+ * it's logged with its error, and the search only fails when every keyword did.
+ */
+export async function fetchShopeeCandidates(
+  cfg: ShopeeConfig,
+  perKeyword = 20,
+  log: (msg: string) => void = () => {},
+): Promise<Candidate[]> {
   const out: Candidate[] = [];
+  const failed: string[] = [];
   for (const keyword of cfg.keywords) {
-    const data = await shopeeRequest<{ productOfferV2: { nodes: OfferNode[] } }>(cfg, SEARCH, {
-      keyword,
-      sortType: cfg.sortType,
-      page: 1,
-      limit: perKeyword,
-    });
-    for (const node of data.productOfferV2.nodes) {
-      const c = shopeeNodeToCandidate(node);
-      if (c) out.push(c);
+    try {
+      const data = await shopeeRequest<{ productOfferV2: { nodes: OfferNode[] } }>(cfg, SEARCH, {
+        keyword,
+        sortType: cfg.sortType,
+        page: 1,
+        limit: perKeyword,
+      });
+      const nodes = data.productOfferV2?.nodes ?? [];
+      for (const node of nodes) {
+        const c = shopeeNodeToCandidate(node);
+        if (c) out.push(c);
+      }
+      log(`Shopee "${keyword}": ${nodes.length} itens`);
+    } catch (error) {
+      failed.push(`"${keyword}": ${error instanceof Error ? error.message : String(error)}`);
+      log(`Shopee "${keyword}" falhou: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+  if (failed.length && failed.length === cfg.keywords.length) throw new Error(failed[0]!.replace(/^"[^"]*": /, ""));
   return out;
 }
 

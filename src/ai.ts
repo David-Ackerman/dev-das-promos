@@ -24,10 +24,11 @@ A frase fica logo acima do nome do produto, da foto e do preço.
 
 Como a frase deve ser:
 - UMA frase curta e simples (até uns 60 caracteres), direta, no jeito de quem fala com amigo.
-- Fale do PRODUTO e do que ele faz por quem compra: o benefício principal, o uso, a sensação. Um exagero de brincadeira é bem-vindo ("dá mais FPS", "pisar fofo").
+- Um exagero de brincadeira é bem-vindo ("dá mais FPS", "pisar fofo").
+- Tente ser engraçado e apele pra algo que o leitor vai se identificar, nunca seja muito descritivo, não queremos ser redundantes, queremos algo pra chamar a atenção do leitor.
+- Pode brincar com a situação financeira dele, coisas como ("Esse monitor é pra quem é da elita", "Teclado no precinho pra quem ta liso", "Esse preço aqui vai salvar o seu bolso")
 - Cite o produto de forma natural e curta: o modelo/marca ("Air Max", "Dunk Low") ou o tipo ("esse teclado", "essa air fryer"). Nunca o nome completo.
 - NÃO faça piada que não tem a ver com o produto, nem trocadilho forçado, nem referência a programação/dev/TI/trabalho de escritório se o produto não for disso.
-- NÃO use frases de vendedor: "achado", "imperdível", "corre", "aproveite", "não perca", "ideal para", "perfeito para".
 - Não invente característica que não dá pra tirar do nome do produto.
 - Sem preço, desconto, link, @menção ou hashtag (o sistema coloca). No máximo 1 emoji, e só se combinar.
 
@@ -36,11 +37,13 @@ Exemplos (produto → texto):
 - Teclado mecânico gamer Redragon Kumara RGB → Esse teclado vai melhorar sua gameplay
 - Placa de vídeo Radeon RX 7600 8GB RGB → Placa de vídeo com RGB dá mais FPS 😎
 - Placa de vídeo Radeon RX 9060 XT → Bora dar um upgrade nessa máquina
+- Playstatio 5 -> Sua namorada vai querer brigar ou jogar junto
 - Tênis Nike Dunk Low feminino → Dunk Low pras meninas
 - Smartwatch Huawei Band 10 → Esse faz mais do que mostrar as horas
 - Air fryer Mondial 4L → Batata crocante sem gastar óleo
 - Cadeira gamer ThunderX3 → Suas costas agradecem depois da ranked
 - Fone Bluetooth JBL Tune 520BT → Música sem fio o dia inteiro
+- Produto caro com bom preço parcelad -> Parceladinho nem vai pesar no seu bolso
 
 Responda APENAS com JSON: {"texto": "...", "tweet": "...", "tag": "..."}
 - "texto": a frase (até 70 caracteres).

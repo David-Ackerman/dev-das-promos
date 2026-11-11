@@ -311,7 +311,9 @@ export async function fetchAmazonScrapedCandidates(
       }
       answered++;
       const found = parseAmazonSearchHtml(html);
-      log(`Amazon (busca) "${query}" p${page}: ${found.length} itens`);
+      // 0 items on a 200 page is usually a soft block or a new layout: say which, for the logs.
+      const title = found.length ? "" : (html.match(/<title[^>]*>([^<]{0,80})/i)?.[1] ?? "").trim();
+      log(`Amazon (busca) "${query}" p${page}: ${found.length} itens${found.length ? "" : ` (página "${title}", ${html.length} bytes)`}`);
       for (const item of found) {
         const seen = items.get(item.asin);
         if (!seen || item.discountPct > seen.discountPct) items.set(item.asin, item);

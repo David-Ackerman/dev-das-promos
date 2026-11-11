@@ -172,7 +172,10 @@ export async function runCollect(
     const scrape = cfg.amazonScrape;
     sources.push(["Amazon (busca)", () => (deps.fetchAmazonScrape ?? fetchAmazonScrapedCandidates)(scrape, { log })]);
   }
-  if (cfg.shopee) sources.push(["Shopee", () => (deps.fetchShopee ?? fetchShopeeCandidates)(cfg.shopee!)]);
+  if (cfg.shopee) {
+    const shopee = cfg.shopee;
+    sources.push(["Shopee", () => (deps.fetchShopee ? deps.fetchShopee(shopee) : fetchShopeeCandidates(shopee, 20, log))]);
+  }
   if (!sources.length) throw new Error("No marketplace configured: set the AMAZON_* (API, or AMAZON_SCRAPE=on) and/or SHOPEE_* settings.");
 
   for (const [name, fetchFn] of sources) {
