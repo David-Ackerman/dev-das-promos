@@ -16,6 +16,15 @@ export interface RenderInput {
   hashtag?: string | null;
   /** A coupon post (/cupom): code, discount, rules and how to use instead of a product price. */
   coupon?: Coupon | null;
+  /** Sale-day slogan shown first ("11.11 A maior liquida do ano"), while a campaign is on. */
+  campaign?: string | null;
+  /** X only: the campaign hashtag without "#". */
+  campaignHashtag?: string | null;
+}
+
+/** "🔥 <slogan>" line on top of a post, or nothing. */
+function campaignLines(p: RenderInput, bold: (s: string) => string): string[] {
+  return p.campaign ? [`🔥 ${bold(p.campaign)}`, ""] : [];
 }
 
 /** Coupon details, step by step; `code` formats the code for the channel (Telegram: tap to copy). */
@@ -85,7 +94,7 @@ export function storeName(marketplace: Marketplace): string {
 /** Telegram, HTML parse mode. */
 export function renderTelegram(p: RenderInput): string {
   if (p.coupon) {
-    return [escapeHtml(p.caption), "", ...couponBlock(p, p.coupon, TELEGRAM_FMT), "", `👉 ${escapeHtml(p.link)}`, p.footer ? `\n<i>${escapeHtml(p.footer)}</i>` : ""]
+    return [...campaignLines(p, (s) => `<b>${escapeHtml(s)}</b>`), escapeHtml(p.caption), "", ...couponBlock(p, p.coupon, TELEGRAM_FMT), "", `👉 ${escapeHtml(p.link)}`, p.footer ? `\n<i>${escapeHtml(p.footer)}</i>` : ""]
       .join("\n")
       .trim();
   }
@@ -94,6 +103,7 @@ export function renderTelegram(p: RenderInput): string {
       ? `<s>${brl(p.originalPriceCents)}</s> por <b>${brl(p.priceCents)}</b> (-${p.discountPct}%)`
       : `<b>${brl(p.priceCents)}</b>`;
   return [
+    ...campaignLines(p, (s) => `<b>${escapeHtml(s)}</b>`),
     escapeHtml(p.caption),
     "",
     `🛍️ <b>${escapeHtml(truncate(p.title, 110))}</b>`,
@@ -110,13 +120,14 @@ export function renderTelegram(p: RenderInput): string {
 /** WhatsApp formatting (*bold*, ~strike~, _italic_). */
 export function renderWhatsApp(p: RenderInput): string {
   if (p.coupon) {
-    return [p.caption, "", ...couponBlock(p, p.coupon, WHATSAPP_FMT), "", `👉 ${p.link}`, p.footer ? `\n_${p.footer}_` : ""].join("\n").trim();
+    return [...campaignLines(p, (s) => `*${s}*`), p.caption, "", ...couponBlock(p, p.coupon, WHATSAPP_FMT), "", `👉 ${p.link}`, p.footer ? `\n_${p.footer}_` : ""].join("\n").trim();
   }
   const price =
     p.originalPriceCents && p.discountPct > 0
       ? `~${brl(p.originalPriceCents)}~ por *${brl(p.priceCents)}* (-${p.discountPct}%)`
       : `*${brl(p.priceCents)}*`;
   return [
+    ...campaignLines(p, (s) => `*${s}*`),
     p.caption,
     "",
     `🛍️ *${truncate(p.title, 110)}*`,
@@ -138,8 +149,20 @@ export function xLength(text: string): number {
   return text.replace(/https?:\/\/\S+/g, "x".repeat(X_URL_LENGTH)).length;
 }
 
-/** Plain text for X. `link` undefined means "no-link" mode (cheaper on X's API). */
+/**
+ * Plain text for X, with the campaign slogan on top (and its hashtag) when it fits
+ * in 280 characters; otherwise the plain post. `link` undefined means "no-link" mode.
+ */
 export function renderX(p: RenderInput, linkOrNote: string): string {
+  const plain = renderXPlain(p, linkOrNote);
+  if (!p.campaign) return plain;
+  const top = `🔥 ${p.campaign}`;
+  const tag = p.campaignHashtag ? ` #${p.campaignHashtag}` : "";
+  for (const text of [`${top}\n${plain}${tag}`, `${top}\n${plain}`]) if (xLength(text) <= X_LIMIT) return text;
+  return plain;
+}
+
+function renderXPlain(p: RenderInput, linkOrNote: string): string {
   if (p.coupon) {
     const c = p.coupon;
     const facts = [

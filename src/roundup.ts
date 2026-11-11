@@ -1,4 +1,4 @@
-import type { Config } from "./config.ts";
+import { activeCampaign, type Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { goUrl } from "./publish.ts";
 import { shareUrl } from "./publishers/whatsapp.ts";
@@ -22,6 +22,16 @@ import { brl, errorMessage, escapeHtml, truncate } from "./util.ts";
  */
 const MIN_DEALS = 3;
 
+/** Header and subtitle: "Top 10 da semana", or "Top 10 do 11.11" during a campaign. */
+function roundupHeading(cfg: Config, count: number): { title: string; subtitle: string } {
+  const campaign = activeCampaign(cfg);
+  if (campaign) {
+    const name = campaign.tag.split(/\s+/)[0]!;
+    return { title: `Top ${count} do ${name}`, subtitle: `${campaign.tag}: as ofertas mais clicadas até agora 👇` };
+  }
+  return { title: `Top ${count} da semana`, subtitle: "As promoções que mais bombaram nos últimos 7 dias 👇" };
+}
+
 function priceText(post: PostRow): string {
   return post.discount_pct > 0 ? `${brl(post.price_cents)} (-${post.discount_pct}%)` : brl(post.price_cents);
 }
@@ -31,8 +41,8 @@ export function roundupTelegram(cfg: Config, posts: PostRow[], linkFor: (post: P
     (p, i) => `${i + 1}. <b>${escapeHtml(truncate(p.title, 80))}</b> — ${priceText(p)}\n👉 ${escapeHtml(linkFor(p))}`,
   );
   return [
-    `🔥 <b>Top ${posts.length} da semana</b>`,
-    "As promoções que mais bombaram nos últimos 7 dias 👇",
+    `🔥 <b>${escapeHtml(roundupHeading(cfg, posts.length).title)}</b>`,
+    escapeHtml(roundupHeading(cfg, posts.length).subtitle),
     "",
     items.join("\n\n"),
     "",
@@ -46,8 +56,8 @@ export function roundupTelegram(cfg: Config, posts: PostRow[], linkFor: (post: P
 export function roundupWhatsApp(cfg: Config, posts: PostRow[], linkFor: (post: PostRow) => string): string {
   const items = posts.map((p, i) => `${i + 1}. *${truncate(p.title, 80)}* — ${priceText(p)}\n👉 ${linkFor(p)}`);
   return [
-    `🔥 *Top ${posts.length} da semana*`,
-    "As promoções que mais bombaram nos últimos 7 dias 👇",
+    `🔥 *${roundupHeading(cfg, posts.length).title}*`,
+    roundupHeading(cfg, posts.length).subtitle,
     "",
     items.join("\n\n"),
     "",
@@ -69,9 +79,10 @@ function previewKeyboard(id: number): Keyboard {
 
 /** Weekly cron and /resumo: builds the roundup and sends it to the admin for approval. */
 export async function proposeRoundup(cfg: Config, db: Db): Promise<string> {
-  const ids = await topDealsForRoundup(db, 7, 10);
+  // During a campaign: only what was posted today (it runs at 12h and 19h).
+  const ids = await topDealsForRoundup(db, activeCampaign(cfg) ? 1 : 7, 10);
   if (ids.length < MIN_DEALS) {
-    const msg = `Poucas promoções ativas nesta semana para o resumo (${ids.length}; preciso de ${MIN_DEALS}).`;
+    const msg = `Poucas promoções ativas no período para o resumo (${ids.length}; preciso de ${MIN_DEALS}).`;
     await sendText(cfg.telegram.botToken, cfg.telegram.adminChatId, msg);
     return msg;
   }

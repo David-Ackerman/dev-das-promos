@@ -1,4 +1,4 @@
-import type { Config } from "./config.ts";
+import { activeCampaign, type Config } from "./config.ts";
 import type { DealDetail } from "./repo.ts";
 import { discountLabel, limitsLine, validityLabel } from "./coupon.ts";
 import { inStore, storeName } from "./render.ts";
@@ -170,6 +170,12 @@ interface Head {
   extra?: string;
 }
 
+/** Sale-day strip on top of every page, while a campaign is on. */
+function campaignBar(cfg: Config): string {
+  const c = activeCampaign(cfg);
+  return c ? `<div class="campaign" role="note">🔥 <b>${escapeHtml(c.tag)}</b><span> · descontos checados no histórico de preço</span></div>\n` : "";
+}
+
 function page(cfg: Config, h: Head, body: string): string {
   const sticky = stickyButtons(cfg);
   return `<!doctype html>
@@ -194,7 +200,7 @@ ${cfg.site.googleVerification ? `<meta name="google-site-verification" content="
 <style>${STYLE}</style>
 </head>
 <body${sticky ? ' class="has-sticky"' : ""}>
-${body}
+${campaignBar(cfg)}${body}
 <footer>
   <p>#publi · Os links são de afiliado: podemos ganhar uma comissão quando você compra, sem custo a mais para você.
   Preços e estoque podem mudar a qualquer momento; confira na loja antes de comprar.</p>
@@ -508,5 +514,7 @@ const STYLE = `  :root { color-scheme: light dark; --bg: #f6f7f9; --card: #fff; 
   .facts { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
   .more { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); margin-top: 8px; }
   .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px 24px; }
+  .campaign { background: linear-gradient(90deg, #c92a2a, var(--accent)); color: #fff; text-align: center; padding: 10px 16px; font-size: 15px; line-height: 1.35; }
+  @media (max-width: 640px) { .campaign span { display: block; font-size: 13px; opacity: 0.9; } }
   footer a { color: var(--muted); }
 `;

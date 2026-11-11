@@ -3,7 +3,7 @@
 How to make the bot post every approved deal to a WhatsApp Channel by itself
 (`WHATSAPP_MODE=evolution`). About 1 hour the first time, all free except the chip.
 
-**How it works:** a small always-on server (free Oracle Cloud VM) runs
+**How it works:** a small always-on server (free Google Cloud VM) runs
 [Evolution API](https://github.com/EvolutionAPI/evolution-api), which stays logged
 in to a dedicated WhatsApp number like WhatsApp Web does. When you tap ✅, the
 Worker asks that server to post the deal (photo + text + tracked link) to the
@@ -35,42 +35,59 @@ costs the chip and the channel, never your personal WhatsApp.
    and your bios.
 4. Post one message in the channel (a welcome text). Step 5 needs it.
 
-## 3. Free server (Oracle Cloud)
+## 3. Free server (Google Cloud)
 
-1. Sign up at [oracle.com/cloud/free](https://www.oracle.com/cloud/free/), home
-   region **Brazil East (São Paulo)**. It asks for a card for verification only;
-   the "Always Free" resources below never charge.
-2. Compute → Instances → **Create instance**:
-   - Image: **Ubuntu 24.04**.
-   - Shape: **Ampere VM.Standard.A1.Flex**, 1 OCPU, 6 GB. If it says "out of
-     capacity", use **VM.Standard.E2.1.Micro** (also free; the setup adds swap).
-   - Networking: keep "assign a public IPv4 address".
-   - SSH keys: **Save private key** (you'll need the file).
-3. Open the web ports: instance page → the subnet link → its **Default Security
-   List** → **Add Ingress Rules**: source `0.0.0.0/0`, TCP, destination ports
-   `80,443`.
-4. Copy the instance's **public IP**.
+Google's "Always Free" e2-micro (2 shared vCPUs, 1 GB RAM; `setup.sh` adds swap)
+is enough for Evolution API. It must be in a **US region**: there's no free VM in
+São Paulo, and the extra latency doesn't matter for posting deals.
+
+1. Sign up at [cloud.google.com/free](https://cloud.google.com/free) with your
+   Google account. Account type **Individual** (pessoa física), country Brasil,
+   and a credit card for verification. You get US$ 300 of trial credit for 90 days.
+2. **Before the 90 days end**, click **Activate full account** (banner at the top of
+   the console, or Billing). A trial account that isn't activated shuts down its VMs,
+   the free one included. Activating doesn't charge anything by itself: the free
+   e2-micro stays free.
+3. Billing → **Budgets & alerts** → create a budget of **R$ 5** with email alerts
+   at 50% and 100%. If something is ever billed by mistake, you'll know right away.
+4. Compute Engine → VM instances → enable the API if asked → **Create instance**.
+   Get these exactly right, they're what keeps it free:
+   - Name: `evolution`.
+   - Region: **us-east1** (South Carolina, closest to Brazil), **us-central1** or
+     **us-west1**. Any other region is billed.
+   - Machine type: series **E2**, type **e2-micro**.
+   - Boot disk → **Change**: **Ubuntu 24.04 LTS** (x86/64), disk type
+     **Standard persistent disk** (not "Balanced", which is the default and is
+     billed), size **30 GB**.
+   - Firewall (under Networking): tick **Allow HTTP traffic** and
+     **Allow HTTPS traffic**.
+   - Leave everything else as is (keep the ephemeral external IPv4; don't add
+     snapshot schedules, they're billed).
+5. **Create**. After a minute the instance shows an **External IP**: copy it.
+   It stays the same while the VM runs; if you ever stop the VM and the IP
+   changes, see "If the IP changes" below.
 
 ## 4. Install Evolution API
 
-From PowerShell on your PC (use the key file you saved):
-
-```bash
-ssh -i C:\path\to\ssh-key.key ubuntu@<PUBLIC_IP>
-```
-
-Then on the server:
+On the instance row, click **SSH**: a terminal opens in the browser (no key
+needed). Then:
 
 ```bash
 git clone https://github.com/David-Ackerman/dev-das-promos.git
 bash dev-das-promos/deploy/evolution/setup.sh
 ```
 
-It installs Docker, opens the firewall, gives the server a free HTTPS address
+It installs Docker, adds swap, gives the server a free HTTPS address
 (`<ip>.sslip.io`), starts everything and prints the three settings for GitHub.
-Copy them.
+Copy them. The first run takes ~5 minutes on the e2-micro.
 
 To update later: `cd dev-das-promos && git pull && bash deploy/evolution/setup.sh`.
+
+**If the IP changes** (only after stopping/starting the VM): run
+`cd ~/dev-das-promos/deploy/evolution && sed -i "s/^DOMAIN=.*/DOMAIN=$(curl -fsS https://api.ipify.org | tr . -).sslip.io/" .env && bash setup.sh`,
+then update `EVOLUTION_API_URL` in GitHub and redeploy. To avoid this, don't stop
+the VM (or reserve a static IP in VPC network → IP addresses, which is billed
+while the VM is stopped).
 
 ## 5. Connect the number and find the channel id
 

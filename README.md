@@ -161,7 +161,7 @@ WhatsApp's official API **can't post into normal groups**: its groups API is cap
 
 The last two are unofficial and WhatsApp can ban numbers that look like spam. If you use them, use a dedicated number and keep the volume reasonable.
 
-To post automatically to a **WhatsApp Channel**, follow [docs/WHATSAPP.md](docs/WHATSAPP.md): a dedicated chip, a free Oracle Cloud VM and the ready-made server in `deploy/evolution/`.
+To post automatically to a **WhatsApp Channel**, follow [docs/WHATSAPP.md](docs/WHATSAPP.md): a dedicated chip, a free Google Cloud VM and the ready-made server in `deploy/evolution/`.
 
 ## X / Twitter
 X dropped its free API in 2026. It's now pay-per-use, and **posts with a link cost a lot more** than plain text posts.
@@ -172,6 +172,10 @@ X dropped its free API in 2026. It's now pay-per-use, and **posts with a link co
 - `X_MODE=off` disables X.
 
 Check current prices in the X developer console.
+
+## Sale days (11.11, Black Friday)
+
+Set `CAMPAIGN_TAG` (e.g. `11.11 A maior liquida do ano`), `CAMPAIGN_HASHTAG` (`1111`) and `CAMPAIGN_UNTIL` (`2026-11-11`). Until the end of that day, every post and the site carry the slogan, the bot searches every hour inside `POSTING_HOURS`, and the Top 10 of the day is proposed at 12h and 19h. For more volume, raise `POSTS_PER_RUN`, lower `QUEUE_INTERVAL_MINUTES` and set `AUTO_APPROVE_MIN_DISCOUNT`; put them back the next day. Fake discounts (cheaper in the last 30 days) are still skipped.
 
 ## Search engines and AI assistants
 

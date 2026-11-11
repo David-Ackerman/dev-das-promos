@@ -88,6 +88,8 @@ export interface Config {
   /** Your Associates tag: links the admin sends without it get a tagged link (works without the API). */
   amazonPartnerTag?: string;
   footer: string;
+  /** Sale-day campaign (e.g. 11.11): slogan on posts and the site, hourly searches, "Top do dia". Off after `until`. */
+  campaign?: Campaign;
   githubDispatch?: { token: string; repo: string; workflow: string; ref: string };
 }
 
@@ -245,6 +247,7 @@ export function loadConfig(env: Env): Config {
     },
     amazonPartnerTag: env.AMAZON_PARTNER_TAG?.trim() || undefined,
     footer: env.POST_FOOTER?.trim() ?? "#publi · link de afiliado",
+    campaign: parseCampaign(env.CAMPAIGN_TAG, env.CAMPAIGN_HASHTAG, env.CAMPAIGN_UNTIL),
   };
 
   if (env.AMAZON_CLIENT_ID && env.AMAZON_CLIENT_SECRET) {
@@ -319,4 +322,32 @@ export function loadConfig(env: Env): Config {
 function verificationCode(raw: string | undefined): string | undefined {
   const value = raw?.trim().match(/content=["']([^"']+)["']/)?.[1] ?? raw?.trim();
   return value && /^[A-Za-z0-9_-]{8,128}$/.test(value) ? value : undefined;
+}
+
+export interface Campaign {
+  /** Slogan shown on every post and on the site, e.g. "11.11 A maior liquida do ano". */
+  tag: string;
+  /** Extra X hashtag without "#", e.g. "1111". */
+  hashtag?: string;
+  /** The campaign switches itself off at this moment. */
+  until: Date;
+}
+
+/**
+ * CAMPAIGN_UNTIL is "2026-11-11" (the end of that day in Brasília) or a full
+ * ISO time. Without a tag or a valid end, there's no campaign.
+ */
+export function parseCampaign(tag: string | undefined, hashtag: string | undefined, until: string | undefined): Campaign | undefined {
+  const text = tag?.trim();
+  const raw = until?.trim() ?? "";
+  if (!text || !raw) return undefined;
+  const end = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T23:59:59-03:00`) : new Date(raw);
+  if (Number.isNaN(end.getTime())) throw new Error(`CAMPAIGN_UNTIL must look like 2026-11-11 or an ISO time (got "${raw}")`);
+  const tagWord = hashtag?.trim().replace(/^#/, "").replace(/[^\p{L}\p{N}_]/gu, "");
+  return { tag: text.slice(0, 80), hashtag: tagWord || undefined, until: end };
+}
+
+/** The campaign, while it's on. */
+export function activeCampaign(cfg: Pick<Config, "campaign">, now = new Date()): Campaign | undefined {
+  return cfg.campaign && now < cfg.campaign.until ? cfg.campaign : undefined;
 }

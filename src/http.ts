@@ -1,5 +1,5 @@
 import { handleUpdate, type TgUpdate, triggerCollect } from "./bot.ts";
-import type { Config, Env } from "./config.ts";
+import { activeCampaign, type Config, type Env } from "./config.ts";
 import type { Db } from "./db.ts";
 import { goUrl, publishDue } from "./publish.ts";
 import { dealDetail, findDeals, getPost, postImageFileId, priceHistory, recordClick, recordSiteView, resolveLink, similarDeals, siteCoupons, siteDeals, sitemapDeals } from "./repo.ts";
@@ -37,6 +37,23 @@ export const QUEUE_CRON = "*/5 * * * *";
  * rejected cron throws out every schedule of the deploy (test/unit.test.ts checks).
  */
 export const ROUNDUP_CRON = "0 21 * * SUN";
+/**
+ * Every hour at :37. Does nothing unless a campaign (CAMPAIGN_TAG + CAMPAIGN_UNTIL)
+ * is on; then it starts an extra deal search inside POSTING_HOURS, and at 12h and
+ * 19h Brasília it also proposes the "Top do dia" for approval.
+ */
+export const CAMPAIGN_CRON = "37 * * * *";
+export const CAMPAIGN_ROUNDUP_HOURS = [12, 19];
+
+/** What the campaign cron should do at `now`. */
+export function campaignTick(cfg: Config, now: Date): { collect: boolean; roundup: boolean } {
+  if (!activeCampaign(cfg, now)) return { collect: false, roundup: false };
+  const hour = (now.getUTCHours() + 21) % 24; // Brasília, always UTC−3
+  return {
+    collect: hour >= cfg.queue.startHour && hour < cfg.queue.endHour,
+    roundup: CAMPAIGN_ROUNDUP_HOURS.includes(hour),
+  };
+}
 interface Ctx {
   waitUntil(promise: Promise<unknown>): void;
 }
@@ -201,6 +218,11 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
       if (event.cron === QUEUE_CRON) {
         ctx.waitUntil(publishDue(cfg, db).catch((e: unknown) => console.error("queue publish failed", e)));
         return;
+      }
+      if (event.cron === CAMPAIGN_CRON) {
+        const tick = campaignTick(cfg, new Date());
+        if (tick.roundup) ctx.waitUntil(proposeRoundup(cfg, db).catch((e: unknown) => console.error("campaign roundup failed", e)));
+        if (!tick.collect) return;
       }
       if (event.cron === ROUNDUP_CRON) {
         ctx.waitUntil(proposeRoundup(cfg, db).catch((e: unknown) => console.error("weekly roundup failed", e)));

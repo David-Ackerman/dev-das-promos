@@ -11,7 +11,9 @@ workers_dev = true
 # 2nd: publishes queued posts when their time comes (QUEUE_CRON in src/http.ts).
 # 3rd: Sundays 18h Brasília, sends the weekly Top 10 for approval (ROUNDUP_CRON).
 [triggers]
-crons = ["7 0,9,12,15,18,21 * * *", "*/5 * * * *", "0 21 * * SUN"]
+# 4th: hourly at :37, only during a campaign (CAMPAIGN_TAG + CAMPAIGN_UNTIL): extra
+#      search inside POSTING_HOURS, plus the "Top do dia" at 12h and 19h (CAMPAIGN_CRON).
+crons = ["7 0,9,12,15,18,21 * * *", "*/5 * * * *", "0 21 * * SUN", "37 * * * *"]
 
 # Banner and link-preview images for the public page (served as files, before the Worker).
 [assets]

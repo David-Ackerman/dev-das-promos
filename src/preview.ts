@@ -1,4 +1,5 @@
 import type { Config } from "./config.ts";
+import { activeCampaign } from "./config.ts";
 import type { Db } from "./db.ts";
 import { renderTelegram, storeName } from "./render.ts";
 import type { ImageDecision } from "./images.ts";
@@ -21,6 +22,8 @@ export function renderInput(cfg: Config, post: PostRow, link: string) {
     footer: cfg.footer,
     hashtag: post.hashtag,
     coupon: post.kind === "coupon" ? post.coupon : null,
+    campaign: activeCampaign(cfg)?.tag ?? null,
+    campaignHashtag: activeCampaign(cfg)?.hashtag ?? null,
   };
 }
 
