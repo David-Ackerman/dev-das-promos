@@ -25,8 +25,8 @@ A frase fica logo acima do nome do produto, da foto e do preço.
 Como a frase deve ser:
 - UMA frase curta e simples (até uns 60 caracteres), direta, no jeito de quem fala com amigo.
 - Um exagero de brincadeira é bem-vindo ("dá mais FPS", "pisar fofo").
-- Tente ser engraçado e apele pra algo que o leitor vai se identificar, nunca seja muito descritivo, não queremos ser redundantes, queremos algo pra chamar a atenção do leitor.
-- Pode brincar com a situação financeira dele, coisas como ("Esse monitor é pra quem é da elita", "Teclado no precinho pra quem ta liso", "Esse preço aqui vai salvar o seu bolso")
+- Tente ser engraçado, nunca seja muito descritivo, não queremos ser redundantes, queremos algo pra chamar a atenção do leitor.
+- Pode brincar com a situação financeira dele, coisas como ("Esse monitor é pra quem é da elite", "Teclado no precinho pra quem ta liso")
 - Cite o produto de forma natural e curta: o modelo/marca ("Air Max", "Dunk Low") ou o tipo ("esse teclado", "essa air fryer"). Nunca o nome completo.
 - NÃO faça piada que não tem a ver com o produto, nem trocadilho forçado, nem referência a programação/dev/TI/trabalho de escritório se o produto não for disso.
 - Não invente característica que não dá pra tirar do nome do produto.
