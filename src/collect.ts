@@ -1,4 +1,5 @@
 import { candidateFromPost, generateCaption, SEARCH_CAPTION } from "./ai.ts";
+import { ensureWhatsAppConnected, relinkMessage } from "./publishers/whatsapp.ts";
 import { approvePost, flagEndedDeals } from "./publish.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
@@ -164,6 +165,14 @@ export async function runCollect(
     } catch (error) {
       log(`Checking published deals failed: ${errorMessage(error)}`);
     }
+  }
+
+  // WhatsApp through Evolution: reconnect a dropped session now, or tell the admin it needs a QR scan,
+  // instead of finding out post by post.
+  if (!opts.dryRun && cfg.whatsapp.mode === "evolution" && cfg.whatsapp.evolution) {
+    const state = await ensureWhatsAppConnected(cfg.whatsapp).catch((e: unknown) => `erro: ${errorMessage(e)}`);
+    if (state !== "open") result.errors.push(`${relinkMessage(cfg.whatsapp.evolution)} (estado: ${state})`);
+    else log("WhatsApp (Evolution): connected");
   }
 
   const candidates: Candidate[] = [];
