@@ -349,6 +349,7 @@ erDiagram
     text affiliate_url "kept byte for byte"
     text caption
     text caption_short "X"
+    text short_title "short product name shown in posts"
     text hashtag "X"
     text ai_model "model | template | manual"
     timestamptz scheduled_at "queue"

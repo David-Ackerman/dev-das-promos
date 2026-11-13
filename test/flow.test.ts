@@ -405,7 +405,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       assert.ok(html.includes("<textarea"), "text shown for copying");
       assert.match(text, /Tweet da IA/);
       assert.match(text, /R\$\s50,00 \(-50%\)/);
-      assert.match(text, /\n#publi #JBL$/, "one product hashtag on X");
+      assert.match(text, /\n#JBL$/, "one product hashtag on X (no #publi: POST_FOOTER is empty by default)");
       const code = xUrl.split("/").pop()!;
       assert.ok(text.includes(`/go/${code}`), "X gets its own tracked link");
       const waCode = (kb[0][0].url as string).split("/").pop()!;

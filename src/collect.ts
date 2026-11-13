@@ -16,6 +16,7 @@ import {
   getPost,
   pendingTemplatePosts,
   lowestSeenPrices,
+  recentCaptions,
   recentlyUsedProductIds,
   transition,
   updateCaption,
@@ -114,9 +115,9 @@ export function shouldAutoApprove(cfg: Config, post: PostRow): boolean {
 export async function healTemplateCaptions(cfg: Config, db: Db, log: (msg: string) => void, limit = 4): Promise<number> {
   let healed = 0;
   for (const post of await pendingTemplatePosts(db, limit)) {
-    const caption = await generateCaption(cfg.ai, candidateFromPost(post), post.caption, SEARCH_CAPTION);
+    const caption = await generateCaption(cfg.ai, candidateFromPost(post), post.caption, { ...SEARCH_CAPTION, recent: await recentCaptions(db) });
     if (caption.model === "template") continue;
-    await updateCaption(db, post.id, caption.caption, caption.short, caption.model, caption.hashtag);
+    await updateCaption(db, post.id, caption.caption, caption.short, caption.model, caption.hashtag, caption.name);
     const fresh = await getPost(db, post.id);
     if (fresh?.status === "pending") await updatePreview(cfg, fresh, undefined, pendingKeyboard(fresh, cfg)).catch(() => {});
     log(`Preview #${post.id} got an AI text on retry (${caption.model})`);
@@ -219,10 +220,13 @@ export async function runCollect(
   // Auto-approval waits until every preview of the batch exists, so the queue
   // spreads the whole batch over the window (see spreadSlot).
   const toApprove: number[] = [];
+  // The channel's latest lines plus this batch's: every new caption must be different from them.
+  const recent = opts.dryRun ? [] : await recentCaptions(db);
   for (const c of picks) {
     try {
       const ref = randomCode(10);
-      const caption = await generateCaption(cfg.ai, c, undefined, SEARCH_CAPTION);
+      const caption = await generateCaption(cfg.ai, c, undefined, { ...SEARCH_CAPTION, recent });
+      recent.unshift(caption.caption);
       aiError ||= caption.error ?? "";
       const image = await decideImage(
         cfg.ai,
@@ -259,6 +263,7 @@ export async function runCollect(
         caption: caption.caption,
         captionShort: caption.short,
         hashtag: caption.hashtag,
+        shortTitle: caption.name,
         aiModel: caption.model,
       });
       let shown: PostRow;

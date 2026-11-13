@@ -42,6 +42,7 @@ import {
   recordJoin,
   recordLeave,
   lowestSeenPrice,
+  recentCaptions,
   transition,
   updateCaption,
   upsertProduct,
@@ -136,8 +137,10 @@ async function aiBusyFallback(cfg: Config, error: string): Promise<void> {
 }
 
 export async function regenerateCaption(cfg: Config, db: Db, post: PostRow): Promise<void> {
-  const caption = await generateCaption(cfg.ai, candidateFromPost(post), post.caption);
-  await updateCaption(db, post.id, caption.caption, caption.short, caption.model, caption.hashtag);
+  const caption = await generateCaption(cfg.ai, candidateFromPost(post), post.caption, {
+    recent: (await recentCaptions(db)).filter((c) => c !== post.caption),
+  });
+  await updateCaption(db, post.id, caption.caption, caption.short, caption.model, caption.hashtag, caption.name);
   const fresh = (await getPost(db, post.id)) as PostRow;
   await updatePreview(cfg, fresh, undefined, pendingKeyboard(fresh, cfg));
   if (caption.error) await aiBusyFallback(cfg, caption.error);
@@ -369,7 +372,7 @@ export async function postFromLink(cfg: Config, db: Db, chatId: string, messageI
   // Page read + AI must fit in the ~30s the Worker gets after answering Telegram.
   const caption = text
     ? { caption: truncate(text, 600), short: truncate(text, 150), model: "manual", hashtag: undefined, error: undefined }
-    : await generateCaption(cfg.ai, c, undefined, { budgetMs: 15_000 });
+    : await generateCaption(cfg.ai, c, undefined, { budgetMs: 15_000, recent: await recentCaptions(db) });
   const post = await createPost(db, {
     productId,
     ref,
@@ -380,6 +383,7 @@ export async function postFromLink(cfg: Config, db: Db, chatId: string, messageI
     caption: caption.caption,
     captionShort: caption.short,
     hashtag: caption.hashtag,
+    shortTitle: "name" in caption ? caption.name : undefined,
     aiModel: caption.model,
   });
   try {
