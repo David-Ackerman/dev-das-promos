@@ -280,7 +280,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
   it("tells the admin when the product was recently cheaper", async () => {
     const cfg = testConfig({ REPOST_COOLDOWN_DAYS: "0", SKIP_FAKE_DISCOUNTS: "false" });
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
-    const lastPreview = () => f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body.text as string;
+    const lastPreview = () => f.to("sendMessage").filter((c) => c.body.chat_id === "111" && /Prévia #/.test(c.body.text)).at(-1)!.body.text as string;
     try {
       await collect(cfg, [offer("hist")]);
       assert.doesNotMatch(lastPreview(), /30 dias/, "no history yet, no note");
@@ -1172,7 +1172,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     try {
       await collect(cfg, [offer("own-1")]);
       const post = await postFor("own-1");
-      const kb = f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body.reply_markup.inline_keyboard;
+      const kb = f.to("sendMessage").filter((c) => c.body.chat_id === "111" && /Prévia #/.test(c.body.text)).at(-1)!.body.reply_markup.inline_keyboard;
       assert.equal(kb[1][1].callback_data, `e:${post.id}`, "✏️ button on the preview");
 
       await tap(cfg, `e:${post.id}`);
