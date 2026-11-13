@@ -14,6 +14,11 @@ import type { Config } from "../config.ts";
  */
 type WA = Config["whatsapp"];
 
+/** A WhatsApp Channel id ("120363…@newsletter"), not a group or a chat. */
+export function isChannel(id: string): boolean {
+  return id.trim().endsWith("@newsletter");
+}
+
 export function shareUrl(text: string): string {
   return `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
 }
@@ -39,18 +44,28 @@ export async function sendWhatsApp(
 ): Promise<string | undefined> {
   if (wa.mode === "evolution" && wa.evolution) {
     const { baseUrl, apiKey, instance } = wa.evolution;
-    const json = imageUrl
-      ? await postJson(`${baseUrl}/message/sendMedia/${instance}`, { apikey: apiKey }, {
+    if (imageUrl) {
+      try {
+        const json = await postJson(`${baseUrl}/message/sendMedia/${instance}`, { apikey: apiKey }, {
           number: groupId,
           mediatype: "image",
           media: imageUrl,
           caption: text,
-        })
-      : await postJson(`${baseUrl}/message/sendText/${instance}`, { apikey: apiKey }, {
-          number: groupId,
-          text,
-          linkPreview: true,
         });
+        return (json.key as { id?: string } | undefined)?.id;
+      } catch (error) {
+        // Channels (@newsletter) take media through another upload path, which some
+        // Evolution versions break on ("reading 'attrs'"). The post still goes out as
+        // text: its link brings WhatsApp's own preview card with the product photo.
+        if (!isChannel(groupId)) throw error;
+        console.warn(`WhatsApp channel photo failed, sending text: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    const json = await postJson(`${baseUrl}/message/sendText/${instance}`, { apikey: apiKey }, {
+      number: groupId,
+      text,
+      linkPreview: true,
+    });
     return (json.key as { id?: string } | undefined)?.id;
   }
   if (wa.mode === "zapi" && wa.zapi) {
