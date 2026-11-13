@@ -1077,7 +1077,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       const [g1, g2] = [sent.find((c) => c.body.chat_id === "-1001")!, sent.find((c) => c.body.chat_id === "-1002")!];
       assert.ok(codesIn(g1.body.text).length >= 3);
       assert.ok(codesIn(g1.body.text).every((c) => !codesIn(g2.body.text).includes(c)), "each group has its own links");
-      assert.match(g1.body.text, /#publi/);
+      assert.doesNotMatch(g1.body.text, /#publi/, "no footer by default (POST_FOOTER empty)");
 
       const wa = await handler.fetch(new Request(`https://w/wr/${id}`), {}, ctx);
       assert.equal(wa.status, 302);
