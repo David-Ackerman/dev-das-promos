@@ -60,8 +60,14 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       const res = await runCollect(cfg, db, { fetchShopee: async () => shopeeOffers(), log: () => {} });
       assert.equal(res.previews, 2);
       assert.deepEqual(res.errors, []);
-      const previews = f.to("sendPhoto").concat(f.to("sendMessage")).filter((c) => c.body.chat_id === "111");
+      const previews = f
+        .to("sendPhoto")
+        .concat(f.to("sendMessage"))
+        .filter((c) => c.body.chat_id === "111" && /Prévia #/.test(c.body.caption ?? c.body.text ?? ""));
       assert.equal(previews.length, 2);
+      const summary = f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body;
+      assert.match(summary.text, /Lote novo: 2 prévias/);
+      assert.equal(summary.reply_markup.inline_keyboard[0][0].callback_data, "s:0", "🔎 search again");
       assert.match(previews[0]!.body.caption ?? previews[0]!.body.text, /Prévia #\d+/);
       assert.equal(previews[0]!.body.reply_markup.inline_keyboard[0][0].text, "✅ Aprovar");
 
@@ -274,7 +280,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
   it("tells the admin when the product was recently cheaper", async () => {
     const cfg = testConfig({ REPOST_COOLDOWN_DAYS: "0", SKIP_FAKE_DISCOUNTS: "false" });
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
-    const lastPreview = () => f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body.text as string;
+    const lastPreview = () => f.to("sendMessage").filter((c) => c.body.chat_id === "111" && /Prévia #/.test(c.body.text)).at(-1)!.body.text as string;
     try {
       await collect(cfg, [offer("hist")]);
       assert.doesNotMatch(lastPreview(), /30 dias/, "no history yet, no note");
@@ -812,7 +818,8 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
         `SELECT extract(epoch FROM (b.scheduled_at - a.published_at))::int AS gap FROM posts a, posts b WHERE a.id = $1 AND b.id = $2`,
         [a.id, b.id],
       ))[0]!;
-      assert.ok(Math.abs(at.gap - 40 * 60) < 5, `spaced by 40 min (got ${at.gap}s)`);
+      // Spread over what's left of the search window, never closer than QUEUE_INTERVAL_MINUTES.
+      assert.ok(at.gap >= 40 * 60 - 5, `at least 40 min apart (got ${at.gap}s)`);
 
       await tap(cfg, `u:${b.id}`);
       assert.equal((await postFor("qb")).status, "pending", "unscheduled");
@@ -1165,7 +1172,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     try {
       await collect(cfg, [offer("own-1")]);
       const post = await postFor("own-1");
-      const kb = f.to("sendMessage").filter((c) => c.body.chat_id === "111").at(-1)!.body.reply_markup.inline_keyboard;
+      const kb = f.to("sendMessage").filter((c) => c.body.chat_id === "111" && /Prévia #/.test(c.body.text)).at(-1)!.body.reply_markup.inline_keyboard;
       assert.equal(kb[1][1].callback_data, `e:${post.id}`, "✏️ button on the preview");
 
       await tap(cfg, `e:${post.id}`);

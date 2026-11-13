@@ -224,7 +224,7 @@ export function loadConfig(env: Env): Config {
       blockedWords: list(env.BLOCKED_WORDS),
       skipFakeDiscounts: bool(env.SKIP_FAKE_DISCOUNTS, true),
     },
-    queue: { intervalMinutes: Math.max(0, int(env.QUEUE_INTERVAL_MINUTES, 40)), ...parsePostingHours(env.POSTING_HOURS) },
+    queue: { intervalMinutes: Math.max(0, int(env.QUEUE_INTERVAL_MINUTES, 20)), ...parsePostingHours(env.POSTING_HOURS) },
     autoApproveMinDiscountPct: Math.max(0, int(env.AUTO_APPROVE_MIN_DISCOUNT, 0)),
     site: {
       name: env.SITE_NAME?.trim() || "Promoções do dia",

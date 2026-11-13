@@ -7,6 +7,7 @@ import {
   pendingKeyboard,
   postIdFromOwnTextPrompt,
   refreshPreview,
+  SEARCH_AGAIN,
   sendPreview,
   swapPreviewPhoto,
   updatePreview,
@@ -105,7 +106,7 @@ const HELP = `<b>Comandos</b>
 /video id — gera um vídeo curto (Reels/TikTok) do post, com a legenda pronta
 /link nome — cria um link de convite com nome em cada grupo (ex.: /link ig-bio), para ver no /stats quem entrou por onde
 /stats [dias] — cliques e o que mais funciona (padrão 7 dias)
-/buscar — busca promoções agora
+/buscar — busca promoções agora (a busca automática roda às 6h, 12h e 18h)
 /cupom — posta um cupom de desconto (mande só /cupom para ver o formato)
 /id — mostra o id deste chat (útil para configurar grupos)
 
@@ -261,7 +262,22 @@ async function restoreStorePhoto(cfg: Config, db: Db, postId: number): Promise<s
   return "Foto da loja de volta.";
 }
 
-/** Starts the "Collect deals" GitHub workflow. Used by /buscar and by the Worker's cron. */
+/** More links than this in one message go to GitHub Actions (links.yml): the Worker only has ~30s. */
+export const INLINE_LINKS = 3;
+/** Links read from one message at most. */
+export const MAX_LINKS = 20;
+
+/** Several links in one message: all of them become previews in GitHub Actions, no 30s limit there. */
+async function requestLinkBatch(cfg: Config, chatId: string, messageId: number, text: string, count: number): Promise<string> {
+  const gh = cfg.githubDispatch;
+  if (!gh) return `Recebi ${count} links, mas só consigo ler ${INLINE_LINKS} por mensagem sem GH_DISPATCH_TOKEN e GH_REPO.`;
+  const res = await dispatchWorkflow(gh, "links.yml", { text, chat_id: chatId, message_id: String(messageId) });
+  return res.ok
+    ? `📥 Recebi ${count} links. Vou ler um por um: as prévias chegam aqui em alguns minutos.`
+    : `Não consegui iniciar a leitura dos links: GitHub respondeu HTTP ${res.status}`;
+}
+
+/** Starts the "Collect deals" GitHub workflow. Used by /buscar, 🔎 and the Worker's cron. */
 export async function triggerCollect(cfg: Config): Promise<{ ok: boolean; message: string }> {
   const gh = cfg.githubDispatch;
   if (!gh) return { ok: false, message: "Configure GH_DISPATCH_TOKEN e GH_REPO para buscar promoções pelo bot." };
@@ -322,7 +338,7 @@ ${COUPON_HELP}`);
 }
 
 /** A link sent in the admin chat becomes a preview, like the ones the search sends. */
-async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: number, sub: Submission): Promise<void> {
+export async function postFromLink(cfg: Config, db: Db, chatId: string, messageId: number, sub: Submission): Promise<void> {
   const token = cfg.telegram.botToken;
   await tg(token, "setMessageReaction", { chat_id: chatId, message_id: messageId, reaction: [{ type: "emoji", emoji: "👀" }] }).catch(() => {});
   const built = await buildCandidate(sub, { shopee: cfg.shopee, aliexpress: cfg.aliexpress });
@@ -390,6 +406,11 @@ async function handleCallback(cfg: Config, db: Db, cq: NonNullable<TgUpdate["cal
   const [action, rawId] = (cq.data ?? "").split(":");
   const postId = Number(rawId);
   if (!Number.isInteger(postId)) return answer("?");
+
+  if (action === "s") {
+    const res = await triggerCollect(cfg);
+    return answer(res.ok ? "🔎 Buscando… as prévias chegam em 1–2 minutos." : res.message);
+  }
 
   if (action === "w") {
     await answer("Enviando o resumo…");
@@ -486,7 +507,13 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
 
   // A product link sent to the bot in the admin chat becomes a preview.
   if (!command && chatId === cfg.telegram.adminChatId) {
-    const subs = parseSubmissions(text || msg.caption?.trim() || "");
+    const body = text || msg.caption?.trim() || "";
+    const subs = parseSubmissions(body, MAX_LINKS);
+    if (subs.length > INLINE_LINKS) {
+      await tg(token, "setMessageReaction", { chat_id: chatId, message_id: msg.message_id, reaction: [{ type: "emoji", emoji: "👀" }] }).catch(() => {});
+      await sendText(token, chatId, await requestLinkBatch(cfg, chatId, msg.message_id, body, subs.length));
+      return;
+    }
     // One by one: the Worker has ~30s and each link is a page read + AI caption.
     for (const sub of subs) await postFromLink(cfg, db, chatId, msg.message_id, sub);
     if (subs.length) return;
@@ -499,7 +526,7 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
     case "/start":
     case "/ajuda":
     case "/help":
-      await sendText(token, chatId, HELP);
+      await sendText(token, chatId, HELP, SEARCH_AGAIN);
       return;
     case "/stats": {
       const days = Math.min(Math.max(Number.parseInt(text.split(/\s+/)[1] ?? "7", 10) || 7, 1), 365);

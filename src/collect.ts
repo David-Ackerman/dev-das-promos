@@ -2,7 +2,7 @@ import { candidateFromPost, generateCaption, SEARCH_CAPTION } from "./ai.ts";
 import { approvePost, flagEndedDeals } from "./publish.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
-import { pendingKeyboard, previewHtml, retryKeyboard, sendPreview, statusHeader, updatePreview } from "./preview.ts";
+import { pendingKeyboard, previewHtml, retryKeyboard, SEARCH_AGAIN, sendPreview, statusHeader, updatePreview } from "./preview.ts";
 import { decideImage } from "./images.ts";
 import { fetchAmazonCandidates } from "./providers/amazon.ts";
 import { fetchAmazonScrapedCandidates } from "./providers/amazon-scrape.ts";
@@ -216,6 +216,9 @@ export async function runCollect(
   );
 
   let aiError = "";
+  // Auto-approval waits until every preview of the batch exists, so the queue
+  // spreads the whole batch over the window (see spreadSlot).
+  const toApprove: number[] = [];
   for (const c of picks) {
     try {
       const ref = randomCode(10);
@@ -267,26 +270,36 @@ export async function runCollect(
         throw error;
       }
       result.previews++;
-      if (shouldAutoApprove(cfg, shown)) {
-        log(`Auto-approved #${post.id}: ${await approvePost(cfg, db, post.id, { auto: true })}`);
-        result.autoApproved++;
-      }
+      if (shouldAutoApprove(cfg, shown)) toApprove.push(post.id);
     } catch (error) {
       result.errors.push(`${c.marketplace} ${c.externalId}: ${errorMessage(error)}`);
       log(`Failed to prepare ${c.externalId}: ${errorMessage(error)}`);
     }
   }
 
+  for (const id of toApprove) {
+    try {
+      log(`Auto-approved #${id}: ${await approvePost(cfg, db, id, { auto: true })}`);
+      result.autoApproved++;
+    } catch (error) {
+      result.errors.push(`#${id}: ${errorMessage(error)}`);
+    }
+  }
+
   if (aiError) result.errors.push(`IA falhou, usei texto padrão: ${aiError}`);
 
-  if (!opts.dryRun && (result.errors.length || result.previews === 0)) {
+  if (!opts.dryRun) {
     const msg = [
-      result.previews === 0 ? `🤷 Nenhuma promoção nova acima de ${cfg.selection.minDiscountPct}% nesta rodada.` : "",
+      result.previews === 0
+        ? `🤷 Nenhuma promoção nova que valha a pena nesta rodada (acima de ${cfg.selection.minDiscountPct}%, sem desconto fake). A fila continua como está.`
+        : `📦 <b>Lote novo: ${result.previews} ${result.previews === 1 ? "prévia" : "prévias"}</b>` +
+          (result.autoApproved ? ` · ${result.autoApproved} aprovada(s) automaticamente` : "") +
+          "\nAs aprovadas saem espalhadas até a próxima busca.",
       ...result.errors.map((e) => `⚠️ ${escapeHtml(e)}`),
     ]
       .filter(Boolean)
       .join("\n");
-    await sendText(cfg.telegram.botToken, cfg.telegram.adminChatId, msg).catch(() => {});
+    await sendText(cfg.telegram.botToken, cfg.telegram.adminChatId, msg, SEARCH_AGAIN).catch(() => {});
   }
   return result;
 }

@@ -30,7 +30,7 @@ Everything runs on free plans: **GitHub Actions**, **Cloudflare Workers** and **
 4. If a channel fails (the bot was removed from a group, X is out of credits…), the preview says which one and shows **🔁 Tentar de novo**. It sends only where it's still missing, so nobody gets the post twice.
 5. If you don't answer a preview within 12h, it expires, because prices change.
 
-**Queue.** Approved posts go out one at a time, `QUEUE_INTERVAL_MINUTES` apart (default 40), only inside `POSTING_HOURS` (default `6-23`, Brasília). So you can approve ten posts in the morning and they're spread over the day. A queued preview shows "🕒 Agendado para 14:40" with **⚡ Publicar agora** and **↩️ Desagendar**. `/fila` lists the queue. Set `QUEUE_INTERVAL_MINUTES=0` to publish the moment you approve.
+**Searches and queue.** The bot searches at **6h, 12h and 18h** (Brasília) and sends the best `POSTS_PER_RUN` deals of each search (5–10 is a good number; fewer when there aren't that many real discounts, none when nothing is worth it, and then the queue just carries on). The posts you approve from a batch go out **spread evenly until the next search** (or the end of `POSTING_HOURS`, default `6-23`), never closer than `QUEUE_INTERVAL_MINUTES` (default 20). To search right away: **🔎 Buscar promoções agora** (under each search summary and `/ajuda`) or `/buscar`. A queued preview shows "🕒 Agendado para 14:40" with **⚡ Publicar agora** and **↩️ Desagendar**. `/fila` lists the queue. Set `QUEUE_INTERVAL_MINUTES=0` to publish the moment you approve.
 
 **Auto-approve** (off by default). With `AUTO_APPROVE_MIN_DISCOUNT=40`, previews with at least 40% off, AI-written text and no fake discount are approved for you (they still go through the queue, and you can unschedule them).
 
@@ -110,6 +110,7 @@ Texto do post (optional; without it the AI writes one)
 - The numbers after the link are the price and the old price, in any order. Prices you type win over what the page says.
 - Your link is kept **exactly as you sent it**, so your affiliate tag is untouched (except the Amazon/Shopee cases above that had no tracking). Clicks still go through the bot's `/go` tracking.
 - From there it's the normal flow: preview, ✅ ❌ 🔄, publish.
+- **Many links at once:** send up to 20 links in one message, one per line (prices after each are optional). Up to 3 are read right away; more go to GitHub Actions (`links.yml`) and the previews arrive in a few minutes, followed by a summary. Handy for a batch of Mercado Livre affiliate links made in the affiliate portal.
 
 Links sent inside groups are ignored. Only your private chat with the bot counts.
 

@@ -431,7 +431,7 @@ describe("scheduled search", () => {
     const waits: Promise<unknown>[] = [];
     const f = mockFetch(routes);
     try {
-      await handler.scheduled({ cron: "7 0,9,12,15,18,21 * * *" }, {}, { waitUntil: (p) => void waits.push(p) });
+      await handler.scheduled({ cron: "7 9,15,21 * * *" }, {}, { waitUntil: (p) => void waits.push(p) });
       await Promise.all(waits);
       return f;
     } finally {
