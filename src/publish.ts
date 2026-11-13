@@ -15,6 +15,7 @@ import {
   getOrCreateLink,
   getPost,
   lastPublishedAt,
+  countPending,
   queueTail,
   recordPublication,
   recordXUsage,
@@ -27,7 +28,7 @@ import {
   transition,
   updatePostPrice,
 } from "./repo.ts";
-import { formatSlot, nextSlot } from "./schedule.ts";
+import { formatSlot, nextSlot, spreadSlot } from "./schedule.ts";
 import { CAPTION_LIMIT, editAnyMessage, type Keyboard, sendPost, visibleLength } from "./telegram.ts";
 import type { PostRow } from "./types.ts";
 import { brl, discountPct, errorMessage, escapeHtml, hasAnyWord, truncate } from "./util.ts";
@@ -219,7 +220,8 @@ export async function approvePost(cfg: Config, db: Db, postId: number, opts: { a
   }
   if (!(await transition(db, postId, "pending", "queued"))) return "Esse post já foi processado.";
   const now = new Date();
-  const at = nextSlot(now, await queueTail(db), cfg.queue);
+  // Spread over the time left until the next search, sharing it with the previews still waiting.
+  const at = spreadSlot(now, await queueTail(db), await countPending(db), cfg.queue);
   if (at.getTime() <= now.getTime() + 60_000 && (await transition(db, postId, "queued", "publishing"))) {
     return finishPublishing(cfg, db, postId, { checkPrice: true });
   }

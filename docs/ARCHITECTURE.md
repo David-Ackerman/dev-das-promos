@@ -85,6 +85,7 @@ publishing queue), and Neon Postgres is the single source of truth both share.
 | | `restore.yml` | By hand: puts a `db-backup-N` artifact back, only into an empty database | — |
 | | `ai-check.yml` | Measures how often the AI writes the caption (manual) | `src/jobs/ai-check.ts` |
 | | `video.yml` | 10 s vertical video of a deal for Reels / TikTok / Shorts, sent to the admin | `src/jobs/video.ts` → `src/video.ts` |
+| | `links.yml` | More than 3 product links in one admin message (e.g. a batch of `meli.la` links): each becomes a preview, no 30 s limit | `src/jobs/links.ts` → `postFromLink` in `src/bot.ts` |
 | | `ci.yml` | Typecheck + tests on pull requests (and inside `deploy.yml`) | `test/` |
 | **Neon** | Postgres | Products, price history, posts, links, clicks, deliveries, roundups, X spend | `migrations/`, all SQL in `src/repo.ts` |
 | **Shopee** | Affiliate Open API (GraphQL) | Offer search, affiliate short links (post ref as sub-id), price check by item | `src/providers/shopee.ts` |
@@ -198,7 +199,7 @@ sequenceDiagram
 
   Admin->>TG: ✅ Aprovar
   TG->>W: webhook (callback a:id)
-  W->>DB: pending → queued, slot = last post + QUEUE_INTERVAL_MINUTES
+  W->>DB: pending → queued, slot spread until the next search (spreadSlot), ≥ QUEUE_INTERVAL_MINUTES apart
   W->>TG: preview "🕒 Agendado para 14:40" + ⚡ ↩️ ✏️
   Note over W: Every 5 min (cron), inside POSTING_HOURS,<br/>spacing kept even for overdue posts
   W->>DB: queued → publishing (only one caller wins)
@@ -274,11 +275,12 @@ sequenceDiagram
 | When (Brasília) | Who | What |
 |---|---|---|
 | Every 5 min | Worker cron `*/5 * * * *` | Publish the next queued post whose time has come |
-| 6h, 9h, 12h, 15h, 18h, 21h | Worker cron `7 0,9,12,15,18,21 * * *` | Start `collect.yml` (deal search) |
+| 6h, 12h, 18h | Worker cron `7 9,15,21 * * *` | Start `collect.yml` (deal search). Its approved posts are spread until the next search (`COLLECT_HOURS`, `spreadSlot` in `src/schedule.ts`). 🔎 / `/buscar` runs one any time |
 | Sundays 18h | Worker cron `0 21 * * SUN` | Weekly Top 10 preview for the admin |
 | Daily ~3h | GitHub schedule (`backup.yml`) | `pg_dump` backup |
 | On demand | Worker → `heal.yml` | Rewrite captions that fell back to a template |
 | On demand | Worker → `video.yml` (🎬 / `/video id`) | Build a 10 s vertical video with ffmpeg and send it to the admin chat |
+| On demand | Worker → `links.yml` (4+ links in one message) | Turn each link into a preview |
 
 Cloudflare numbers weekdays 1–7 or `SUN`–`SAT`; a rejected cron throws out every
 schedule of the deploy, so `test/unit.test.ts` checks them.

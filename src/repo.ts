@@ -591,6 +591,12 @@ export async function listQueued(db: Db): Promise<PostRow[]> {
   return db.query<PostRow>(`${POST_SELECT} WHERE p.status = 'queued' ORDER BY p.scheduled_at NULLS LAST, p.id`);
 }
 
+/** Previews still waiting for the admin: each will need a queue slot if approved. */
+export async function countPending(db: Db): Promise<number> {
+  const rows = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM posts WHERE status = 'pending'`);
+  return rows[0]?.n ?? 0;
+}
+
 /** The last post that went out or is waiting to: the next one is spaced from it. */
 export async function queueTail(db: Db): Promise<Date | null> {
   const rows = await db.query<{ last: string | null }>(

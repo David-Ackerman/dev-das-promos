@@ -9,6 +9,9 @@ import type { PostRow } from "./types.ts";
 import { formatSlot } from "./schedule.ts";
 import { brl, escapeHtml } from "./util.ts";
 
+/** 🔎 under the search's messages and /ajuda: run a search right away (callback "s"). */
+export const SEARCH_AGAIN: Keyboard = [[{ text: "🔎 Buscar promoções agora", callback_data: "s:0" }]];
+
 export function renderInput(cfg: Config, post: PostRow, link: string) {
   return {
     caption: post.caption,
