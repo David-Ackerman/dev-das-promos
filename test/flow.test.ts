@@ -405,7 +405,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       assert.ok(html.includes("<textarea"), "text shown for copying");
       assert.match(text, /Tweet da IA/);
       assert.match(text, /R\$\s50,00 \(-50%\)/);
-      assert.match(text, /\n#publi #JBL$/, "one product hashtag on X");
+      assert.match(text, /\n#JBL$/, "one product hashtag on X (no #publi: POST_FOOTER is empty by default)");
       const code = xUrl.split("/").pop()!;
       assert.ok(text.includes(`/go/${code}`), "X gets its own tracked link");
       const waCode = (kb[0][0].url as string).split("/").pop()!;
@@ -1077,7 +1077,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       const [g1, g2] = [sent.find((c) => c.body.chat_id === "-1001")!, sent.find((c) => c.body.chat_id === "-1002")!];
       assert.ok(codesIn(g1.body.text).length >= 3);
       assert.ok(codesIn(g1.body.text).every((c) => !codesIn(g2.body.text).includes(c)), "each group has its own links");
-      assert.match(g1.body.text, /#publi/);
+      assert.doesNotMatch(g1.body.text, /#publi/, "no footer by default (POST_FOOTER empty)");
 
       const wa = await handler.fetch(new Request(`https://w/wr/${id}`), {}, ctx);
       assert.equal(wa.status, 302);

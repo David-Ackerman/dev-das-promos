@@ -9,6 +9,8 @@ export interface Caption {
   model: string; // "template" when AI wasn't used
   /** Brand/product hashtag for X, without "#" (e.g. "Kindle"). */
   hashtag?: string;
+  /** Short product name for the post ("Smartwatch Bettdow"); undefined = derive it from the title. */
+  name?: string;
   /** Why the AI wasn't used, when it was configured but failed. */
   error?: string;
 }
@@ -20,35 +22,36 @@ export interface Caption {
  * the AI can't invent a wrong price.
  */
 const SYSTEM_PROMPT = `Você escreve a frase de chamada de um post de promoção num canal/grupo brasileiro (Telegram e WhatsApp).
-A frase fica logo acima do nome do produto, da foto e do preço.
+A frase fica logo acima do nome do produto, da foto e do preço. O preço e o desconto o sistema já mostra.
 
 Como a frase deve ser:
-- UMA frase curta e simples (até uns 60 caracteres), direta, no jeito de quem fala com amigo.
-- Um exagero de brincadeira é bem-vindo ("dá mais FPS", "pisar fofo").
-- Tente ser engraçado, nunca seja muito descritivo, não queremos ser redundantes, queremos algo pra chamar a atenção do leitor.
-- Pode brincar com a situação financeira dele, coisas como ("Esse monitor é pra quem é da elite", "Teclado no precinho pra quem ta liso")
-- Cite o produto de forma natural e curta: o modelo/marca ("Air Max", "Dunk Low") ou o tipo ("esse teclado", "essa air fryer"). Nunca o nome completo.
-- NÃO faça piada que não tem a ver com o produto, nem trocadilho forçado, nem referência a programação/dev/TI/trabalho de escritório se o produto não for disso.
+- UMA frase curta (até uns 60 caracteres), no jeito de quem fala com um amigo. Leve, com uma pitada de humor quando der.
+- Fale do que o produto FAZ na vida de quem compra: o uso, a cena, a sensação. Um exagero de brincadeira é bem-vindo ("dá mais FPS", "pisar fofo").
+- Varie o ângulo de um post pro outro. Escolha UM: a cena de uso ("café pronto antes do despertador"), o benefício principal, quem vai gostar ("presente certo pra quem joga"), um exagero engraçado, uma pergunta ("Ainda carregando o celular 2x por dia?") ou uma comparação ("mais leve que sua mochila da escola").
+- NÃO fale de dinheiro, bolso, preço, desconto, economia, "liso", "precinho", "barato" ou "pagar": o preço já aparece logo abaixo. Também não use "achado", "imperdível", "corre", "aproveite", "não perca", "ideal para", "perfeito para".
+- Cite o produto de forma natural e curta: a marca/modelo ("Air Max", "JBL") ou o tipo ("esse teclado", "essa air fryer"). Nunca o nome completo da loja.
+- NÃO faça piada sem relação com o produto, trocadilho forçado, nem referência a programação/dev/TI/escritório se o produto não for disso.
 - Não invente característica que não dá pra tirar do nome do produto.
-- Sem preço, desconto, link, @menção ou hashtag (o sistema coloca). No máximo 1 emoji, e só se combinar.
+- Sem preço, porcentagem, link, @menção ou hashtag. No máximo 1 emoji, e só se combinar.
+- Se vierem "frases recentes do canal", a sua tem que ser diferente delas: outra ideia, outra palavra principal, outro começo.
 
 Exemplos (produto → texto):
 - Tênis Nike Air Max 90 masculino → Nike Air Max pra você pisar fofo
 - Teclado mecânico gamer Redragon Kumara RGB → Esse teclado vai melhorar sua gameplay
 - Placa de vídeo Radeon RX 7600 8GB RGB → Placa de vídeo com RGB dá mais FPS 😎
-- Placa de vídeo Radeon RX 9060 XT → Bora dar um upgrade nessa máquina
-- Playstatio 5 -> Sua namorada vai querer brigar ou jogar junto
-- Tênis Nike Dunk Low feminino → Dunk Low pras meninas
+- PlayStation 5 → Sua namorada vai querer brigar ou jogar junto
 - Smartwatch Huawei Band 10 → Esse faz mais do que mostrar as horas
 - Air fryer Mondial 4L → Batata crocante sem gastar óleo
 - Cadeira gamer ThunderX3 → Suas costas agradecem depois da ranked
 - Fone Bluetooth JBL Tune 520BT → Música sem fio o dia inteiro
-- Produto caro com bom preço parcelad -> Parceladinho nem vai pesar no seu bolso
+- Cafeteira Nespresso Essenza Mini → Café de cafeteria sem sair de casa ☕
+- Power bank Xiaomi 20000mAh → Ainda carregando o celular duas vezes por dia?
 
-Responda APENAS com JSON: {"texto": "...", "tweet": "...", "tag": "..."}
+Responda APENAS com JSON: {"texto": "...", "tweet": "...", "tag": "...", "nome": "..."}
 - "texto": a frase (até 70 caracteres).
 - "tweet": a mesma frase ou uma variação (até 100 caracteres).
-- "tag": a marca ou o nome curto do produto, para virar hashtag (ex.: "Kindle", "JBL", "AirMax"), sem # e sem espaços; "" se não houver uma marca clara.`;
+- "tag": a marca ou o nome curto do produto, para virar hashtag (ex.: "Kindle", "JBL", "AirMax"), sem # e sem espaços; "" se não houver uma marca clara.
+- "nome": o nome do produto pro post, curto (2 a 4 palavras): o tipo + a marca/modelo, em português. Ex.: "Bettdow SmartWatch, relógio com Ecrã tátil e Alexa, IP68..." → "Smartwatch Bettdow"; "Fone de Ouvido Bluetooth JBL Tune 520BT Preto" → "Fone JBL Tune 520BT"; "Fritadeira Elétrica Air Fryer Mondial 4L 1500W" → "Air Fryer Mondial 4L".`;
 
 /** Coupons: a call to use the coupon; the system writes code, value and rules below it. */
 const COUPON_PROMPT = `Você escreve a frase de chamada de um post de CUPOM DE DESCONTO num canal/grupo brasileiro de promoções (Telegram e WhatsApp).
@@ -150,6 +153,19 @@ export function cleanAiText(text: string, max: number): string {
   );
 }
 
+/** "Frases recentes do canal" for the model: the last captions, so the new one isn't the same joke again. */
+export function recentBlock(recent: string[]): string {
+  const lines = [...new Set(recent.map((r) => r.replace(/\s+/g, " ").trim()).filter(Boolean))].slice(0, 12);
+  return lines.length ? `\n\nFrases recentes do canal (a sua tem que ser diferente):\n${lines.map((l) => `- ${l}`).join("\n")}` : "";
+}
+
+/** The AI's short product name: 2–5 words, no price/link, else undefined (the title is used). */
+export function cleanProductName(raw: string | undefined): string | undefined {
+  const name = cleanAiText(raw ?? "", 60).replace(/["“”]/g, "").replace(/\s+/g, " ").trim();
+  const words = name.split(" ").filter(Boolean).length;
+  return words >= 1 && words <= 6 && name.length >= 3 && name.length <= 45 ? name : undefined;
+}
+
 /** Generic tags reach nobody (and look like spam); only a brand/product name is worth it. */
 const GENERIC_TAGS = new Set([
   "promo", "promocao", "promocoes", "oferta", "ofertas", "desconto", "descontos", "publi", "achado", "achadinho",
@@ -164,14 +180,19 @@ export function cleanHashtag(raw: string | undefined): string | undefined {
   return GENERIC_TAGS.has(plain) ? undefined : tag;
 }
 
-export function parseAiJson(raw: string): { texto: string; tweet: string; tag?: string } {
+export function parseAiJson(raw: string): { texto: string; tweet: string; tag?: string; nome?: string } {
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("AI did not return JSON");
   const obj = JSON.parse(match[0]) as Record<string, unknown>;
   const texto = typeof obj.texto === "string" ? obj.texto : "";
   const tweet = typeof obj.tweet === "string" ? obj.tweet : texto;
   if (!texto.trim()) throw new Error('AI JSON missing "texto"');
-  return { texto, tweet, tag: typeof obj.tag === "string" ? obj.tag : undefined };
+  return {
+    texto,
+    tweet,
+    tag: typeof obj.tag === "string" ? obj.tag : undefined,
+    ...(typeof obj.nome === "string" ? { nome: obj.nome } : {}),
+  };
 }
 
 /** Whole budget for one caption. The Worker (🔄 button) is cut off ~30s after answering Telegram. */
@@ -182,6 +203,8 @@ export interface CaptionOptions {
   budgetMs?: number;
   /** Cap per request, so one slow model can't eat the whole budget. */
   perModelMs?: number;
+  /** The channel's latest captions: the new one must not repeat their idea or words. */
+  recent?: string[];
 }
 
 /** GitHub Actions has no 30s limit: the search gives every model time and busy ones extra rounds. */
@@ -194,7 +217,7 @@ class BusyError extends Error {}
  * Reasoning models may wrap their answer in <think>…</think>, and some ignore the
  * JSON instruction and just write the line. A short plain-text reply is used as is.
  */
-export function parseAiReply(raw: string): { texto: string; tweet: string; tag?: string } {
+export function parseAiReply(raw: string): { texto: string; tweet: string; tag?: string; nome?: string } {
   const text = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
   if (!text) throw new Error("empty reply");
   if (text.includes("{")) return parseAiJson(text);
@@ -240,6 +263,7 @@ export async function askModel(
   entry: ModelEntry,
   candidate: Candidate,
   timeoutMs: number,
+  recent: string[] = [],
 ): Promise<Caption> {
   try {
     if (!entry.apiKey) throw new Error("no API key for this provider");
@@ -257,7 +281,7 @@ export async function askModel(
         max_tokens: 1500,
         messages: [
           { role: "system", content: candidate.coupon ? COUPON_PROMPT : SYSTEM_PROMPT },
-          { role: "user", content: facts(candidate) },
+          { role: "user", content: facts(candidate) + recentBlock(recent) },
         ],
       }),
       signal: AbortSignal.timeout(timeoutMs),
@@ -272,7 +296,7 @@ export async function askModel(
       throw [429, 502, 503].includes(res.status) ? new BusyError(msg) : new Error(msg);
     }
     const message = body.choices?.[0]?.message;
-    let parsed: { texto: string; tweet: string; tag?: string };
+    let parsed: { texto: string; tweet: string; tag?: string; nome?: string };
     try {
       parsed = parseAiReply(contentText(message?.content));
     } catch (error) {
@@ -286,7 +310,7 @@ export async function askModel(
     const short = shortCaption(cleanAiText(parsed.tweet, 300), 1, 110);
     // "...", "ok", a lone emoji: not a caption, let the next model try.
     if ((caption.match(/\p{L}/gu) ?? []).length < 8) throw new Error(`reply too short: "${caption}"`);
-    return { caption, short: short || truncate(caption, 150), model: entry.label, hashtag: cleanHashtag(parsed.tag) };
+    return { caption, short: short || truncate(caption, 150), model: entry.label, hashtag: cleanHashtag(parsed.tag), name: cleanProductName(parsed.nome) };
   } catch (error) {
     // Every failure names its model, so the admin sees which ones were tried.
     const msg = `${entry.label}: ${errorMessage(error)}`;
@@ -318,7 +342,7 @@ export async function generateCaption(
       return undefined;
     }
     try {
-      return await askModel(cfg, entry, candidate, Math.min(left, perModel));
+      return await askModel(cfg, entry, candidate, Math.min(left, perModel), opts.recent);
     } catch (error) {
       errors.push(errorMessage(error));
       if (error instanceof BusyError) busy.push(entry);

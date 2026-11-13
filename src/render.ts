@@ -16,6 +16,8 @@ export interface RenderInput {
   hashtag?: string | null;
   /** A coupon post (/cupom): code, discount, rules and how to use instead of a product price. */
   coupon?: Coupon | null;
+  /** Short product name ("Smartwatch Bettdow"), shown instead of the store's long title. */
+  shortTitle?: string | null;
   /** Sale-day slogan shown first ("11.11 A maior liquida do ano"), while a campaign is on. */
   campaign?: string | null;
   /** X only: the campaign hashtag without "#". */
@@ -87,6 +89,11 @@ export function inStore(name: string): string {
   return masculine.test(name) ? `no ${name.replace(/^o\s+/i, "")}` : `na ${name}`;
 }
 
+/** The name shown in a post: the short one when there is one, else the title (cut). */
+export function productName(p: Pick<RenderInput, "title" | "shortTitle">, max = 110): string {
+  return p.shortTitle?.trim() || truncate(p.title, max);
+}
+
 export function storeName(marketplace: Marketplace): string {
   return STORE[marketplace] ?? marketplace.charAt(0).toUpperCase() + marketplace.slice(1);
 }
@@ -106,7 +113,7 @@ export function renderTelegram(p: RenderInput): string {
     ...campaignLines(p, (s) => `<b>${escapeHtml(s)}</b>`),
     escapeHtml(p.caption),
     "",
-    `🛍️ <b>${escapeHtml(truncate(p.title, 110))}</b>`,
+    `🛍️ <b>${escapeHtml(productName(p))}</b>`,
     `💸 ${price}`,
     `🏪 ${storeName(p.marketplace)}`,
     "",
@@ -130,7 +137,7 @@ export function renderWhatsApp(p: RenderInput): string {
     ...campaignLines(p, (s) => `*${s}*`),
     p.caption,
     "",
-    `🛍️ *${truncate(p.title, 110)}*`,
+    `🛍️ *${productName(p)}*`,
     `💸 ${price}`,
     `🏪 ${storeName(p.marketplace)}`,
     "",
@@ -178,7 +185,7 @@ function renderXPlain(p: RenderInput, linkOrNote: string): string {
   const tags = (withHashtag: boolean) =>
     [p.footer ? "#publi" : "", withHashtag && p.hashtag ? `#${p.hashtag}` : ""].filter(Boolean).join(" ");
   const build = (titleMax: number, short: string, withHashtag = false) =>
-    [short, "", `${truncate(p.title, titleMax)} por ${price}`, linkOrNote, tags(withHashtag)]
+    [short, "", `${productName(p, titleMax)} por ${price}`, linkOrNote, tags(withHashtag)]
       .filter((l, i) => l !== "" || i === 1)
       .join("\n")
       .trim();

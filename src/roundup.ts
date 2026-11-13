@@ -38,7 +38,7 @@ function priceText(post: PostRow): string {
 
 export function roundupTelegram(cfg: Config, posts: PostRow[], linkFor: (post: PostRow) => string): string {
   const items = posts.map(
-    (p, i) => `${i + 1}. <b>${escapeHtml(truncate(p.title, 80))}</b> — ${priceText(p)}\n👉 ${escapeHtml(linkFor(p))}`,
+    (p, i) => `${i + 1}. <b>${escapeHtml((p.short_title || truncate(p.title, 80)))}</b> — ${priceText(p)}\n👉 ${escapeHtml(linkFor(p))}`,
   );
   return [
     `🔥 <b>${escapeHtml(roundupHeading(cfg, posts.length).title)}</b>`,
@@ -54,7 +54,7 @@ export function roundupTelegram(cfg: Config, posts: PostRow[], linkFor: (post: P
 }
 
 export function roundupWhatsApp(cfg: Config, posts: PostRow[], linkFor: (post: PostRow) => string): string {
-  const items = posts.map((p, i) => `${i + 1}. *${truncate(p.title, 80)}* — ${priceText(p)}\n👉 ${linkFor(p)}`);
+  const items = posts.map((p, i) => `${i + 1}. *${(p.short_title || truncate(p.title, 80))}* — ${priceText(p)}\n👉 ${linkFor(p)}`);
   return [
     `🔥 *${roundupHeading(cfg, posts.length).title}*`,
     roundupHeading(cfg, posts.length).subtitle,

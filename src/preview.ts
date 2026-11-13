@@ -25,6 +25,7 @@ export function renderInput(cfg: Config, post: PostRow, link: string) {
     footer: cfg.footer,
     hashtag: post.hashtag,
     coupon: post.kind === "coupon" ? post.coupon : null,
+    shortTitle: post.short_title ?? null,
     campaign: activeCampaign(cfg)?.tag ?? null,
     campaignHashtag: activeCampaign(cfg)?.hashtag ?? null,
   };

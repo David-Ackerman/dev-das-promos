@@ -5,7 +5,7 @@ import { randomCode } from "./util.ts";
 
 const POST_SELECT = `
   SELECT p.id, p.product_id, p.ref, p.status, p.price_cents, p.original_price_cents,
-         p.discount_pct, p.lowest_seen_cents, p.affiliate_url, p.caption, p.caption_short, p.hashtag, p.ai_model,
+         p.discount_pct, p.lowest_seen_cents, p.affiliate_url, p.caption, p.caption_short, p.hashtag, p.short_title, p.ai_model,
          p.preview_chat_id, p.preview_message_id::text AS preview_message_id, p.preview_has_photo,
          to_char(p.scheduled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS scheduled_at,
          p.price_from_admin, p.kind, p.coupon,
@@ -90,6 +90,8 @@ export async function createPost(
     affiliateUrl: string;
     lowestSeenCents?: number | null;
     hashtag?: string | null;
+    /** Short product name for the posts ("Smartwatch Bettdow"); null = the title. */
+    shortTitle?: string | null;
     priceFromAdmin?: boolean;
     caption: string;
     captionShort: string;
@@ -99,8 +101,8 @@ export async function createPost(
   const rows = await db.query<{ id: number }>(
     `INSERT INTO posts (product_id, ref, price_cents, original_price_cents, discount_pct,
                         commission_rate, affiliate_url, caption, caption_short, ai_model, lowest_seen_cents, hashtag,
-                        price_from_admin)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+                        price_from_admin, short_title)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
     [
       input.productId,
       input.ref,
@@ -115,9 +117,20 @@ export async function createPost(
       input.lowestSeenCents ?? null,
       input.hashtag ?? null,
       input.priceFromAdmin ?? false,
+      input.shortTitle ?? null,
     ],
   );
   return (await getPost(db, (rows[0] as { id: number }).id)) as PostRow;
+}
+
+/** The latest captions of the channel, newest first: the AI is asked not to repeat them. */
+export async function recentCaptions(db: Db, limit = 12): Promise<string[]> {
+  const rows = await db.query<{ caption: string }>(
+    `SELECT caption FROM posts WHERE kind = 'deal' AND status IN ('pending', 'queued', 'publishing', 'published', 'partial')
+     ORDER BY id DESC LIMIT $1`,
+    [limit],
+  );
+  return rows.map((r) => r.caption);
 }
 
 /**
@@ -272,13 +285,15 @@ export async function updateCaption(
   captionShort: string,
   aiModel: string,
   hashtag?: string,
+  shortTitle?: string,
 ): Promise<void> {
-  // A new hashtag replaces the old one; no hashtag (template, typed text) keeps it.
+  // A new hashtag / short name replaces the old one; none (template, typed text) keeps it.
   // Queued posts can still get a new text while they wait for their slot.
   await db.query(
-    `UPDATE posts SET caption = $2, caption_short = $3, ai_model = $4, hashtag = COALESCE($5::text, hashtag)
+    `UPDATE posts SET caption = $2, caption_short = $3, ai_model = $4, hashtag = COALESCE($5::text, hashtag),
+                      short_title = COALESCE($6::text, short_title)
      WHERE id = $1 AND status IN ('pending', 'queued')`,
-    [postId, caption, captionShort, aiModel, hashtag ?? null],
+    [postId, caption, captionShort, aiModel, hashtag ?? null, shortTitle ?? null],
   );
 }
 

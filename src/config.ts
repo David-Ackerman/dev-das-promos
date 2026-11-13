@@ -246,7 +246,8 @@ export function loadConfig(env: Env): Config {
       dailyLimit: Math.max(0, int(env.IMAGE_DAILY_LIMIT, 20)),
     },
     amazonPartnerTag: env.AMAZON_PARTNER_TAG?.trim() || undefined,
-    footer: env.POST_FOOTER?.trim() ?? "#publi · link de afiliado",
+    // Off by default (the owner's choice); POST_FOOTER="#publi · link de afiliado" turns it back on.
+    footer: env.POST_FOOTER?.trim() ?? "",
     campaign: parseCampaign(env.CAMPAIGN_TAG, env.CAMPAIGN_HASHTAG, env.CAMPAIGN_UNTIL),
   };
 
