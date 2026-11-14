@@ -121,6 +121,7 @@ GitHub → Settings → Environments → **production**:
 | Variable | `EVOLUTION_INSTANCE` | `promos` |
 | Secret | `EVOLUTION_API_KEY` | from setup |
 | Variable | `SITE_WHATSAPP_URL` | the channel link |
+| Variable | `EVOLUTION_CHANNEL_PHOTOS` | `on` (see below) |
 
 Then run **Actions → Deploy** (or push). Approve one deal: it should show up in
 the channel with its photo, and the admin message lists "WhatsApp …@newsletter"
@@ -129,6 +130,17 @@ as sent. Failures show up in the same message, and 🔁 retry only resends what 
 `WHATSAPP_GROUP_IDS` takes several ids separated by commas, e.g. the channel plus
 a group (`...@g.us`) where the new number is admin. In this mode the 📲 button
 goes away.
+
+### Photos in the channel
+
+Stock Evolution 2.4 uploads channel photos the way chats do, so WhatsApp answers
+OK but never shows them. `deploy/evolution/patches/newsletter-media.cjs` fixes
+that inside the container (raw upload to WhatsApp's channel media path, as
+WhatsApp Web does) and `docker-compose.yml` loads it. After pulling it on the VM
+(`git pull && bash deploy/evolution/setup.sh`), `docker compose logs evolution`
+shows `[newsletter-media] active`; then set `EVOLUTION_CHANNEL_PHOTOS=on`.
+Without that variable channels get text with the link (WhatsApp's preview shows
+the product), and with it a photo the server can't send also falls back to text.
 
 ## Keeping the number healthy
 

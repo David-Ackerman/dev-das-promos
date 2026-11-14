@@ -111,17 +111,24 @@ async function sendOnce(
 ): Promise<string | undefined> {
   if (wa.mode === "evolution" && wa.evolution) {
     const { baseUrl, apiKey, instance } = wa.evolution;
-    // Channels (@newsletter) always get text: WhatsApp silently drops photo posts sent to a
-    // channel this way (the server answers 201 but they never show up), while text with the
-    // link goes through and WhatsApp's link preview brings the product photo.
-    if (imageUrl && !isChannel(groupId)) {
-      const json = await postJson(`${baseUrl}/message/sendMedia/${instance}`, { apikey: apiKey }, {
-        number: groupId,
-        mediatype: "image",
-        media: imageUrl,
-        caption: text,
-      });
-      return (json.key as { id?: string } | undefined)?.id;
+    // Channels (@newsletter): a stock Evolution server uploads channel photos the chat way, so
+    // WhatsApp answers 201 but never shows them. With deploy/evolution/patches on the server
+    // (EVOLUTION_CHANNEL_PHOTOS=on) they work; the patch errors instead of silently dropping,
+    // and then the post goes as text with the link (WhatsApp's preview shows the product).
+    const channel = isChannel(groupId);
+    if (imageUrl && (!channel || wa.evolution.channelPhotos)) {
+      try {
+        const json = await postJson(`${baseUrl}/message/sendMedia/${instance}`, { apikey: apiKey }, {
+          number: groupId,
+          mediatype: "image",
+          media: imageUrl,
+          caption: text,
+        });
+        return (json.key as { id?: string } | undefined)?.id;
+      } catch (error) {
+        if (!channel || isConnectionError(error)) throw error;
+        console.warn(`WhatsApp channel photo failed, sending text: ${(error as Error).message}`);
+      }
     }
     const json = await postJson(`${baseUrl}/message/sendText/${instance}`, { apikey: apiKey }, {
       number: groupId,

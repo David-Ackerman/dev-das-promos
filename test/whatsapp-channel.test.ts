@@ -7,7 +7,7 @@ const wa = { mode: "evolution", groupIds: [], evolution: { baseUrl: "https://evo
 const attrs = () => new Response(JSON.stringify({ status: 500, response: { message: ["TypeError: Cannot read properties of undefined (reading 'attrs')"] } }), { status: 500 });
 
 describe("WhatsApp through Evolution", () => {
-  it("a channel always gets text with the link (photo posts to channels never show up)", async () => {
+  it("a channel gets text with the link unless the server is patched (EVOLUTION_CHANNEL_PHOTOS)", async () => {
     const f = mockFetch([
       ["/message/sendMedia/", attrs],
       ["/message/sendText/", () => ({ key: { id: "TXT1" } })],
@@ -18,6 +18,29 @@ describe("WhatsApp through Evolution", () => {
       assert.equal(f.to("/message/sendText/")[0]!.body.number, "120363434512137278@newsletter");
       assert.equal(f.to("/message/sendText/")[0]!.body.linkPreview, true);
       assert.equal(f.to("/message/sendMedia/").length, 0, "no photo attempt for a channel");
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("with EVOLUTION_CHANNEL_PHOTOS=on a channel gets the photo", async () => {
+    const on = { ...(wa as any), evolution: { ...(wa as any).evolution, channelPhotos: true } } as never;
+    const f = mockFetch([["/message/sendMedia/", () => ({ key: { id: "IMG1" } })], ["/message/sendText/", () => ({ key: { id: "TXT1" } })]]);
+    try {
+      assert.equal(await sendWhatsApp(on, "123@newsletter", "Oferta", "https://img/1.jpg"), "IMG1");
+      assert.equal(f.to("/message/sendMedia/")[0]!.body.caption, "Oferta");
+      assert.equal(f.to("/message/sendText/").length, 0);
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("a channel photo that fails on the server goes out as text instead", async () => {
+    const on = { ...(wa as any), evolution: { ...(wa as any).evolution, channelPhotos: true } } as never;
+    const f = mockFetch([["/message/sendMedia/", attrs], ["/message/sendText/", () => ({ key: { id: "TXT1" } })]]);
+    try {
+      assert.equal(await sendWhatsApp(on, "123@newsletter", "Oferta 👉 https://x", "https://img/1.jpg"), "TXT1");
+      assert.equal(f.to("/message/sendText/")[0]!.body.text, "Oferta 👉 https://x");
     } finally {
       f.restore();
     }
