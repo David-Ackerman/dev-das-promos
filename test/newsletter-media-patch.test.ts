@@ -98,7 +98,7 @@ describe("Evolution patch: photos to WhatsApp Channels", () => {
     const wrapped = wrapBaileys(ns);
     assert.equal(wrapped.__esModule, true);
     assert.equal(wrapped.other, 1);
-    const made = wrapped.default({});
+    const made = wrapped.default({}) as any;
     assert.equal(made, sock);
     assert.equal(made.__newsletterMediaPatched, true);
     assert.equal(wrapped.makeWASocket({}).__newsletterMediaPatched, true);
