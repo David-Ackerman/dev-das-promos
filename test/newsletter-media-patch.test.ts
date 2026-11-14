@@ -100,7 +100,7 @@ describe("Evolution patch: photos to WhatsApp Channels", () => {
     assert.equal(wrapped.other, 1);
     const made = wrapped.default({}) as any;
     assert.equal(made, sock);
-    assert.equal(made.__newsletterMediaPatched, true);
+    assert.equal((made as any).__newsletterMediaPatched, true);
     assert.equal(wrapped.makeWASocket({}).__newsletterMediaPatched, true);
   });
 });
