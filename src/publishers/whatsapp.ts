@@ -111,22 +111,17 @@ async function sendOnce(
 ): Promise<string | undefined> {
   if (wa.mode === "evolution" && wa.evolution) {
     const { baseUrl, apiKey, instance } = wa.evolution;
-    if (imageUrl) {
-      try {
-        const json = await postJson(`${baseUrl}/message/sendMedia/${instance}`, { apikey: apiKey }, {
-          number: groupId,
-          mediatype: "image",
-          media: imageUrl,
-          caption: text,
-        });
-        return (json.key as { id?: string } | undefined)?.id;
-      } catch (error) {
-        // Channels (@newsletter) take media through another upload path, which some
-        // Evolution versions break on ("reading 'attrs'"). The post still goes out as
-        // text: its link brings WhatsApp's own preview card with the product photo.
-        if (!isChannel(groupId)) throw error;
-        console.warn(`WhatsApp channel photo failed, sending text: ${error instanceof Error ? error.message : String(error)}`);
-      }
+    // Channels (@newsletter) always get text: WhatsApp silently drops photo posts sent to a
+    // channel this way (the server answers 201 but they never show up), while text with the
+    // link goes through and WhatsApp's link preview brings the product photo.
+    if (imageUrl && !isChannel(groupId)) {
+      const json = await postJson(`${baseUrl}/message/sendMedia/${instance}`, { apikey: apiKey }, {
+        number: groupId,
+        mediatype: "image",
+        media: imageUrl,
+        caption: text,
+      });
+      return (json.key as { id?: string } | undefined)?.id;
     }
     const json = await postJson(`${baseUrl}/message/sendText/${instance}`, { apikey: apiKey }, {
       number: groupId,
