@@ -7,7 +7,7 @@ const wa = { mode: "evolution", groupIds: [], evolution: { baseUrl: "https://evo
 const attrs = () => new Response(JSON.stringify({ status: 500, response: { message: ["TypeError: Cannot read properties of undefined (reading 'attrs')"] } }), { status: 500 });
 
 describe("WhatsApp through Evolution", () => {
-  it("a channel whose photo upload fails still gets the post, as text with the link", async () => {
+  it("a channel always gets text with the link (photo posts to channels never show up)", async () => {
     const f = mockFetch([
       ["/message/sendMedia/", attrs],
       ["/message/sendText/", () => ({ key: { id: "TXT1" } })],
@@ -17,12 +17,13 @@ describe("WhatsApp through Evolution", () => {
       assert.equal(id, "TXT1");
       assert.equal(f.to("/message/sendText/")[0]!.body.number, "120363434512137278@newsletter");
       assert.equal(f.to("/message/sendText/")[0]!.body.linkPreview, true);
+      assert.equal(f.to("/message/sendMedia/").length, 0, "no photo attempt for a channel");
     } finally {
       f.restore();
     }
   });
 
-  it("a group keeps the photo error (no silent downgrade there)", async () => {
+  it("a group still gets the photo, and keeps the photo error (no silent downgrade there)", async () => {
     const f = mockFetch([["/message/sendMedia/", attrs], ["/message/sendText/", () => ({ key: { id: "TXT1" } })]]);
     try {
       await assert.rejects(sendWhatsApp(wa, "123-456@g.us", "Oferta", "https://img/1.jpg"), /HTTP 500/);
