@@ -28,8 +28,11 @@ services:
       CACHE_REDIS_SAVE_INSTANCES: "false"
       CACHE_LOCAL_ENABLED: "false"
       LANGUAGE: pt-BR
+      # Photos to WhatsApp Channels (patches/newsletter-media.cjs explains why).
+      NODE_OPTIONS: --require /patches/newsletter-media.cjs
     volumes:
       - evolution_instances:/evolution/instances
+      - ./patches:/patches:ro
 
   postgres:
     image: postgres:16-alpine

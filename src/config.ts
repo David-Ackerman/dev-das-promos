@@ -28,7 +28,7 @@ export interface Config {
   whatsapp: {
     mode: WhatsAppMode;
     groupIds: string[];
-    evolution?: { baseUrl: string; apiKey: string; instance: string };
+    evolution?: { baseUrl: string; apiKey: string; instance: string; channelPhotos?: boolean };
     zapi?: { instanceId: string; token: string; clientToken: string };
   };
   x: {
@@ -291,6 +291,8 @@ export function loadConfig(env: Env): Config {
       baseUrl: req(env, "EVOLUTION_API_URL").replace(/\/+$/, ""),
       apiKey: req(env, "EVOLUTION_API_KEY"),
       instance: req(env, "EVOLUTION_INSTANCE"),
+      // Only once the server has deploy/evolution/patches (else channel photos vanish).
+      channelPhotos: env.EVOLUTION_CHANNEL_PHOTOS?.trim().toLowerCase() === "on",
     };
   }
   if (waMode === "zapi") {
