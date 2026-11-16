@@ -279,6 +279,7 @@ export async function fetchAmazonScrapedCandidates(
   const delay = Math.max(0, cfg.delayMs ?? 2000);
 
   const items = new Map<string, ScrapedItem>();
+  const topicOf = new Map<string, string>();
   let requests = 0;
   let answered = 0;
   let blocked = false;
@@ -316,7 +317,10 @@ export async function fetchAmazonScrapedCandidates(
       log(`Amazon (busca) "${query}" p${page}: ${found.length} itens${found.length ? "" : ` (página "${title}", ${html.length} bytes)`}`);
       for (const item of found) {
         const seen = items.get(item.asin);
-        if (!seen || item.discountPct > seen.discountPct) items.set(item.asin, item);
+        if (!seen || item.discountPct > seen.discountPct) {
+          items.set(item.asin, item);
+          topicOf.set(item.asin, query);
+        }
       }
       if (!found.length) break;
     }
@@ -328,5 +332,5 @@ export async function fetchAmazonScrapedCandidates(
   return [...items.values()]
     .filter((i) => i.discountPct >= min)
     .sort((a, b) => b.discountPct - a.discountPct)
-    .map((i) => toCandidate(i, cfg.partnerTag));
+    .map((i) => ({ ...toCandidate(i, cfg.partnerTag), topic: topicOf.get(i.asin) }));
 }

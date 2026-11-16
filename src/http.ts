@@ -1,7 +1,7 @@
 import { handleUpdate, type TgUpdate, triggerCollect } from "./bot.ts";
 import { activeCampaign, type Config, type Env } from "./config.ts";
 import type { Db } from "./db.ts";
-import { goUrl, publishDue } from "./publish.ts";
+import { goUrl, publishDue, releaseUncaptioned } from "./publish.ts";
 import { dealDetail, findDeals, getPost, postImageFileId, priceHistory, recordClick, recordSiteView, resolveLink, similarDeals, siteCoupons, siteDeals, sitemapDeals } from "./repo.ts";
 import { sendText, telegramFileUrl } from "./telegram.ts";
 import { whatsappShareUrl, xSharePage, xShareText } from "./share.ts";
@@ -216,7 +216,12 @@ export function createHandler(getDeps: (env: Env) => { cfg: Config; db: Db }) {
     async scheduled(event: { cron?: string }, env: Env, ctx: Ctx): Promise<void> {
       const { cfg, db } = getDeps(env);
       if (event.cron === QUEUE_CRON) {
-        ctx.waitUntil(publishDue(cfg, db).catch((e: unknown) => console.error("queue publish failed", e)));
+        ctx.waitUntil(
+          (async () => {
+            await releaseUncaptioned(cfg, db).catch((e: unknown) => console.error("releasing uncaptioned posts failed", e));
+            await publishDue(cfg, db).catch((e: unknown) => console.error("queue publish failed", e));
+          })(),
+        );
         return;
       }
       if (event.cron === CAMPAIGN_CRON) {
