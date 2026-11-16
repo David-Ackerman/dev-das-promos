@@ -141,8 +141,9 @@ export async function fetchShopeeCandidates(
   const failed: string[] = [];
   for (const keyword of cfg.keywords) {
     try {
+      // "" = no keyword: Shopee's own list (best sellers with sortType 2), not one search term.
       const data = await shopeeRequest<{ productOfferV2: { nodes: OfferNode[] } }>(cfg, SEARCH, {
-        keyword,
+        ...(keyword ? { keyword } : {}),
         sortType: cfg.sortType,
         page: 1,
         limit: perKeyword,
@@ -152,7 +153,7 @@ export async function fetchShopeeCandidates(
         const c = shopeeNodeToCandidate(node);
         if (c) out.push(c);
       }
-      log(`Shopee "${keyword}": ${nodes.length} itens`);
+      log(`Shopee ${keyword ? `"${keyword}"` : "(mais vendidos)"}: ${nodes.length} itens`);
     } catch (error) {
       failed.push(`"${keyword}": ${error instanceof Error ? error.message : String(error)}`);
       log(`Shopee "${keyword}" falhou: ${error instanceof Error ? error.message : String(error)}`);
