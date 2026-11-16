@@ -117,7 +117,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       const sent = f.calls.slice(before).filter((c) => /sendPhoto|sendMessage/.test(c.url) && String(c.body.chat_id).startsWith("-100"));
       assert.equal(sent.length, 2, "one message per Telegram group, no duplicates");
       const groupText: string = sent[0]!.body.caption ?? sent[0]!.body.text;
-      assert.match(groupText, /Texto meu, feito à mão/);
+      assert.match(groupText, /TEXTO MEU, FEITO À MÃO/);
       const code = groupText.match(/\/go\/([0-9a-zA-Z]+)/)![1]!;
       const tweets = f.to("api.x.com");
       assert.equal(tweets.length, 1);
@@ -906,7 +906,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       await tap(cfg, `a:${down.id}`);
       assert.equal((await byExt(ids.down)).status, "published");
       const group = f.calls.filter((c) => /sendPhoto|sendMessage/.test(c.url) && c.body.chat_id === "-1001").at(-1)!.body;
-      assert.match(group.caption ?? group.text, /<b>R\$\s40,00<\/b>/);
+      assert.match(group.caption ?? group.text, /<b>R\$\s40<\/b>/);
 
       // Gone from Shopee: not published.
       now = { nodes: [] };
@@ -1106,7 +1106,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       assert.ok(healed >= 1);
       assert.equal((await model()).caption, "Texto da IA");
       const edit = f.to("editMessage").filter((c) => c.body.message_id === Number(post.preview_message_id)).at(-1)!.body;
-      assert.match(edit.caption ?? edit.text, /Texto da IA/);
+      assert.match(edit.caption ?? edit.text, /TEXTO DA IA/);
       assert.equal(edit.reply_markup.inline_keyboard[0][0].callback_data, `a:${post.id}`, "still a normal preview");
     } finally {
       f.restore();
