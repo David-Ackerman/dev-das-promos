@@ -98,26 +98,38 @@ export function storeName(marketplace: Marketplace): string {
   return STORE[marketplace] ?? marketplace.charAt(0).toUpperCase() + marketplace.slice(1);
 }
 
+/** The call line on top of a post, in capitals like the big promo channels do. */
+export function hook(caption: string): string {
+  return caption.trim().toLocaleUpperCase("pt-BR");
+}
+
+/** "R$ 26" for whole reais, "R$ 26,90" otherwise (never rounded). */
+export function brlPost(cents: number): string {
+  return cents % 100 === 0 ? brl(cents).replace(/,00$/, "") : brl(cents);
+}
+
+/** "De R$ 49 por R$ 26 na Amazon" / "Por R$ 26 na Amazon". */
+function priceLine(p: RenderInput, strike: (s: string) => string, bold: (s: string) => string): string {
+  const now = bold(brlPost(p.priceCents));
+  const was = p.originalPriceCents && p.discountPct > 0 ? `De ${strike(brlPost(p.originalPriceCents))} por ${now}` : `Por ${now}`;
+  return `${was} ${inStore(storeName(p.marketplace))}`;
+}
+
 /** Telegram, HTML parse mode. */
 export function renderTelegram(p: RenderInput): string {
   if (p.coupon) {
-    return [...campaignLines(p, (s) => `<b>${escapeHtml(s)}</b>`), escapeHtml(p.caption), "", ...couponBlock(p, p.coupon, TELEGRAM_FMT), "", `👉 ${escapeHtml(p.link)}`, p.footer ? `\n<i>${escapeHtml(p.footer)}</i>` : ""]
+    return [...campaignLines(p, (s) => `<b>${escapeHtml(s)}</b>`), `<b>${escapeHtml(hook(p.caption))}</b>`, "", ...couponBlock(p, p.coupon, TELEGRAM_FMT), "", `👉 ${escapeHtml(p.link)}`, p.footer ? `\n<i>${escapeHtml(p.footer)}</i>` : ""]
       .join("\n")
       .trim();
   }
-  const price =
-    p.originalPriceCents && p.discountPct > 0
-      ? `<s>${brl(p.originalPriceCents)}</s> por <b>${brl(p.priceCents)}</b> (-${p.discountPct}%)`
-      : `<b>${brl(p.priceCents)}</b>`;
   return [
     ...campaignLines(p, (s) => `<b>${escapeHtml(s)}</b>`),
-    escapeHtml(p.caption),
+    `<b>${escapeHtml(hook(p.caption))}</b>`,
     "",
-    `🛍️ <b>${escapeHtml(productName(p))}</b>`,
-    `💸 ${price}`,
-    `🏪 ${storeName(p.marketplace)}`,
+    escapeHtml(productName(p)),
     "",
-    `🛒 ${escapeHtml(p.link)}`,
+    priceLine(p, (s) => `<s>${s}</s>`, (s) => `<b>${s}</b>`),
+    escapeHtml(p.link),
     p.footer ? `\n<i>${escapeHtml(p.footer)}</i>` : "",
   ]
     .join("\n")
@@ -127,21 +139,16 @@ export function renderTelegram(p: RenderInput): string {
 /** WhatsApp formatting (*bold*, ~strike~, _italic_). */
 export function renderWhatsApp(p: RenderInput): string {
   if (p.coupon) {
-    return [...campaignLines(p, (s) => `*${s}*`), p.caption, "", ...couponBlock(p, p.coupon, WHATSAPP_FMT), "", `👉 ${p.link}`, p.footer ? `\n_${p.footer}_` : ""].join("\n").trim();
+    return [...campaignLines(p, (s) => `*${s}*`), `*${hook(p.caption)}*`, "", ...couponBlock(p, p.coupon, WHATSAPP_FMT), "", `👉 ${p.link}`, p.footer ? `\n_${p.footer}_` : ""].join("\n").trim();
   }
-  const price =
-    p.originalPriceCents && p.discountPct > 0
-      ? `~${brl(p.originalPriceCents)}~ por *${brl(p.priceCents)}* (-${p.discountPct}%)`
-      : `*${brl(p.priceCents)}*`;
   return [
     ...campaignLines(p, (s) => `*${s}*`),
-    p.caption,
+    `*${hook(p.caption)}*`,
     "",
-    `🛍️ *${productName(p)}*`,
-    `💸 ${price}`,
-    `🏪 ${storeName(p.marketplace)}`,
+    productName(p),
     "",
-    `🛒 ${p.link}`,
+    priceLine(p, (s) => `~${s}~`, (s) => `*${s}*`),
+    p.link,
     p.footer ? `\n_${p.footer}_` : "",
   ]
     .join("\n")

@@ -58,8 +58,8 @@ describe("render", () => {
   };
   it("escapes HTML for Telegram and shows the price", () => {
     const t = renderTelegram(input);
-    assert.match(t, /Café &lt;forte&gt; &amp; barato/);
-    assert.match(t, /<s>R\$\s299,90<\/s> por <b>R\$\s199,90<\/b> \(-33%\)/);
+    assert.match(t, /<b>CAFÉ &lt;FORTE&gt; &amp; BARATO<\/b>/);
+    assert.match(t, /De <s>R\$\s299,90<\/s> por <b>R\$\s199,90<\/b> na Amazon/);
     assert.match(t, /go\/abc1234/);
   });
   it("uses WhatsApp formatting", () => {
@@ -322,16 +322,16 @@ describe("niche", () => {
       const [system, user] = f.to("chat/completions")[0]!.body.messages;
       assert.doesNotMatch(user.content, /devs|Público/);
       assert.match(user.content, /^Produto: Teclado Mecânico Redragon Kumara/);
-      assert.match(system.content, /Nike Air Max pra você pisar fofo/);
+      assert.match(system.content, /Atenção mamães e papais/);
       assert.equal(c.caption, "Esse teclado vai melhorar sua gameplay");
     } finally {
       f.restore();
     }
   });
-  it("template lines name the product", () => {
+  it("template lines never repeat the product name (it is the next line)", () => {
     assert.equal(shortProductName("Fone Bluetooth JBL Tune 520BT, Preto"), "Fone Bluetooth JBL Tune");
     assert.equal(shortProductName("Air Fryer Mondial (4L) - Preta"), "Air Fryer Mondial");
-    for (let seed = 0; seed < 6; seed++) assert.match(templateCaption({ title: "Air Fryer Mondial 4L" }, seed).caption, /Air Fryer Mondial 4L/);
+    for (let seed = 0; seed < 6; seed++) assert.doesNotMatch(templateCaption({ title: "Air Fryer Mondial 4L" }, seed).caption, /Air Fryer|Mondial/);
   });
 });
 

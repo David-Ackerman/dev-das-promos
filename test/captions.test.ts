@@ -22,7 +22,8 @@ describe("captions: variety and short product names", () => {
       assert.equal(c.name, "Smartwatch Bettdow");
       const ask = f.to("chat/completions")[0]!.body;
       assert.match(ask.messages[1].content, /Frases recentes do canal[\s\S]*- Teclado que salva seu bolso/);
-      assert.match(ask.messages[0].content, /NÃO fale de dinheiro, bolso/);
+      assert.match(ask.messages[0].content, /NUNCA repita o nome do produto/);
+      assert.match(ask.messages[0].content, /bolso/);
     } finally {
       f.restore();
     }
@@ -34,9 +35,9 @@ describe("captions: variety and short product names", () => {
     assert.equal(cfg.footer, "");
     const p = { caption: "Alexa no pulso", captionShort: "Alexa no pulso", title: "Bettdow SmartWatch, relogio smartwatch com Ecrã tátil e Alexa, à prova d'água IP68, relogio feminino e masculino", shortTitle: "Smartwatch Bettdow", marketplace: "amazon" as const, priceCents: 10830, originalPriceCents: 18600, discountPct: 42, link: "https://l", footer: cfg.footer };
     const tg = renderTelegram(p);
-    assert.match(tg, /🛍️ <b>Smartwatch Bettdow<\/b>/);
+    assert.match(tg, /^<b>ALEXA NO PULSO<\/b>\n\nSmartwatch Bettdow\n\nDe <s>R\$ 186<\/s> por <b>R\$ 108,30<\/b> na Amazon\n/);
     assert.doesNotMatch(tg, /publi|afiliado|relogio feminino/);
-    assert.match(renderWhatsApp(p), /🛍️ \*Smartwatch Bettdow\*/);
+    assert.match(renderWhatsApp(p), /^\*ALEXA NO PULSO\*\n\nSmartwatch Bettdow\n\nDe ~R\$ 186~ por \*R\$ 108,30\* na Amazon\n/);
     assert.match(renderX(p, "https://l"), /Smartwatch Bettdow por R\$/);
     assert.match(renderTelegram({ ...p, shortTitle: null }), /Bettdow SmartWatch, relogio/, "no short name: the title, as before");
   });
