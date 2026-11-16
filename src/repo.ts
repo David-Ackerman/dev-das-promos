@@ -55,7 +55,7 @@ export async function upsertProducts(db: Db, candidates: Candidate[], chunk = 20
     }));
     const out = await db.query<{ id: number; marketplace: string; external_id: string }>(
       `WITH input AS (
-         SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
+         SELECT * FROM jsonb_to_recordset($1::text::jsonb) AS x(
            marketplace text, external_id text, title text, image_url text, product_url text,
            price_cents int, original_price_cents int)
        ), up AS (
