@@ -146,7 +146,7 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       const wa = await handler.fetch(new Request(waUrl.replace(cfg.publicBaseUrl, "https://w")), {}, ctx);
       assert.equal(wa.status, 302);
       const waText = new URL(wa.headers.get("location")!).searchParams.get("text")!;
-      assert.match(waText, /\*Fone Bluetooth TWS\*/);
+      assert.match(waText, /\nFone Bluetooth TWS/);
       assert.match(waText, /\/go\/[0-9a-zA-Z]+/);
 
       // 7. Decline the other one
