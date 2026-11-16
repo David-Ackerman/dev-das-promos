@@ -66,7 +66,7 @@ describe("coupons", () => {
       coupon: { code: "MELI15", pctOff: 15, minCents: 10000, maxCents: 3000, validUntil: "2026-11-11T02:59:00.000Z", rules: ["Só no app"] },
     };
     const tg = renderTelegram(input);
-    assert.match(tg, /^Desconto extra &lt;hoje&gt;/);
+    assert.match(tg, /^<b>DESCONTO EXTRA &lt;HOJE&gt;<\/b>/);
     assert.match(tg, /🎟️ <b>Cupom Mercado Livre: 15% OFF<\/b>/);
     assert.match(tg, /🔑 Código: <code>MELI15<\/code>/);
     assert.match(tg, /Compras a partir de R\$ 100,00 · desconto máximo de R\$ 30,00/);

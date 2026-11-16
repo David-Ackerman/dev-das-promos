@@ -21,35 +21,41 @@ export interface Caption {
  * Price, link and disclosure are added by our code, never by the model, so
  * the AI can't invent a wrong price.
  */
-const SYSTEM_PROMPT = `Você escreve a frase de chamada de um post de promoção num canal/grupo brasileiro (Telegram e WhatsApp).
-A frase fica logo acima do nome do produto, da foto e do preço. O preço e o desconto o sistema já mostra.
+const SYSTEM_PROMPT = `Você escreve a chamada de um post de promoção num canal/grupo brasileiro (Telegram e WhatsApp).
+O post sai assim (o sistema monta tudo, menos a chamada):
 
-Como a frase deve ser:
-- UMA frase curta (até uns 60 caracteres), no jeito de quem fala com um amigo. Leve, com uma pitada de humor quando der.
-- Fale do que o produto FAZ na vida de quem compra: o uso, a cena, a sensação. Um exagero de brincadeira é bem-vindo ("dá mais FPS", "pisar fofo").
-- Varie o ângulo de um post pro outro. Escolha UM: a cena de uso ("café pronto antes do despertador"), o benefício principal, quem vai gostar ("presente certo pra quem joga"), um exagero engraçado, uma pergunta ("Ainda carregando o celular 2x por dia?") ou uma comparação ("mais leve que sua mochila da escola").
-- NÃO fale de dinheiro, bolso, preço, desconto, economia, "liso", "precinho", "barato" ou "pagar": o preço já aparece logo abaixo. Também não use "achado", "imperdível", "corre", "aproveite", "não perca", "ideal para", "perfeito para".
-- Cite o produto de forma natural e curta: a marca/modelo ("Air Max", "JBL") ou o tipo ("esse teclado", "essa air fryer"). Nunca o nome completo da loja.
-- NÃO faça piada sem relação com o produto, trocadilho forçado, nem referência a programação/dev/TI/escritório se o produto não for disso.
-- Não invente característica que não dá pra tirar do nome do produto.
-- Sem preço, porcentagem, link, @menção ou hashtag. No máximo 1 emoji, e só se combinar.
-- Se vierem "frases recentes do canal", a sua tem que ser diferente delas: outra ideia, outra palavra principal, outro começo.
+ATENÇÃO MAMÃES E PAPAIS            ← a chamada (você), em MAIÚSCULAS no post
+Sabonete Líquido Johnson's Baby    ← nome do produto (o sistema)
+De R$ 49 por R$ 26 na Amazon       ← preço (o sistema)
+link
 
-Exemplos (produto → texto):
-- Tênis Nike Air Max 90 masculino → Nike Air Max pra você pisar fofo
-- Teclado mecânico gamer Redragon Kumara RGB → Esse teclado vai melhorar sua gameplay
-- Placa de vídeo Radeon RX 7600 8GB RGB → Placa de vídeo com RGB dá mais FPS 😎
-- PlayStation 5 → Sua namorada vai querer brigar ou jogar junto
-- Smartwatch Huawei Band 10 → Esse faz mais do que mostrar as horas
-- Air fryer Mondial 4L → Batata crocante sem gastar óleo
+Como a chamada deve ser:
+- CURTA: 2 a 7 palavras (até uns 45 caracteres). Fala de gente de verdade num grupo de ofertas, não de propaganda.
+- NUNCA repita o nome do produto, a marca nem o modelo: eles vêm na linha de baixo. Fale da categoria, de quem vai usar, da ocasião ou da novidade.
+- Varie o tipo de chamada de um post pro outro. Escolha UM:
+  - chamar quem vai gostar: "ATENÇÃO MAMÃES E PAPAIS", "PRA QUEM TREINA EM CASA", "GAMERS, OLHA ISSO"
+  - a categoria com um adjetivo: "OS MELHORES ÁRABES FEMININOS", "FONE BOM PRA ACADEMIA", "TÊNIS PRA CORRER O DIA TODO"
+  - novidade: "VOLTOU A LAVADORA PARCELADA", "CHEGOU O PERFUME QUE ESGOTA", "VOLTOU AO MENOR PREÇO"
+  - a cena de uso ou um exagero leve: "CAFÉ PRONTO ANTES DO DESPERTADOR", "SUAS COSTAS AGRADECEM"
+  - uma pergunta curta: "AINDA SEM AIR FRYER?"
+- Sem valores, porcentagens, link, @menção ou hashtag (o preço o sistema mostra). Nada de "bolso", "liso", "precinho", "imperdível", "não perca", "aproveite", "ideal para", "perfeito para".
+- Sem piada sem relação com o produto, nem trocadilho forçado. Não invente característica que não dá pra tirar do nome do produto.
+- No máximo 1 emoji, e quase sempre nenhum.
+- Se vierem "frases recentes do canal", a sua tem que ser diferente delas: outro tipo de chamada, outra palavra principal, outro começo.
+
+Exemplos (produto → chamada):
+- Perfume Árabe Al Wataniah Sabah 100ml feminino → Os melhores árabes femininos
+- Sabonete Líquido Johnson's Baby 400ml → Atenção mamães e papais
+- Máquina de Lavar Electrolux 13kg → Voltou a lavadora parcelada
+- Tênis Nike Air Max 90 masculino → Pra quem quer pisar fofo
 - Cadeira gamer ThunderX3 → Suas costas agradecem depois da ranked
+- Power bank Xiaomi 20000mAh → Cansado de celular descarregando?
+- Cafeteira Nespresso Essenza Mini → Café de cafeteria em casa ☕
 - Fone Bluetooth JBL Tune 520BT → Música sem fio o dia inteiro
-- Cafeteira Nespresso Essenza Mini → Café de cafeteria sem sair de casa ☕
-- Power bank Xiaomi 20000mAh → Ainda carregando o celular duas vezes por dia?
 
 Responda APENAS com JSON: {"texto": "...", "tweet": "...", "tag": "...", "nome": "..."}
-- "texto": a frase (até 70 caracteres).
-- "tweet": a mesma frase ou uma variação (até 100 caracteres).
+- "texto": a chamada (até 45 caracteres), escrita normal (o sistema põe em maiúsculas).
+- "tweet": a mesma chamada ou uma variação (até 100 caracteres), também sem o nome do produto.
 - "tag": a marca ou o nome curto do produto, para virar hashtag (ex.: "Kindle", "JBL", "AirMax"), sem # e sem espaços; "" se não houver uma marca clara.
 - "nome": o nome do produto pro post, curto (2 a 4 palavras): o tipo + a marca/modelo, em português. Ex.: "Bettdow SmartWatch, relógio com Ecrã tátil e Alexa, IP68..." → "Smartwatch Bettdow"; "Fone de Ouvido Bluetooth JBL Tune 520BT Preto" → "Fone JBL Tune 520BT"; "Fritadeira Elétrica Air Fryer Mondial 4L 1500W" → "Air Fryer Mondial 4L".`;
 
@@ -81,13 +87,14 @@ export function shortProductName(title: string): string {
   return words || title;
 }
 
+// No product name here: the name is the next line of the post.
 const TEMPLATES = [
-  (n: string) => `${n} com preço bom de verdade`,
-  (n: string) => `${n} pagando bem menos`,
-  (n: string) => `Bora de ${n}?`,
-  (n: string) => `${n} pelo menor preço que achamos`,
-  (n: string) => `Olha o preço: ${n} 👀`,
-  (n: string) => `${n} tá valendo a pena hoje`,
+  (_n: string) => `Separei essa pra você`,
+  (_n: string) => `Chegou oferta nova 👀`,
+  (_n: string) => `Vale dar uma olhada`,
+  (_n: string) => `Essa tá valendo a pena`,
+  (_n: string) => `Olha o que apareceu hoje`,
+  (_n: string) => `Voltou com preço bom`,
 ];
 
 /** A template line; `avoid` (the current text) is skipped so 🔄 always changes something. */

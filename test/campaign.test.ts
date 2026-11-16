@@ -35,7 +35,7 @@ describe("sale-day campaign", () => {
     assert.doesNotMatch(renderTelegram(renderInput(off, post, "https://l")), /11\.11/);
     const cfg = testConfig(ON);
     const tg = renderTelegram(renderInput(cfg, post, "https://l"));
-    assert.match(tg, /^🔥 <b>11\.11 A maior liquida do ano<\/b>\n\nEsse teclado/);
+    assert.match(tg, /^🔥 <b>11\.11 A maior liquida do ano<\/b>\n\n<b>ESSE TECLADO/);
     assert.match(renderWhatsApp(renderInput(cfg, post, "https://l")), /^🔥 \*11\.11 A maior liquida do ano\*\n\n/);
     const x = renderX(renderInput(cfg, post, "https://l"), "https://l");
     assert.match(x, /^🔥 11\.11 A maior liquida do ano\n/);
