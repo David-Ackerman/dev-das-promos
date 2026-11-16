@@ -153,6 +153,7 @@ describe("fetchAmazonScrapedCandidates", () => {
       originalPriceCents: 199990,
       discountPct: 35,
       rating: 4.6,
+      topic: "fone",
     });
   });
 

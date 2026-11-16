@@ -664,6 +664,16 @@ export async function listQueued(db: Db): Promise<PostRow[]> {
 }
 
 /** Previews still waiting for the admin: each will need a queue slot if approved. */
+/** Pending previews still waiting for the admin's line after `minutes` (see review.ts). */
+export async function postsAwaitingCaption(db: Db, minutes: number): Promise<number[]> {
+  const rows = await db.query<{ id: number }>(
+    `SELECT id FROM posts WHERE status = 'pending' AND ai_model = 'needs-admin'
+       AND created_at < now() - make_interval(mins => $1::int) ORDER BY id LIMIT 20`,
+    [minutes],
+  );
+  return rows.map((r) => Number(r.id));
+}
+
 export async function countPending(db: Db): Promise<number> {
   const rows = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM posts WHERE status = 'pending'`);
   return rows[0]?.n ?? 0;

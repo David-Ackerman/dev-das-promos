@@ -39,6 +39,8 @@ export interface Candidate {
   commissionRate?: number;
   /** Set for coupons: the AI writes a call to use the coupon instead of a product line. */
   coupon?: Coupon;
+  /** The search term that found it (a run takes at most 2 per term). */
+  topic?: string;
 }
 
 export interface PostRow {

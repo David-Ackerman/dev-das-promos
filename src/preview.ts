@@ -1,3 +1,4 @@
+import { ADMIN_CAPTION_MINUTES, NEEDS_ADMIN, NO_CAPTION } from "./review.ts";
 import type { Config } from "./config.ts";
 import { activeCampaign } from "./config.ts";
 import type { Db } from "./db.ts";
@@ -46,6 +47,11 @@ export function previewHtml(cfg: Config, post: PostRow, header?: string): string
     header ??
     `📝 <b>Prévia #${post.id}</b> · ${storeName(post.marketplace)}${post.kind === "coupon" ? " · 🎟️ cupom" : post.discount_pct ? ` · -${post.discount_pct}%` : ""}` +
       `${post.ai_model === "template" ? " · texto padrão" : ""}${priceHistoryNote(post)}` +
+      (post.ai_model === NEEDS_ADMIN
+        ? `\n✍️ <b>A IA não acertou a legenda.</b> Responda esta prévia com a sua em até ${ADMIN_CAPTION_MINUTES} min; senão sai só com nome e preço.`
+        : post.ai_model === NO_CAPTION
+          ? "\n✍️ Sem legenda (ninguém escreveu a tempo): sai só com nome e preço."
+          : "") +
       `${post.image_note ? `\n${post.image_source === "generated" ? "" : "⚠️ "}${escapeHtml(post.image_note)}` : ""}`;
   const body = renderTelegram(renderInput(cfg, post, `${cfg.publicBaseUrl}/go/•••••••`));
   return `${top}\n➖➖➖➖➖➖\n${body}`;

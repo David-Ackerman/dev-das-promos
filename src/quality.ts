@@ -7,6 +7,16 @@ import { hasAnyWord, normalizeWords } from "./util.ts";
  * earphones and headsets, and at most N products of the same kind per day.
  */
 
+/**
+ * Never in this channel, whatever BLOCKED_WORDS says: underwear, adult items.
+ * Whole words, accents ignored.
+ */
+export const ALWAYS_BLOCKED = [
+  "lingerie", "calcinha", "calcinhas", "sutia", "sutias", "cueca", "cuecas", "body rendado", "camisola", "espartilho",
+  "sensual", "erotico", "erotica", "sex shop", "sexshop", "vibrador", "preservativo", "lubrificante intimo", "fantasia erotica",
+  "biquini",
+];
+
 /** Earphones, headsets, "pods": the category full of no-name R$ 10 items. */
 const AUDIO_WORDS = ["fone", "fones", "headset", "headphone", "headphones", "earbuds", "earbud", "airpods", "tws", "auricular", "pods", "buds"];
 
@@ -61,6 +71,7 @@ export interface QualityRules {
 
 /** Why an offer isn't good enough, or undefined when it is. */
 export function qualityProblem(c: Candidate, rules: QualityRules): string | undefined {
+  if (hasAnyWord(c.title, ALWAYS_BLOCKED)) return "off-limits";
   if (c.priceCents < rules.minPriceCents) return "cheap";
   if (rules.audioMinCents > 0 && isAudio(c.title)) {
     if ((c.originalPriceCents ?? c.priceCents) < rules.audioMinCents) return "audio-cheap";
@@ -74,18 +85,23 @@ export function qualityProblem(c: Candidate, rules: QualityRules): string | unde
 }
 
 /**
- * The broad topics searched across runs. Each run searches only a few of them
+ * The topics searched across runs, all for the channel's audience (tech, games,
+ * setup, geek stuff) but broad. Override with COLLECT_TOPICS. Each run searches only a few of them
  * (topicsForRun), so the channel gets a mix of everything over the day
  * instead of the same gadgets every time.
  */
 export const DEFAULT_TOPICS = [
-  "fone jbl", "fone sony", "headset hyperx", "galaxy buds", "airpods",
-  "livros mais vendidos", "livro programação", "mangá", "cartas pokémon", "lego", "brinquedos",
-  "perfume", "perfume árabe", "skincare", "protetor solar", "barbeador",
-  "air fryer", "cafeteira", "panela", "liquidificador", "aspirador robô", "garrafa térmica",
-  "mochila", "tênis", "mala de viagem", "kindle", "ssd", "monitor", "teclado mecânico", "mouse logitech",
-  "smartwatch", "controle xbox", "jogos ps5", "nintendo switch", "whey protein", "creatina",
-  "ferramentas", "furadeira", "cadeira de escritório", "fralda", "ração", "caixa de som jbl",
+  // audio, brand names only (the quality rules skip no-name earphones anyway)
+  "fone jbl", "headset hyperx", "galaxy buds", "caixa de som jbl", "fone sony",
+  // setup and PC
+  "teclado mecânico", "mouse logitech", "monitor gamer", "ssd", "hd externo", "webcam", "microfone",
+  "cadeira gamer", "suporte para monitor", "placa de vídeo", "memória ram", "roteador wifi",
+  // games
+  "controle xbox", "controle ps5", "jogos ps5", "nintendo switch", "jogos nintendo switch",
+  // geek: reading, collecting, building
+  "kindle", "livros de programação", "livros de fantasia", "mangá", "cartas pokémon", "lego", "action figure",
+  // everyday tech
+  "smartwatch", "power bank", "carregador anker", "echo dot alexa", "tablet", "notebook", "kit chaves de precisão",
 ];
 
 /** A few topics per run, different every run (the 6-hour slot is the seed); `offset` gives each store its own slice. */

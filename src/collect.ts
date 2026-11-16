@@ -1,6 +1,6 @@
 import { candidateFromPost, generateCaption, SEARCH_CAPTION } from "./ai.ts";
 import { ensureWhatsAppConnected, relinkMessage } from "./publishers/whatsapp.ts";
-import { approvePost, flagEndedDeals } from "./publish.ts";
+import { approvePost, autoApproveOk, flagEndedDeals } from "./publish.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { pendingKeyboard, previewHtml, retryKeyboard, SEARCH_AGAIN, sendPreview, statusHeader, updatePreview } from "./preview.ts";
@@ -9,6 +9,7 @@ import { fetchAmazonCandidates } from "./providers/amazon.ts";
 import { fetchAmazonScrapedCandidates } from "./providers/amazon-scrape.ts";
 import { fetchShopeeCandidates, shopeeAffiliateLink } from "./providers/shopee.ts";
 import { productKind, qualityProblem, topicsForRun } from "./quality.ts";
+import { ADMIN_CAPTION_MINUTES, NEEDS_ADMIN, nicheFit, writeReviewedCaption } from "./review.ts";
 import {
   createPost,
   dbNow,
@@ -76,6 +77,8 @@ export function pickCandidates(
     kindOf?: (c: Candidate) => string;
     maxPerKind?: number;
     kindCounts?: Map<string, number>;
+    /** More "at most N per group" rules (search term, theme...). An empty group isn't limited. */
+    limits?: { of: (c: Candidate) => string | undefined; max: number; counts?: Map<string, number> }[];
   },
 ): Candidate[] {
   const seen = new Set<string>();
@@ -92,13 +95,14 @@ export function pickCandidates(
 
   const queues = new Map<Marketplace, Candidate[]>();
   for (const c of eligible) queues.set(c.marketplace, [...(queues.get(c.marketplace) ?? []), c]);
-  const counts = new Map(opts.kindCounts ?? []);
+  const limits = [
+    ...(opts.kindOf && opts.maxPerKind ? [{ of: opts.kindOf, max: opts.maxPerKind, counts: opts.kindCounts }] : []),
+    ...(opts.limits ?? []),
+  ].map((l) => ({ ...l, used: new Map(l.counts ?? []) }));
   const fits = (c: Candidate) => {
-    if (!opts.kindOf || !opts.maxPerKind) return true;
-    const kind = opts.kindOf(c);
-    if (!kind) return true;
-    if ((counts.get(kind) ?? 0) >= opts.maxPerKind) return false;
-    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+    const keys = limits.map((l) => l.of(c));
+    if (limits.some((l, i) => keys[i] && (l.used.get(keys[i]!) ?? 0) >= l.max)) return false;
+    limits.forEach((l, i) => keys[i] && l.used.set(keys[i]!, (l.used.get(keys[i]!) ?? 0) + 1));
     return true;
   };
   const out: Candidate[] = [];
@@ -123,9 +127,7 @@ const STUCK_PUBLISHING_MINUTES = 15;
 
 /** Auto-approve rule: big enough discount, real AI text, and not a fake discount. */
 export function shouldAutoApprove(cfg: Config, post: PostRow): boolean {
-  const min = cfg.autoApproveMinDiscountPct;
-  if (min <= 0 || post.discount_pct < min || post.ai_model === "template") return false;
-  return !isFakeDiscount(post.price_cents, post.lowest_seen_cents ?? undefined);
+  return autoApproveOk(cfg, post);
 }
 
 /**
@@ -246,14 +248,27 @@ export async function runCollect(
   const idOf = (c: Candidate) => productIds.get(`${c.marketplace}:${c.externalId}`) ?? -1;
   const fake = (c: Candidate) => cfg.selection.skipFakeDiscounts && isFakeDiscount(c.priceCents, lowest.get(idOf(c)));
   const weak = (c: Candidate) => qualityProblem(c, cfg.selection.quality) !== undefined;
-  const picks = pickCandidates(candidates, {
-    limit: cfg.selection.postsPerRun,
+  const limit = cfg.selection.postsPerRun;
+  const base = {
     minDiscountPct: cfg.selection.minDiscountPct,
-    exclude: (c) => used.has(idOf(c)) || isBlocked(c.title, cfg.selection.blockedWords) || fake(c) || weak(c),
-    kindOf: (c) => productKind(c.title),
+    exclude: (c: Candidate) => used.has(idOf(c)) || isBlocked(c.title, cfg.selection.blockedWords) || fake(c) || weak(c),
+    kindOf: (c: Candidate) => productKind(c.title),
     maxPerKind: cfg.selection.maxSameKindPerDay,
     kindCounts,
-  });
+  };
+  // At most 3 from one search term per run, so one term (e.g. a coffee search) can't fill the batch.
+  const perTopic = { of: (c: Candidate) => c.topic, max: 3 };
+  let picks = pickCandidates(candidates, { ...base, limit, limits: [perTopic] });
+  // An AI looks at a shortlist: off-theme items go, and at most 2 per theme (mug + coffee maker + kettle = one theme).
+  const shortlist = pickCandidates(candidates, { ...base, limit: Math.max(limit * 3, 30) });
+  const verdicts = await nicheFit(cfg.ai, shortlist).catch(() => undefined);
+  if (verdicts) {
+    const theme = new Map(shortlist.map((c, i) => [c, verdicts[i]!.theme]));
+    const fitting = shortlist.filter((_, i) => verdicts[i]!.ok);
+    const off = shortlist.filter((_, i) => !verdicts[i]!.ok);
+    if (off.length) log(`Off-theme for the channel (${off.length}): ${off.map((c) => c.title.slice(0, 40)).join(" | ")}`);
+    picks = pickCandidates(fitting, { ...base, limit, limits: [perTopic, { of: (c) => theme.get(c) || undefined, max: 2 }] });
+  }
   const blocked = candidates.filter((c) => isBlocked(c.title, cfg.selection.blockedWords)).length;
   const fakes = candidates.filter(fake).length;
   const weakCount = candidates.filter(weak).length;
@@ -268,12 +283,15 @@ export async function runCollect(
   // Auto-approval waits until every preview of the batch exists, so the queue
   // spreads the whole batch over the window (see spreadSlot).
   const toApprove: number[] = [];
+  // Previews whose line the reviewer turned down twice: the admin is asked to write it.
+  const needsAdmin: string[] = [];
   // The channel's latest lines plus this batch's: every new caption must be different from them.
   const recent = opts.dryRun ? [] : await recentCaptions(db);
   for (const c of picks) {
     try {
       const ref = randomCode(10);
-      const caption = await generateCaption(cfg.ai, c, undefined, { ...SEARCH_CAPTION, recent });
+      const reviewed = await writeReviewedCaption(cfg.ai, c, { ...SEARCH_CAPTION, recent });
+      const caption = reviewed.needsAdmin ? { ...reviewed.caption, model: NEEDS_ADMIN } : reviewed.caption;
       recent.unshift(caption.caption);
       aiError ||= caption.error ?? "";
       const image = await decideImage(
@@ -323,6 +341,7 @@ export async function runCollect(
         throw error;
       }
       result.previews++;
+      if (reviewed.needsAdmin) needsAdmin.push(`✍️ #${post.id}: a IA não acertou a legenda (${reviewed.needsAdmin}). Responda a prévia com a sua em até ${ADMIN_CAPTION_MINUTES} min; senão sai só com nome e preço.`);
       if (shouldAutoApprove(cfg, shown)) toApprove.push(post.id);
     } catch (error) {
       result.errors.push(`${c.marketplace} ${c.externalId}: ${errorMessage(error)}`);
@@ -348,6 +367,7 @@ export async function runCollect(
         : `📦 <b>Lote novo: ${result.previews} ${result.previews === 1 ? "prévia" : "prévias"}</b>` +
           (result.autoApproved ? ` · ${result.autoApproved} aprovada(s) automaticamente` : "") +
           "\nAs aprovadas saem espalhadas até a próxima busca.",
+      ...needsAdmin.map((l) => escapeHtml(l)),
       ...result.errors.map((e) => `⚠️ ${escapeHtml(e)}`),
     ]
       .filter(Boolean)

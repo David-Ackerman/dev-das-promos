@@ -8,7 +8,7 @@ import { healTemplateCaptions, runCollect } from "../src/collect.ts";
 import { createNodeDb } from "../src/db-node.ts";
 import { createHandler } from "../src/http.ts";
 import { migrate } from "../src/migrate.ts";
-import { flagEndedDeals } from "../src/publish.ts";
+import { flagEndedDeals, releaseUncaptioned } from "../src/publish.ts";
 import type { Candidate } from "../src/types.ts";
 import { mockFetch, telegramRoute, testConfig } from "./helpers.ts";
 
@@ -843,6 +843,33 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
       assert.equal(groupSends(), sent + 2, "one message per group");
       await tap(cfg, `n:${b.id}`);
       assert.equal(f.to("answerCallbackQuery").at(-1)!.body.text, "Esse post não está na fila.");
+    } finally {
+      f.restore();
+    }
+  });
+
+  it("a line the reviewer turns down twice waits for the admin, then goes out with name and price only", async () => {
+    const cfg = testConfig({ AUTO_APPROVE_MIN_DISCOUNT: "40", X_MODE: "off", WHATSAPP_MODE: "off" });
+    const writerOrReviewer = (call: { body: any }) =>
+      String(call.body?.messages?.[0]?.content ?? "").startsWith("Você revisa")
+        ? { choices: [{ message: { content: '{"ok": false, "motivo": "frase forçada"}' } }] }
+        : ai();
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", writerOrReviewer], ["affiliate.shopee", shortLink]]);
+    try {
+      const res = await collect(cfg, [offer("rev-bad", { discountPct: 60 })]);
+      assert.equal(res.autoApproved, 0, "not auto-approved while the line is missing");
+      const post = await postFor("rev-bad");
+      assert.equal(post.status, "pending");
+      const row = (await db.query<{ ai_model: string }>(`SELECT ai_model FROM posts WHERE id = $1`, [post.id]))[0]!;
+      assert.equal(row.ai_model, "needs-admin");
+      const admin = f.to("sendMessage").filter((c) => c.body.chat_id === "111").map((c) => c.body.text).join("\n");
+      assert.match(admin, /#\d+: a IA não acertou a legenda \(frase forçada\)/);
+
+      assert.equal(await releaseUncaptioned(cfg, db), 0, "the admin still has time");
+      await db.query(`UPDATE posts SET created_at = now() - interval '61 minutes' WHERE id = $1`, [post.id]);
+      assert.equal(await releaseUncaptioned(cfg, db), 1);
+      const done = (await db.query<{ status: string; caption: string; ai_model: string }>(`SELECT status, caption, ai_model FROM posts WHERE id = $1`, [post.id]))[0]!;
+      assert.deepEqual(done, { status: "published", caption: "", ai_model: "no-caption" });
     } finally {
       f.restore();
     }

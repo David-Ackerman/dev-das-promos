@@ -5,6 +5,7 @@ import { dealUrl } from "./site.ts";
 import type { Db } from "./db.ts";
 import { pendingKeyboard, queuedKeyboard, renderInput, retryKeyboard, statusHeader, updatePreview, videoKeyboard } from "./preview.ts";
 import { checkPrice } from "./pricecheck.ts";
+import { ADMIN_CAPTION_MINUTES, NEEDS_ADMIN, NO_CAPTION } from "./review.ts";
 import { postTweet, uploadProductImage } from "./publishers/x.ts";
 import { sendWhatsApp } from "./publishers/whatsapp.ts";
 import { renderTelegram, renderWhatsApp, renderX } from "./render.ts";
@@ -16,6 +17,7 @@ import {
   getPost,
   lastPublishedAt,
   countPending,
+  postsAwaitingCaption,
   queueTail,
   recordPublication,
   recordXUsage,
@@ -26,6 +28,7 @@ import {
   sentTelegramMessages,
   setSchedule,
   transition,
+  updateCaption,
   updatePostPrice,
 } from "./repo.ts";
 import { formatSlot, nextSlot, spreadSlot } from "./schedule.ts";
@@ -245,6 +248,33 @@ export async function unschedulePost(cfg: Config, db: Db, postId: number): Promi
   const post = (await getPost(db, postId)) as PostRow;
   await updatePreview(cfg, post, undefined, pendingKeyboard(post, cfg));
   return "Voltou para as prévias.";
+}
+
+/** The auto-approve rule (AUTO_APPROVE_MIN_DISCOUNT): big real discount, text from the AI or the admin. */
+export function autoApproveOk(cfg: Config, post: PostRow): boolean {
+  const min = cfg.autoApproveMinDiscountPct;
+  if (min <= 0 || post.kind === "coupon" || post.discount_pct < min) return false;
+  if (post.ai_model === "template" || post.ai_model === NEEDS_ADMIN) return false;
+  const fake = cfg.selection.skipFakeDiscounts && post.lowest_seen_cents != null && post.lowest_seen_cents < post.price_cents * 0.98;
+  return !fake;
+}
+
+/**
+ * Worker cron: previews whose line the reviewer turned down and the admin didn't
+ * write within ADMIN_CAPTION_MINUTES lose the line (name and price only) and,
+ * when they'd have been auto-approved, go to the queue.
+ */
+export async function releaseUncaptioned(cfg: Config, db: Db): Promise<number> {
+  let released = 0;
+  for (const id of await postsAwaitingCaption(db, ADMIN_CAPTION_MINUTES)) {
+    await updateCaption(db, id, "", "", NO_CAPTION);
+    const post = await getPost(db, id);
+    if (!post || post.status !== "pending") continue;
+    released++;
+    if (autoApproveOk(cfg, post)) await approvePost(cfg, db, id, { auto: true });
+    else await updatePreview(cfg, post, undefined, pendingKeyboard(post, cfg)).catch(() => {});
+  }
+  return released;
 }
 
 /**

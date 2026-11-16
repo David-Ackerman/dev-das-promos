@@ -151,7 +151,7 @@ export async function fetchShopeeCandidates(
       const nodes = data.productOfferV2?.nodes ?? [];
       for (const node of nodes) {
         const c = shopeeNodeToCandidate(node);
-        if (c) out.push(c);
+        if (c) out.push({ ...c, topic: keyword || "mais vendidos" });
       }
       log(`Shopee ${keyword ? `"${keyword}"` : "(mais vendidos)"}: ${nodes.length} itens`);
     } catch (error) {

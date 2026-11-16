@@ -113,7 +113,7 @@ export function templateCaption(
 }
 
 /** The niche (NICHE) is left out on purpose: texts are about the product, not the audience. */
-function facts(c: Candidate): string {
+export function facts(c: Candidate): string {
   if (c.coupon) {
     return [
       `Loja: ${c.coupon.store ?? storeName(c.marketplace)}`,
@@ -212,6 +212,15 @@ export interface CaptionOptions {
   perModelMs?: number;
   /** The channel's latest captions: the new one must not repeat their idea or words. */
   recent?: string[];
+  /** A previous line the reviewer turned down, and why: the new one must fix that. */
+  feedback?: { text: string; reason: string };
+}
+
+/** Tells the writer what the reviewer didn't like about its last line. */
+export function feedbackBlock(feedback?: { text: string; reason: string }): string {
+  return feedback
+    ? `\n\nSua chamada anterior foi recusada pela revisão: "${feedback.text}". Motivo: ${feedback.reason}\nEscreva outra, diferente, que resolva isso.`
+    : "";
 }
 
 /** GitHub Actions has no 30s limit: the search gives every model time and busy ones extra rounds. */
@@ -271,6 +280,7 @@ export async function askModel(
   candidate: Candidate,
   timeoutMs: number,
   recent: string[] = [],
+  feedback?: { text: string; reason: string },
 ): Promise<Caption> {
   try {
     if (!entry.apiKey) throw new Error("no API key for this provider");
@@ -288,7 +298,7 @@ export async function askModel(
         max_tokens: 1500,
         messages: [
           { role: "system", content: candidate.coupon ? COUPON_PROMPT : SYSTEM_PROMPT },
-          { role: "user", content: facts(candidate) + recentBlock(recent) },
+          { role: "user", content: facts(candidate) + recentBlock(recent) + feedbackBlock(feedback) },
         ],
       }),
       signal: AbortSignal.timeout(timeoutMs),
@@ -349,7 +359,7 @@ export async function generateCaption(
       return undefined;
     }
     try {
-      return await askModel(cfg, entry, candidate, Math.min(left, perModel), opts.recent);
+      return await askModel(cfg, entry, candidate, Math.min(left, perModel), opts.recent, opts.feedback);
     } catch (error) {
       errors.push(errorMessage(error));
       if (error instanceof BusyError) busy.push(entry);

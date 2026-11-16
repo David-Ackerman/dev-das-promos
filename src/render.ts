@@ -124,8 +124,8 @@ export function renderTelegram(p: RenderInput): string {
   }
   return [
     ...campaignLines(p, (s) => `<b>${escapeHtml(s)}</b>`),
-    `<b>${escapeHtml(hook(p.caption))}</b>`,
-    "",
+    // No line (the admin didn't write one in time): the post starts with the name.
+    ...(p.caption.trim() ? [`<b>${escapeHtml(hook(p.caption))}</b>`, ""] : []),
     escapeHtml(productName(p)),
     "",
     priceLine(p, (s) => `<s>${s}</s>`, (s) => `<b>${s}</b>`),
@@ -143,8 +143,7 @@ export function renderWhatsApp(p: RenderInput): string {
   }
   return [
     ...campaignLines(p, (s) => `*${s}*`),
-    `*${hook(p.caption)}*`,
-    "",
+    ...(p.caption.trim() ? [`*${hook(p.caption)}*`, ""] : []),
     productName(p),
     "",
     priceLine(p, (s) => `~${s}~`, (s) => `*${s}*`),
@@ -193,7 +192,7 @@ function renderXPlain(p: RenderInput, linkOrNote: string): string {
     [p.footer ? "#publi" : "", withHashtag && p.hashtag ? `#${p.hashtag}` : ""].filter(Boolean).join(" ");
   const build = (titleMax: number, short: string, withHashtag = false) =>
     [short, "", `${productName(p, titleMax)} por ${price}`, linkOrNote, tags(withHashtag)]
-      .filter((l, i) => l !== "" || i === 1)
+      .filter((l, i) => l !== "" || (i === 1 && short.trim() !== ""))
       .join("\n")
       .trim();
   // The hashtag is the first thing to go: the joke is never cut to make room for it.

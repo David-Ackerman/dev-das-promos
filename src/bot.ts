@@ -24,7 +24,8 @@ import {
   storeKeyFromName,
   submissionFromReply,
 } from "./manual.ts";
-import { approvePost, declinePost, publishNow, retryPost, unschedulePost } from "./publish.ts";
+import { approvePost, autoApproveOk, declinePost, publishNow, retryPost, unschedulePost } from "./publish.ts";
+import { NEEDS_ADMIN } from "./review.ts";
 import { declineRoundup, proposeRoundup, sendRoundup } from "./roundup.ts";
 import { COUPON_HELP, couponTitle, isExpired, parseCoupon } from "./coupon.ts";
 import { storeName } from "./render.ts";
@@ -500,7 +501,13 @@ async function handleMessage(cfg: Config, db: Db, msg: TgMessage) {
     }
     await updateCaption(db, post.id, truncate(text, 600), truncate(text, 150), "manual");
     const fresh = (await getPost(db, post.id)) as PostRow;
-    await refreshPreview(cfg, fresh);
+    // The reviewer had asked for this line: the post goes on as it would have (auto-approve rule).
+    if (post.ai_model === NEEDS_ADMIN && fresh.status === "pending" && autoApproveOk(cfg, fresh)) {
+      const msg = await approvePost(cfg, db, post.id, { auto: true });
+      await sendText(token, chatId, `👍 Legenda salva. ${escapeHtml(msg)}`).catch(() => {});
+    } else {
+      await refreshPreview(cfg, fresh);
+    }
     await tg(token, "setMessageReaction", {
       chat_id: chatId,
       message_id: msg.message_id,
