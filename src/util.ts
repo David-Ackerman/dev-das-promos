@@ -49,7 +49,7 @@ export function discountPct(priceCents: number, originalCents?: number): number 
   return Math.round(((originalCents - priceCents) / originalCents) * 100);
 }
 
-function normalizeWords(text: string): string {
+export function normalizeWords(text: string): string {
   return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 

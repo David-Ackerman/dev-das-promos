@@ -34,6 +34,63 @@ export async function upsertProduct(db: Db, c: Candidate): Promise<number> {
 }
 
 /**
+ * upsertProduct for a whole search result in a few round trips (one per 200
+ * products) instead of two queries per product, which took 7+ minutes for ~600
+ * offers from GitHub to Neon. Returns "marketplace:externalId" -> product id.
+ */
+export async function upsertProducts(db: Db, candidates: Candidate[], chunk = 200): Promise<Map<string, number>> {
+  const unique = new Map<string, Candidate>();
+  for (const c of candidates) unique.set(`${c.marketplace}:${c.externalId}`, c);
+  const all = [...unique.values()];
+  const ids = new Map<string, number>();
+  for (let i = 0; i < all.length; i += chunk) {
+    const rows = all.slice(i, i + chunk).map((c) => ({
+      marketplace: c.marketplace,
+      external_id: c.externalId,
+      title: c.title,
+      image_url: c.imageUrl ?? null,
+      product_url: c.productUrl,
+      price_cents: c.priceCents,
+      original_price_cents: c.originalPriceCents ?? null,
+    }));
+    const out = await db.query<{ id: number; marketplace: string; external_id: string }>(
+      `WITH input AS (
+         SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
+           marketplace text, external_id text, title text, image_url text, product_url text,
+           price_cents int, original_price_cents int)
+       ), up AS (
+         INSERT INTO products (marketplace, external_id, title, image_url, product_url)
+         SELECT marketplace, external_id, title, image_url, product_url FROM input
+         ON CONFLICT (marketplace, external_id) DO UPDATE
+           SET title = EXCLUDED.title, image_url = EXCLUDED.image_url,
+               product_url = EXCLUDED.product_url, updated_at = now()
+         RETURNING id, marketplace, external_id
+       ), snap AS (
+         INSERT INTO price_snapshots (product_id, price_cents, original_price_cents)
+         SELECT up.id, input.price_cents, input.original_price_cents
+         FROM up JOIN input USING (marketplace, external_id)
+       )
+       SELECT id, marketplace, external_id FROM up`,
+      [JSON.stringify(rows)],
+    );
+    for (const r of out) ids.set(`${r.marketplace}:${r.external_id}`, Number(r.id));
+  }
+  return ids;
+}
+
+/** Titles of the deals that went (or are going) out in the last `hours`, for the "same thing" limit. */
+export async function recentDealTitles(db: Db, hours = 24): Promise<string[]> {
+  const rows = await db.query<{ title: string }>(
+    `SELECT pr.title FROM posts p JOIN products pr ON pr.id = p.product_id
+     WHERE p.kind = 'deal' AND p.created_at > now() - make_interval(hours => $1::int)
+       AND p.preview_message_id IS NOT NULL
+       AND p.status IN ('pending', 'queued', 'publishing', 'published', 'partial')`,
+    [hours],
+  );
+  return rows.map((r) => r.title);
+}
+
+/**
  * Products that already had a post (approved, pending, declined…) inside the cooldown window.
  * Posts whose preview never reached the admin don't count, so the product can come back.
  */

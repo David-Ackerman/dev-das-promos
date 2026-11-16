@@ -64,6 +64,12 @@ export function testConfig(overrides: Record<string, string> = {}): Config {
     MIN_DISCOUNT_PCT: "20",
     POSTS_PER_RUN: "2",
     QUEUE_INTERVAL_MINUTES: "0",
+    // Quality rules off unless a test turns them on (fixtures are cheap no-name items).
+    MIN_PRICE: "0",
+    AUDIO_MIN_PRICE: "0",
+    SHOPEE_MIN_RATING: "0",
+    SHOPEE_MIN_SALES: "0",
+    MAX_SAME_KIND_PER_DAY: "99",
     ...overrides,
   });
 }

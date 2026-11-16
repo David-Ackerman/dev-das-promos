@@ -8,6 +8,7 @@ import { decideImage } from "./images.ts";
 import { fetchAmazonCandidates } from "./providers/amazon.ts";
 import { fetchAmazonScrapedCandidates } from "./providers/amazon-scrape.ts";
 import { fetchShopeeCandidates, shopeeAffiliateLink } from "./providers/shopee.ts";
+import { productKind, qualityProblem, topicsForRun } from "./quality.ts";
 import {
   createPost,
   dbNow,
@@ -18,10 +19,11 @@ import {
   pendingTemplatePosts,
   lowestSeenPrices,
   recentCaptions,
+  recentDealTitles,
   recentlyUsedProductIds,
   transition,
   updateCaption,
-  upsertProduct,
+  upsertProducts,
 } from "./repo.ts";
 import { sendText } from "./telegram.ts";
 import type { Candidate, Marketplace, PostRow } from "./types.ts";
@@ -66,7 +68,15 @@ export function isFakeDiscount(priceCents: number, lowestSeenCents: number | und
 /** Best deals first, alternating stores so one marketplace doesn't take every slot. */
 export function pickCandidates(
   candidates: Candidate[],
-  opts: { limit: number; minDiscountPct: number; exclude?: (c: Candidate) => boolean },
+  opts: {
+    limit: number;
+    minDiscountPct: number;
+    exclude?: (c: Candidate) => boolean;
+    /** At most `maxPerKind` of one kind, counting `kindCounts` (what already went out today). */
+    kindOf?: (c: Candidate) => string;
+    maxPerKind?: number;
+    kindCounts?: Map<string, number>;
+  },
 ): Candidate[] {
   const seen = new Set<string>();
   const eligible = candidates
@@ -82,10 +92,20 @@ export function pickCandidates(
 
   const queues = new Map<Marketplace, Candidate[]>();
   for (const c of eligible) queues.set(c.marketplace, [...(queues.get(c.marketplace) ?? []), c]);
+  const counts = new Map(opts.kindCounts ?? []);
+  const fits = (c: Candidate) => {
+    if (!opts.kindOf || !opts.maxPerKind) return true;
+    const kind = opts.kindOf(c);
+    if (!kind) return true;
+    if ((counts.get(kind) ?? 0) >= opts.maxPerKind) return false;
+    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+    return true;
+  };
   const out: Candidate[] = [];
   while (out.length < opts.limit && [...queues.values()].some((q) => q.length)) {
     for (const q of queues.values()) {
-      const next = q.shift();
+      let next = q.shift();
+      while (next && !fits(next)) next = q.shift();
       if (next && out.length < opts.limit) out.push(next);
     }
   }
@@ -177,13 +197,21 @@ export async function runCollect(
 
   const candidates: Candidate[] = [];
   const sources: [string, () => Promise<Candidate[]>][] = [];
-  if (cfg.amazon) sources.push(["Amazon", () => (deps.fetchAmazon ?? fetchAmazonCandidates)(cfg.amazon!)]);
+  // A few broad topics per run, different each run and per store: a mix of everything over the day.
+  const { topics, topicsPerRun } = cfg.selection;
+  const amazonTopics = topicsForRun(topics, topicsPerRun, Date.now(), 0);
+  const shopeeTopics = topicsForRun(topics, topicsPerRun, Date.now(), 1);
+  if (cfg.amazon) {
+    const amazon = { ...cfg.amazon, keywords: amazonTopics };
+    sources.push(["Amazon", () => (deps.fetchAmazon ?? fetchAmazonCandidates)(amazon)]);
+  }
   if (cfg.amazonScrape) {
-    const scrape = cfg.amazonScrape;
+    const scrape = { ...cfg.amazonScrape, queries: amazonTopics };
     sources.push(["Amazon (busca)", () => (deps.fetchAmazonScrape ?? fetchAmazonScrapedCandidates)(scrape, { log })]);
   }
   if (cfg.shopee) {
-    const shopee = cfg.shopee;
+    // "" = Shopee's best sellers (no keyword), plus this run's topics.
+    const shopee = { ...cfg.shopee, keywords: ["", ...shopeeTopics] };
     sources.push(["Shopee", () => (deps.fetchShopee ? deps.fetchShopee(shopee) : fetchShopeeCandidates(shopee, 20, log))]);
   }
   if (!sources.length) throw new Error("No marketplace configured: set the AMAZON_* (API, or AMAZON_SCRAPE=on) and/or SHOPEE_* settings.");
@@ -204,25 +232,36 @@ export async function runCollect(
   const productIds = new Map<string, number>();
   let used = new Set<number>();
   let lowest = new Map<number, number>();
+  const kindCounts = new Map<string, number>();
   if (!opts.dryRun) {
     const startedAt = await dbNow(db);
-    for (const c of candidates) productIds.set(`${c.marketplace}:${c.externalId}`, await upsertProduct(db, c));
+    for (const [key, id] of await upsertProducts(db, candidates)) productIds.set(key, id);
     used = await recentlyUsedProductIds(db, cfg.selection.cooldownDays);
     lowest = await lowestSeenPrices(db, [...new Set(productIds.values())], startedAt);
+    for (const title of await recentDealTitles(db, 24)) {
+      const kind = productKind(title);
+      kindCounts.set(kind, (kindCounts.get(kind) ?? 0) + 1);
+    }
   }
   const idOf = (c: Candidate) => productIds.get(`${c.marketplace}:${c.externalId}`) ?? -1;
   const fake = (c: Candidate) => cfg.selection.skipFakeDiscounts && isFakeDiscount(c.priceCents, lowest.get(idOf(c)));
+  const weak = (c: Candidate) => qualityProblem(c, cfg.selection.quality) !== undefined;
   const picks = pickCandidates(candidates, {
     limit: cfg.selection.postsPerRun,
     minDiscountPct: cfg.selection.minDiscountPct,
-    exclude: (c) => used.has(idOf(c)) || isBlocked(c.title, cfg.selection.blockedWords) || fake(c),
+    exclude: (c) => used.has(idOf(c)) || isBlocked(c.title, cfg.selection.blockedWords) || fake(c) || weak(c),
+    kindOf: (c) => productKind(c.title),
+    maxPerKind: cfg.selection.maxSameKindPerDay,
+    kindCounts,
   });
   const blocked = candidates.filter((c) => isBlocked(c.title, cfg.selection.blockedWords)).length;
   const fakes = candidates.filter(fake).length;
+  const weakCount = candidates.filter(weak).length;
   log(
     `Picked ${picks.length} of ${candidates.length}` +
       (blocked ? ` (${blocked} skipped by BLOCKED_WORDS)` : "") +
-      (fakes ? ` (${fakes} skipped: cheaper in the last 30 days)` : ""),
+      (fakes ? ` (${fakes} skipped: cheaper in the last 30 days)` : "") +
+      (weakCount ? ` (${weakCount} skipped: low quality — too cheap, no-name audio, bad Shopee rating/sales)` : ""),
   );
 
   let aiError = "";

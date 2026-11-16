@@ -848,6 +848,26 @@ describe("full flow", { skip: !hasDb && "no test database" }, () => {
     }
   });
 
+  it("never more than MAX_SAME_KIND_PER_DAY of one kind in 24h, and skips no-name cheap earphones", async () => {
+    const cfg = testConfig({ X_MODE: "off", WHATSAPP_MODE: "off", POSTS_PER_RUN: "5", MAX_SAME_KIND_PER_DAY: "2", AUDIO_MIN_PRICE: "250" });
+    const kind = `Zabumba${suffix}`.replace(/[^A-Za-z0-9]/g, "");
+    const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);
+    try {
+      const first = await collect(cfg, [
+        offer("kind-1", { title: `${kind} elétrica 1` }),
+        offer("kind-2", { title: `${kind} elétrica 2` }),
+        offer("kind-3", { title: `${kind} elétrica 3` }),
+        offer("pods-cheap", { title: "Fone TWS Bluetooth Pro", priceCents: 2990, originalPriceCents: 5990 }),
+      ]);
+      assert.equal(first.previews, 2, "two of the kind");
+      assert.equal(await postFor("pods-cheap"), undefined);
+      const again = await collect(cfg, [offer("kind-4", { title: `${kind} elétrica 4` })]);
+      assert.equal(again.previews, 0, "the kind already went out twice today");
+    } finally {
+      f.restore();
+    }
+  });
+
   it("auto-approves big real discounts with AI text, and leaves the rest for the admin", async () => {
     const cfg = testConfig({ AUTO_APPROVE_MIN_DISCOUNT: "40", X_MODE: "off", WHATSAPP_MODE: "off" });
     const f = mockFetch([["api.telegram.org", telegramRoute()], ["chat/completions", ai], ["affiliate.shopee", shortLink]]);

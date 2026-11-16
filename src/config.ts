@@ -1,4 +1,5 @@
 import type { AmazonScrapeConfig } from "./providers/amazon-scrape.ts";
+import { DEFAULT_TOPICS, type QualityRules } from "./quality.ts";
 import { parsePostingHours, type QueueSettings } from "./schedule.ts";
 
 /**
@@ -74,6 +75,13 @@ export interface Config {
     blockedWords: string[];
     /** Skip offers that were cheaper in the last 30 days: the "discount" isn't real. */
     skipFakeDiscounts: boolean;
+    /** At most this many products of the same kind ("fone", "perfume"...) in 24 hours (MAX_SAME_KIND_PER_DAY). */
+    maxSameKindPerDay: number;
+    /** Price floor, audio brands/price, Shopee rating and sales (see quality.ts). */
+    quality: QualityRules;
+    /** Broad topics; each run searches `topicsPerRun` of them per store (COLLECT_TOPICS, TOPICS_PER_RUN). */
+    topics: string[];
+    topicsPerRun: number;
   };
   /** Approved posts are spaced out inside a posting window (see schedule.ts). */
   queue: QueueSettings;
@@ -223,6 +231,15 @@ export function loadConfig(env: Env): Config {
       pendingTtlHours: int(env.PENDING_TTL_HOURS, 12),
       blockedWords: list(env.BLOCKED_WORDS),
       skipFakeDiscounts: bool(env.SKIP_FAKE_DISCOUNTS, true),
+      maxSameKindPerDay: Math.max(1, int(env.MAX_SAME_KIND_PER_DAY, 2)),
+      quality: {
+        minPriceCents: Math.round(Math.max(0, num(env.MIN_PRICE, 25)) * 100),
+        audioMinCents: Math.round(Math.max(0, num(env.AUDIO_MIN_PRICE, 250)) * 100),
+        shopeeMinRating: num(env.SHOPEE_MIN_RATING, 4.6),
+        shopeeMinSales: Math.max(0, int(env.SHOPEE_MIN_SALES, 50)),
+      },
+      topics: list(env.COLLECT_TOPICS).length ? list(env.COLLECT_TOPICS) : DEFAULT_TOPICS,
+      topicsPerRun: Math.max(1, int(env.TOPICS_PER_RUN, 4)),
     },
     queue: { intervalMinutes: Math.max(0, int(env.QUEUE_INTERVAL_MINUTES, 20)), ...parsePostingHours(env.POSTING_HOURS) },
     autoApproveMinDiscountPct: Math.max(0, int(env.AUTO_APPROVE_MIN_DISCOUNT, 0)),

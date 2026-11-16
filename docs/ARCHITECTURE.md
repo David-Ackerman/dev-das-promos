@@ -459,6 +459,7 @@ always integer cents.
 | File | Responsibility |
 |---|---|
 | `src/collect.ts` | Search run: ranking, cooldowns, fake-discount filter, auto-approve, healing |
+| `src/quality.ts` | Which topics a run searches (a rotating few of `COLLECT_TOPICS`), quality rules (price floor, brand-name audio, Shopee rating/sales) and the "same kind" per-day limit |
 | `src/publish.ts` | Approve / queue / publish, price check gate, X thread rules, ended deals |
 | `src/bot.ts` | Telegram commands and buttons, links sent by the admin |
 | `src/http.ts` | Worker routes and cron dispatch |
