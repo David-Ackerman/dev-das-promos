@@ -34,7 +34,7 @@ Responda APENAS com JSON: {"ok": true} ou {"ok": false, "motivo": "o problema, e
 
 const NICHE_PROMPT = `Você escolhe produtos para um canal brasileiro de promoções. O público do canal: {NICHE}.
 Para cada produto numerado, responda:
-- "ok": true se é algo que esse público compraria pra si ou daria de presente e combina com o canal; false se foge do tema do canal, é roupa íntima/lingerie, adulto, item de farmácia/higiene sem relação, ou parece produto de baixa qualidade.
+- "ok": true se é algo que esse público compraria pra si ou daria de presente e combina com o canal; false se foge do tema do canal, é roupa íntima/lingerie, adulto, item de farmácia/higiene sem relação, parece produto de baixa qualidade, ou é para CRIANÇAS (brinquedo, livro infantil ou bilíngue infantil, material escolar, canetinha, item de bebê): nada infantil, nunca.
 - "tema": o tema do produto em 1 ou 2 palavras (ex.: "café", "periférico gamer", "livro", "áudio", "cozinha"). Produtos diferentes do mesmo universo têm o MESMO tema (caneca, cafeteira e chaleira = "café").
 
 Responda APENAS com JSON: {"itens": [{"n": 1, "ok": true, "tema": "..."}, ...]}`;

@@ -8,7 +8,7 @@ import { decideImage } from "./images.ts";
 import { fetchAmazonCandidates } from "./providers/amazon.ts";
 import { fetchAmazonScrapedCandidates } from "./providers/amazon-scrape.ts";
 import { fetchShopeeCandidates, shopeeAffiliateLink } from "./providers/shopee.ts";
-import { productKind, qualityProblem, topicsForRun } from "./quality.ts";
+import { productFamily, productKind, qualityProblem, topicsForRun } from "./quality.ts";
 import { ADMIN_CAPTION_MINUTES, NEEDS_ADMIN, nicheFit, writeReviewedCaption } from "./review.ts";
 import {
   createPost,
@@ -235,6 +235,7 @@ export async function runCollect(
   let used = new Set<number>();
   let lowest = new Map<number, number>();
   const kindCounts = new Map<string, number>();
+  const familyCounts = new Map<string, number>();
   if (!opts.dryRun) {
     const startedAt = await dbNow(db);
     for (const [key, id] of await upsertProducts(db, candidates)) productIds.set(key, id);
@@ -243,6 +244,8 @@ export async function runCollect(
     for (const title of await recentDealTitles(db, 24)) {
       const kind = productKind(title);
       kindCounts.set(kind, (kindCounts.get(kind) ?? 0) + 1);
+      const family = productFamily(title);
+      if (family) familyCounts.set(family, (familyCounts.get(family) ?? 0) + 1);
     }
   }
   const idOf = (c: Candidate) => productIds.get(`${c.marketplace}:${c.externalId}`) ?? -1;
@@ -258,7 +261,15 @@ export async function runCollect(
   };
   // At most 3 from one search term per run, so one term (e.g. a coffee search) can't fill the batch.
   const perTopic = { of: (c: Candidate) => c.topic, max: 3 };
-  let picks = pickCandidates(candidates, { ...base, limit, limits: [perTopic] });
+  // Never two of one kind in the same batch (they'd go out back to back), and never two of the
+  // same kind + brand in 24 h (JBL Xtreme and JBL Extreme 4 are "the same thing").
+  const perRunKind = { of: (c: Candidate) => productKind(c.title), max: cfg.selection.maxSameKindPerRun };
+  const perDayFamily = {
+    of: (c: Candidate) => productFamily(c.title) || undefined,
+    max: Math.min(cfg.selection.maxSameKindPerDay, 1),
+    counts: familyCounts,
+  };
+  let picks = pickCandidates(candidates, { ...base, limit, limits: [perTopic, perRunKind, perDayFamily] });
   // An AI looks at a shortlist: off-theme items go, and at most 2 per theme (mug + coffee maker + kettle = one theme).
   const shortlist = pickCandidates(candidates, { ...base, limit: Math.max(limit * 3, 30) });
   const verdicts = await nicheFit(cfg.ai, shortlist).catch(() => undefined);
@@ -267,7 +278,11 @@ export async function runCollect(
     const fitting = shortlist.filter((_, i) => verdicts[i]!.ok);
     const off = shortlist.filter((_, i) => !verdicts[i]!.ok);
     if (off.length) log(`Off-theme for the channel (${off.length}): ${off.map((c) => c.title.slice(0, 40)).join(" | ")}`);
-    picks = pickCandidates(fitting, { ...base, limit, limits: [perTopic, { of: (c) => theme.get(c) || undefined, max: 2 }] });
+    picks = pickCandidates(fitting, {
+      ...base,
+      limit,
+      limits: [perTopic, perRunKind, perDayFamily, { of: (c) => theme.get(c) || undefined, max: 2 }],
+    });
   }
   const blocked = candidates.filter((c) => isBlocked(c.title, cfg.selection.blockedWords)).length;
   const fakes = candidates.filter(fake).length;

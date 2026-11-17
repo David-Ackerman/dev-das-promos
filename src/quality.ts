@@ -17,6 +17,24 @@ export const ALWAYS_BLOCKED = [
   "biquini",
 ];
 
+/**
+ * Nothing for children, ever: toys, school supplies, kids' books, baby items.
+ * (LEGO and Pokémon stay, unless the title says it's for kids or gives an age.)
+ */
+export const KIDS_WORDS = [
+  "infantil", "infantis", "crianca", "criancas", "kids", "kid", "bebe", "bebes", "baby", "menino", "meninos", "menina", "meninas",
+  "brinquedo", "brinquedos", "bilingue", "canetinha", "canetinhas", "colorir", "pintar", "lapis de cor", "giz de cera", "escolar",
+  "estojo", "massinha", "slime", "fralda", "fraldas", "mamadeira", "chupeta", "berco", "carrinho de bebe", "pelucia", "boneca",
+  "bonecas", "educativo", "educativa", "alfabetizacao", "montessori", "maternidade", "enxoval", "primeira infancia",
+];
+/** "3 anos", "6+ anos", "8 a 12 anos": an age on the box means it's for children. */
+const AGE_RE = /\b\d{1,2}\s*(\+|a\s*\d{1,2}|ou mais)?\s*anos\b/;
+
+export function isForKids(title: string): boolean {
+  const folded = normalizeWords(title);
+  return hasAnyWord(title, KIDS_WORDS) || (AGE_RE.test(folded) && !/\badult/.test(folded));
+}
+
 /** Earphones, headsets, "pods": the category full of no-name R$ 10 items. */
 const AUDIO_WORDS = ["fone", "fones", "headset", "headphone", "headphones", "earbuds", "earbud", "airpods", "tws", "auricular", "pods", "buds"];
 
@@ -30,6 +48,7 @@ export const AUDIO_BRANDS = [
 /** Kinds that several word spellings belong to ("fone", "headset", "airpods" are one kind). */
 const KIND_GROUPS: [string, string[]][] = [
   ["fone", AUDIO_WORDS],
+  ["caixa de som", ["caixa de som", "caixa som", "speaker", "soundbar", "boombox", "partybox"]],
   ["pokemon", ["pokemon", "blister", "booster", "tcg"]],
   ["livro", ["livro", "livros", "manga"]],
   ["perfume", ["perfume", "colonia", "eau", "body splash"]],
@@ -55,6 +74,32 @@ export function productKind(title: string): string {
   return first.length > 3 && first.endsWith("s") ? first.slice(0, -1) : first;
 }
 
+/** Brands, to tell "the same product" apart from "the same kind of product". */
+const BRANDS = [
+  ...AUDIO_BRANDS, "amazon", "kindle", "echo", "alexa", "lenovo", "asus", "acer", "dell", "hp", "positivo", "multilaser", "intelbras",
+  "tp link", "tp-link", "mercusys", "kingston", "sandisk", "western digital", "wd", "seagate", "crucial", "adata", "lexar", "aoc",
+  "nintendo", "xbox", "microsoft", "playstation", "ps5", "ps4", "lego", "funko", "pokemon", "hasbro", "baseus", "ugreen", "realme",
+  "machenike", "aula", "attack shark", "fantech", "pichau", "mancer", "dazz", "elgin", "tcl", "nvidia", "amd", "intel", "gigabyte", "msi",
+  "garmin", "amazfit", "mondial", "electrolux", "philco", "britania",
+];
+
+/** First known brand in the title, or "". */
+export function brandOf(title: string): string {
+  const folded = ` ${normalizeWords(title)} `;
+  let best: { brand: string; at: number } | undefined;
+  for (const b of BRANDS) {
+    const at = folded.indexOf(` ${normalizeWords(b)} `);
+    if (at >= 0 && (!best || at < best.at)) best = { brand: normalizeWords(b), at };
+  }
+  return best?.brand ?? "";
+}
+
+/** "Caixa de Som JBL Xtreme" and "Caixa JBL Extreme 4" are the same thing for the channel: kind + brand. */
+export function productFamily(title: string): string {
+  const brand = brandOf(title);
+  return brand ? `${productKind(title)}:${brand}` : "";
+}
+
 export function isAudio(title: string): boolean {
   return hasAnyWord(title, AUDIO_WORDS);
 }
@@ -72,6 +117,7 @@ export interface QualityRules {
 /** Why an offer isn't good enough, or undefined when it is. */
 export function qualityProblem(c: Candidate, rules: QualityRules): string | undefined {
   if (hasAnyWord(c.title, ALWAYS_BLOCKED)) return "off-limits";
+  if (isForKids(c.title)) return "kids";
   if (c.priceCents < rules.minPriceCents) return "cheap";
   if (rules.audioMinCents > 0 && isAudio(c.title)) {
     if ((c.originalPriceCents ?? c.priceCents) < rules.audioMinCents) return "audio-cheap";
