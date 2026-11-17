@@ -70,6 +70,7 @@ export function testConfig(overrides: Record<string, string> = {}): Config {
     SHOPEE_MIN_RATING: "0",
     SHOPEE_MIN_SALES: "0",
     MAX_SAME_KIND_PER_DAY: "99",
+    MAX_SAME_KIND_PER_RUN: "99",
     ...overrides,
   });
 }

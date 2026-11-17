@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { pickCandidates } from "../src/collect.ts";
-import { DEFAULT_TOPICS, productKind, qualityProblem, topicsForRun } from "../src/quality.ts";
+import { DEFAULT_TOPICS, productFamily, productKind, qualityProblem, topicsForRun } from "../src/quality.ts";
 import type { Candidate } from "../src/types.ts";
 
 const rules = { minPriceCents: 2500, audioMinCents: 25000, shopeeMinRating: 4.6, shopeeMinSales: 50 };
@@ -47,5 +47,36 @@ describe("deal quality", () => {
     assert.equal(new Set(runs.flat()).size, 16, "four runs, sixteen different topics");
     const shopee = topicsForRun(DEFAULT_TOPICS, 4, day, 1);
     assert.equal(shopee.filter((t) => runs[0]!.includes(t)).length, 0, "Shopee searches other topics than Amazon");
+  });
+});
+
+describe("never for children, never the same thing twice", () => {
+  const rules = { minPriceCents: 0, audioMinCents: 0, shopeeMinRating: 0, shopeeMinSales: 0 };
+  it("skips kids' products", () => {
+    for (const t of [
+      "Livro Bilíngue Meu Primeiro Dicionário",
+      "Kit 24 Canetinhas Hidrográficas",
+      "Brinquedo Educativo Montessori",
+      "Quebra-cabeça 3D para Crianças",
+      "Jogo de Tabuleiro Infantil",
+      "LEGO City Caminhão de Bombeiros 5+ anos",
+      "Kit Pintura e Colorir Escolar",
+    ])
+      assert.equal(qualityProblem(c(t), rules), "kids", t);
+    for (const t of ["LEGO Technic Lamborghini para Adultos 18 anos", "Cartas Pokémon Box Treinador Avançado", "Livro Código Limpo"])
+      assert.equal(qualityProblem(c(t), rules), undefined, t);
+  });
+
+  it("the same kind + brand counts once a day, any model", () => {
+    assert.equal(productFamily("Caixa de Som JBL Xtreme 3 Bluetooth"), "caixa de som:jbl");
+    assert.equal(productFamily("Caixa JBL Extreme 4 Speaker"), "caixa de som:jbl");
+    assert.notEqual(productFamily("Fone JBL Tune 520BT"), "caixa de som:jbl");
+    assert.equal(productFamily("Teclado sem marca"), "");
+  });
+
+  it("never two of one kind in a batch", () => {
+    const offers = [c("Caixa de Som JBL Xtreme 3"), c("Caixa de Som Sony XB100"), c("Kindle Paperwhite")];
+    const picks = pickCandidates(offers, { limit: 10, minDiscountPct: 0, limits: [{ of: (o) => productKind(o.title), max: 1 }] });
+    assert.equal(picks.length, 2);
   });
 });

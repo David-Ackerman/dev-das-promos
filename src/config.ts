@@ -77,6 +77,8 @@ export interface Config {
     skipFakeDiscounts: boolean;
     /** At most this many products of the same kind ("fone", "perfume"...) in 24 hours (MAX_SAME_KIND_PER_DAY). */
     maxSameKindPerDay: number;
+    /** ...and per search run, so two of one kind never go out back to back (MAX_SAME_KIND_PER_RUN). */
+    maxSameKindPerRun: number;
     /** Price floor, audio brands/price, Shopee rating and sales (see quality.ts). */
     quality: QualityRules;
     /** Broad topics; each run searches `topicsPerRun` of them per store (COLLECT_TOPICS, TOPICS_PER_RUN). */
@@ -232,6 +234,7 @@ export function loadConfig(env: Env): Config {
       blockedWords: list(env.BLOCKED_WORDS),
       skipFakeDiscounts: bool(env.SKIP_FAKE_DISCOUNTS, true),
       maxSameKindPerDay: Math.max(1, int(env.MAX_SAME_KIND_PER_DAY, 2)),
+      maxSameKindPerRun: Math.max(1, int(env.MAX_SAME_KIND_PER_RUN, 1)),
       quality: {
         minPriceCents: Math.round(Math.max(0, num(env.MIN_PRICE, 25)) * 100),
         audioMinCents: Math.round(Math.max(0, num(env.AUDIO_MIN_PRICE, 250)) * 100),
